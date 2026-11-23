@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # The GnuPG interop tests are a release gate: fail instead of skipping when gpg is missing.
+  WATERMELON_REQUIRE_GPG: "1"
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Install GnuPG (macOS)
+        if: runner.os == 'macOS'
+        run: brew install gnupg
+      - run: gpg --version
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --release -- -D warnings
+      - run: cargo test --release

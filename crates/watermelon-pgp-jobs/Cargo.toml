@@ -1,0 +1,8 @@
+[package]
+name = "watermelon-pgp-jobs"
+description = "Folder-watching encrypt/decrypt job engine for watermelon-pgp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
