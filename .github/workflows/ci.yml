@@ -11,20 +11,47 @@ env:
   WATERMELON_REQUIRE_GPG: "1"
 
 jobs:
-  test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+  lint:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --release -- -D warnings
+
+  # Runner images: Ubuntu 24.04 (GnuPG 2.4.4), latest Ubuntu (GnuPG 2.4.8 + libgcrypt 1.12.0,
+  # see README "Known issues"), macOS (current GnuPG from Homebrew).
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - name: Install GnuPG (macOS)
         if: runner.os == 'macOS'
         run: brew install gnupg
       - run: gpg --version
-      - run: cargo fmt --all --check
-      - run: cargo clippy --all-targets --release -- -D warnings
+      - run: cargo test --release
+
+  # Further GnuPG versions partners are likely to run: 2.2 (Debian 12) and the newest 2.4.
+  test-gnupg:
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["debian:bookworm", "debian:testing"]
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    steps:
+      - name: Install build tools and GnuPG
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl build-essential git gnupg gpg-agent
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: gpg --version
       - run: cargo test --release

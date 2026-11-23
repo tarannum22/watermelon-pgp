@@ -34,6 +34,12 @@ impl Gpg {
     }
 
     fn run(&self, args: &[&str], stdin: &[u8]) -> Vec<u8> {
+        self.try_run(args, stdin)
+            .unwrap_or_else(|stderr| panic!("gpg {args:?} failed: {stderr}"))
+    }
+
+    /// Like [`Self::run`], returning gpg's stderr on failure instead of panicking.
+    fn try_run(&self, args: &[&str], stdin: &[u8]) -> Result<Vec<u8>, String> {
         let mut child = Command::new("gpg")
             .arg("--homedir")
             .arg(self.home.path())
@@ -53,14 +59,19 @@ impl Gpg {
             .stderr(Stdio::piped())
             .spawn()
             .unwrap();
-        child.stdin.take().unwrap().write_all(stdin).unwrap();
+        // Feed stdin from another thread: gpg may start writing output before it has read all
+        // input, and filling both pipes from one thread deadlocks.
+        let mut child_stdin = child.stdin.take().unwrap();
+        let input = stdin.to_vec();
+        let writer = std::thread::spawn(move || child_stdin.write_all(&input));
         let out = child.wait_with_output().unwrap();
-        assert!(
-            out.status.success(),
-            "gpg {args:?} failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        out.stdout
+        // A write error only means gpg exited early; its stderr explains why.
+        let _ = writer.join().unwrap();
+        if out.status.success() {
+            Ok(out.stdout)
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).into_owned())
+        }
     }
 
     /// Generate a key in GnuPG and return its exported secret key (passphrase-protected).
@@ -95,8 +106,17 @@ fn plaintext() -> Vec<u8> {
     b"customer_id,email,amount\n42,alice@example.com,13.37\n".repeat(5000)
 }
 
+/// Curve25519 keys are generated fresh; the (slow) RSA key is generated once per test binary.
 fn our_key(uid: &str, algorithm: Algorithm) -> SignedSecretKey {
-    crypto::generate(uid, algorithm).unwrap()
+    static RSA: std::sync::OnceLock<SignedSecretKey> = std::sync::OnceLock::new();
+    match algorithm {
+        Algorithm::Curve25519 => crypto::generate(uid, algorithm).unwrap(),
+        Algorithm::Rsa4096 => RSA
+            .get_or_init(|| {
+                crypto::generate("Watermelon RSA <rsa@example.com>", algorithm).unwrap()
+            })
+            .clone(),
+    }
 }
 
 fn import_unlocked(data: &[u8]) -> Cert {
@@ -231,25 +251,49 @@ fn gnupg_encrypts_watermelon_decrypts() {
     }
 }
 
+/// libgcrypt 1.12.0 (shipped with GnuPG 2.4.8 on Ubuntu 26.04) rejects most passphrase-protected
+/// Curve25519 secret keys exported by rPGP with "Bad passphrase". The same exports work with
+/// libgcrypt 1.11 and 1.12.4, and unprotected exports work on 1.12.0, so this is treated as an
+/// upstream regression (likely https://dev.gnupg.org/T8080 / T8094). See README, Known issues.
+fn has_libgcrypt_1_12_0_ecc_import_bug() -> bool {
+    Command::new("gpg")
+        .arg("--version")
+        .output()
+        .is_ok_and(|out| String::from_utf8_lossy(&out.stdout).contains("libgcrypt 1.12.0"))
+}
+
 #[test]
 fn gnupg_accepts_our_exported_secret_key() {
     let Some(gpg) = Gpg::new() else { return };
-    let ours = our_key("Exported <export@example.com>", Algorithm::Curve25519);
-    let armored = crypto::armor_secret(&ours, PASSPHRASE).unwrap();
-    gpg.run(&["--import"], armored.as_bytes());
+    for algorithm in [Algorithm::Curve25519, Algorithm::Rsa4096] {
+        let ours = our_key(&format!("Exported {algorithm:?}"), algorithm);
+        let armored = crypto::armor_secret(&ours, PASSPHRASE).unwrap();
+        gpg.run(&["--import"], armored.as_bytes());
 
-    let mut encrypted = Vec::new();
-    crypto::encrypt(
-        &b"hello"[..],
-        &mut encrypted,
-        &EncryptOptions {
-            recipients: &[ours.to_public_key()],
-            signer: None,
-            container: Container::SeipdV1,
-            armor: false,
-            file_name: "f",
-        },
-    )
-    .unwrap();
-    assert_eq!(gpg.run(&["--decrypt"], &encrypted), b"hello");
+        let mut encrypted = Vec::new();
+        crypto::encrypt(
+            &b"hello"[..],
+            &mut encrypted,
+            &EncryptOptions {
+                recipients: &[ours.to_public_key()],
+                signer: None,
+                container: Container::SeipdV1,
+                armor: false,
+                file_name: "f",
+            },
+        )
+        .unwrap();
+        match gpg.try_run(&["--decrypt"], &encrypted) {
+            Ok(plaintext) => assert_eq!(plaintext, b"hello"),
+            Err(stderr)
+                if algorithm == Algorithm::Curve25519 && has_libgcrypt_1_12_0_ecc_import_bug() =>
+            {
+                eprintln!(
+                    "KNOWN UPSTREAM ISSUE: libgcrypt 1.12.0 could not use our exported \
+                     Curve25519 secret key (see README, Known issues):\n{stderr}"
+                );
+            }
+            Err(stderr) => panic!("gpg could not use our exported {algorithm:?} key: {stderr}"),
+        }
+    }
 }

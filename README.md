@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="watermelon-pgp.svg" alt="watermelon-pgp logo" width="160" height="160">
+</p>
+
 # watermelon-pgp
 
 A self-hosted, single-binary tool to manage OpenPGP keys and run folder jobs that encrypt or
@@ -39,6 +43,16 @@ For scripted setups, `--passphrase-stdin` reads passwords from stdin instead of 
   outside the database. A stolen database alone reveals nothing.
 - The master key is checked against the database at startup; a wrong key is refused.
 - A keyfile readable by other users is refused.
+
+## Known issues
+
+- **Ubuntu 26.04 (GnuPG 2.4.8 with libgcrypt 1.12.0) cannot import most passphrase-protected
+  Curve25519 secret keys exported by watermelon** ("Bad passphrase" when the key is used). The
+  same exports work with libgcrypt 1.11 and 1.12.4, and on 1.12.0 RSA exports, public keys and
+  encrypted files are unaffected. This looks like the elliptic-curve regression in libgcrypt
+  1.12.0 that later 1.12.x releases fix. Until Ubuntu ships the fix, export an RSA-4096 key for
+  partners who need a secret key on that platform. CI reports this case as a known issue
+  instead of a failure.
 
 ## Development
 

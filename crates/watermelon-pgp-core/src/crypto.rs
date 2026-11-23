@@ -9,8 +9,8 @@ use std::{
 use pgp::{
     composed::{
         ArmorOptions, DecryptionOptions, Deserializable, EncryptionCaps, KeyType, Message,
-        MessageBuilder, PublicOrSecret, SecretKeyParamsBuilder, SignedPublicSubKey,
-        SubkeyParamsBuilder, TheRing, VerificationResult,
+        MessageBuilder, PublicOrSecret, SecretKeyParams, SecretKeyParamsBuilder,
+        SignedPublicSubKey, SubkeyParamsBuilder, TheRing, VerificationResult,
     },
     crypto::{
         aead::{AeadAlgorithm, ChunkSize},
@@ -21,7 +21,8 @@ use pgp::{
     packet::{Signature, SignatureType},
     ser::Serialize,
     types::{
-        CompressionAlgorithm, KeyDetails, Password, Seipdv1ReadMode, SigningKey, VerifyingKey,
+        CompressionAlgorithm, KeyDetails, Password, PlainSecretParams, SecretParams,
+        Seipdv1ReadMode, SigningKey, VerifyingKey,
     },
 };
 use rand::rngs::OsRng;
@@ -198,36 +199,70 @@ pub fn generate(user_id: &str, algorithm: Algorithm) -> Result<SignedSecretKey> 
         Algorithm::Rsa4096 => (KeyType::Rsa(4096), KeyType::Rsa(4096)),
     };
 
-    let encryption_subkey = SubkeyParamsBuilder::default()
-        .key_type(encryption_type)
-        .can_encrypt(EncryptionCaps::All)
-        .build()
-        .map_err(|e| Error::Invalid(e.to_string()))?;
+    // Rebuilt per attempt below, because the built parameters are consumed by `generate`.
+    let params = || -> Result<SecretKeyParams> {
+        let encryption_subkey = SubkeyParamsBuilder::default()
+            .key_type(encryption_type.clone())
+            .can_encrypt(EncryptionCaps::All)
+            .build()
+            .map_err(|e| Error::Invalid(e.to_string()))?;
 
-    let params = SecretKeyParamsBuilder::default()
-        .key_type(primary_type)
-        .can_certify(true)
-        .can_sign(true)
-        .primary_user_id(user_id.into())
-        .preferred_symmetric_algorithms(smallvec![
-            SymmetricKeyAlgorithm::AES256,
-            SymmetricKeyAlgorithm::AES192,
-            SymmetricKeyAlgorithm::AES128,
-        ])
-        .preferred_hash_algorithms(smallvec![
-            HashAlgorithm::Sha512,
-            HashAlgorithm::Sha384,
-            HashAlgorithm::Sha256,
-        ])
-        .preferred_compression_algorithms(smallvec![
-            CompressionAlgorithm::ZLIB,
-            CompressionAlgorithm::ZIP,
-        ])
-        .subkeys(vec![encryption_subkey])
-        .build()
-        .map_err(|e| Error::Invalid(e.to_string()))?;
+        SecretKeyParamsBuilder::default()
+            .key_type(primary_type.clone())
+            .can_certify(true)
+            .can_sign(true)
+            .primary_user_id(user_id.into())
+            .preferred_symmetric_algorithms(smallvec![
+                SymmetricKeyAlgorithm::AES256,
+                SymmetricKeyAlgorithm::AES192,
+                SymmetricKeyAlgorithm::AES128,
+            ])
+            .preferred_hash_algorithms(smallvec![
+                HashAlgorithm::Sha512,
+                HashAlgorithm::Sha384,
+                HashAlgorithm::Sha256,
+            ])
+            .preferred_compression_algorithms(smallvec![
+                CompressionAlgorithm::ZLIB,
+                CompressionAlgorithm::ZIP,
+            ])
+            .subkeys(vec![encryption_subkey])
+            .build()
+            .map_err(|e| Error::Invalid(e.to_string()))
+    };
 
-    Ok(params.generate(OsRng)?)
+    // OpenPGP requires RSA primes with p < q (RFC 4880 §5.5.3), and GnuPG rejects keys that
+    // break this rule ("Bad secret key"). rPGP keeps the primes in whatever order the `rsa` crate
+    // generated them, so regenerate until every RSA component is in order (1 in 4 per attempt
+    // for a primary key with one subkey).
+    for _ in 0..MAX_RSA_ATTEMPTS {
+        let key = params()?.generate(OsRng)?;
+        let ordered = rsa_primes_ordered(key.primary_key.secret_params())
+            && key
+                .secret_subkeys
+                .iter()
+                .all(|sub| rsa_primes_ordered(sub.key.secret_params()));
+        if ordered {
+            return Ok(key);
+        }
+    }
+    Err(Error::Invalid(
+        "could not generate an RSA key with OpenPGP prime ordering".into(),
+    ))
+}
+
+const MAX_RSA_ATTEMPTS: usize = 100;
+
+/// Whether these secret parameters satisfy OpenPGP's p < q rule. Non-RSA keys always do.
+fn rsa_primes_ordered(params: &SecretParams) -> bool {
+    let SecretParams::Plain(PlainSecretParams::RSA(key)) = params else {
+        return true;
+    };
+    let Ok((_d, p, q, _u)) = key.to_bytes() else {
+        return false;
+    };
+    // Big-endian without leading zeros, so compare length first.
+    (p.len(), p) < (q.len(), q)
 }
 
 /// Parse every certificate in `data`, which may be ASCII-armored or binary.
@@ -540,7 +575,7 @@ mod tests {
         armor: bool,
         sign: bool,
     ) -> SignatureCheck {
-        let recipient = generate("Recipient <r@example.com>", algorithm).unwrap();
+        let recipient = test_key(algorithm);
         let sender = generate("Sender <s@example.com>", Algorithm::Curve25519).unwrap();
         let plaintext = b"id,name\n1,alice\n2,bob\n".repeat(1000);
 
@@ -571,6 +606,17 @@ mod tests {
         check
     }
 
+    /// Curve25519 keys are generated fresh; the (slow) RSA key is generated once per test binary.
+    fn test_key(algorithm: Algorithm) -> SignedSecretKey {
+        static RSA: std::sync::OnceLock<SignedSecretKey> = std::sync::OnceLock::new();
+        match algorithm {
+            Algorithm::Curve25519 => generate("Recipient <r@example.com>", algorithm).unwrap(),
+            Algorithm::Rsa4096 => RSA
+                .get_or_init(|| generate("Recipient <r@example.com>", algorithm).unwrap())
+                .clone(),
+        }
+    }
+
     #[test]
     fn roundtrips_all_combinations() {
         for algorithm in [Algorithm::Curve25519, Algorithm::Rsa4096] {
@@ -586,6 +632,22 @@ mod tests {
                     ));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn generated_rsa_keys_have_openpgp_prime_order() {
+        for _ in 0..3 {
+            let key = generate("R", Algorithm::Rsa4096).unwrap();
+            assert!(rsa_primes_ordered(key.primary_key.secret_params()));
+            assert!(rsa_primes_ordered(
+                key.secret_subkeys[0].key.secret_params()
+            ));
+            // ...and the ordering survives a serialization round trip.
+            let parsed = secret_from_bytes(&Cert::Secret(key).to_bytes().unwrap()).unwrap();
+            assert!(rsa_primes_ordered(
+                parsed.secret_subkeys[0].key.secret_params()
+            ));
         }
     }
 
