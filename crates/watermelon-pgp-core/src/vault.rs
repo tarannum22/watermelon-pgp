@@ -295,6 +295,14 @@ impl Vault {
 
     pub fn delete_key(&self, actor: Actor, fingerprint: &str) -> Result<KeyRecord> {
         let record = self.find_key(fingerprint)?;
+        let jobs = self.jobs_using_key(&record.fingerprint)?;
+        if !jobs.is_empty() {
+            return Err(Error::Conflict(format!(
+                "key {} is used by job(s): {}",
+                record.fingerprint,
+                jobs.join(", ")
+            )));
+        }
         self.store.transaction(|tx| {
             store::soft_delete_key(tx, &record.fingerprint, now())?;
             audit::record(

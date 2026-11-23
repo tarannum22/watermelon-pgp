@@ -7,7 +7,8 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use crate::{Error, Result};
 
 /// Schema migrations, applied in order. `PRAGMA user_version` records how many have run.
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
 CREATE TABLE settings (
     name  TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -52,7 +53,42 @@ CREATE TRIGGER audit_events_no_update BEFORE UPDATE ON audit_events
 BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 CREATE TRIGGER audit_events_no_delete BEFORE DELETE ON audit_events
 BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
-"#];
+"#,
+    r#"
+CREATE TABLE jobs (
+    id                 INTEGER PRIMARY KEY,
+    customer_id        INTEGER NOT NULL REFERENCES customers(id),
+    name               TEXT NOT NULL,
+    kind               TEXT NOT NULL CHECK (kind IN ('encrypt', 'decrypt')),
+    input_dir          TEXT NOT NULL,
+    output_dir         TEXT NOT NULL,
+    processed_dir      TEXT,
+    failed_dir         TEXT NOT NULL,
+    poll_interval_secs INTEGER NOT NULL,
+    armor              INTEGER NOT NULL,
+    extension          TEXT,
+    container          TEXT NOT NULL CHECK (container IN ('seipd-v1', 'seipd-v2')),
+    verify_policy      TEXT NOT NULL CHECK (verify_policy IN ('ignore', 'warn', 'require')),
+    enabled            INTEGER NOT NULL,
+    paused_reason      TEXT,
+    last_run_at        INTEGER,
+    last_error         TEXT,
+    created_at         INTEGER NOT NULL,
+    updated_at         INTEGER NOT NULL,
+    deleted_at         INTEGER
+);
+CREATE UNIQUE INDEX jobs_customer_name ON jobs(customer_id, name) WHERE deleted_at IS NULL;
+
+CREATE TABLE job_keys (
+    job_id      INTEGER NOT NULL REFERENCES jobs(id),
+    fingerprint TEXT NOT NULL REFERENCES keys(fingerprint),
+    role        TEXT NOT NULL CHECK (role IN ('recipient', 'sign', 'decrypt', 'verify')),
+    PRIMARY KEY (job_id, fingerprint, role)
+);
+
+ALTER TABLE audit_events ADD COLUMN job_id INTEGER;
+"#,
+];
 
 pub struct Store {
     conn: Connection,

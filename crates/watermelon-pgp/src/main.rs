@@ -1,17 +1,24 @@
 use std::{
     io::Write,
     path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use watermelon_pgp_core::{
     audit::Actor,
-    crypto::{self, Algorithm},
+    crypto::{self, Algorithm, Container},
     envelope::MasterKey,
+    jobs::{Job, JobKind, JobSpec, VerifyPolicy},
     store::KeyRecord,
     vault::{self, Vault},
 };
+use watermelon_pgp_jobs::{Engine, PassReport, scan::Scanner};
 
 /// Manage OpenPGP keys and folder encrypt/decrypt jobs.
 #[derive(Parser)]
@@ -54,6 +61,114 @@ enum Command {
     Backup { dest: PathBuf },
     /// Change the admin password.
     Passwd,
+    /// Manage folder jobs.
+    #[command(subcommand)]
+    Job(JobCommand),
+    /// Run all enabled jobs until interrupted (Ctrl-C).
+    Run {
+        /// Jobs processed in parallel [default: number of CPUs].
+        #[arg(long)]
+        workers: Option<usize>,
+    },
+}
+
+#[derive(Subcommand)]
+enum JobCommand {
+    /// Create a job.
+    #[command(subcommand)]
+    Add(AddJob),
+    /// List jobs.
+    List,
+    /// Show one job (by ID or name).
+    Show {
+        job: String,
+    },
+    /// Enable a job, or resume a paused one.
+    Enable {
+        job: String,
+    },
+    Disable {
+        job: String,
+    },
+    Delete {
+        job: String,
+    },
+    /// Run one polling pass now, waiting for files to settle first.
+    RunOnce {
+        job: String,
+        /// Seconds a file must stay unchanged before it is processed.
+        #[arg(long, default_value_t = 2)]
+        settle: u64,
+    },
+}
+
+#[derive(Subcommand)]
+enum AddJob {
+    /// Encrypt every file dropped into the input folder.
+    Encrypt {
+        #[command(flatten)]
+        common: CommonJobArgs,
+        /// Recipient key (fingerprint or key ID). Repeat for several recipients.
+        #[arg(long = "recipient", required = true)]
+        recipients: Vec<String>,
+        /// Sign with this secret key.
+        #[arg(long)]
+        sign_with: Option<String>,
+        /// ASCII-armored output (.asc).
+        #[arg(long)]
+        armor: bool,
+        /// Output extension, e.g. ".gpg" [default: .pgp, or .asc with --armor].
+        #[arg(long)]
+        extension: Option<String>,
+        /// Use the RFC 9580 SEIPD v2 format; only for partners known to support it.
+        #[arg(long)]
+        seipd_v2: bool,
+    },
+    /// Decrypt every file dropped into the input folder.
+    Decrypt {
+        #[command(flatten)]
+        common: CommonJobArgs,
+        /// Secret key to decrypt with. Repeat to try several.
+        #[arg(long = "key", required = true)]
+        keys: Vec<String>,
+        /// Sender key whose signatures are accepted. Repeat for several.
+        #[arg(long = "verify-with")]
+        verifiers: Vec<String>,
+        /// What to do with unsigned or unverifiable files.
+        #[arg(long, value_enum, default_value_t = PolicyArg::Ignore)]
+        verify: PolicyArg,
+    },
+}
+
+#[derive(clap::Args)]
+struct CommonJobArgs {
+    #[arg(long)]
+    customer: String,
+    #[arg(long)]
+    name: String,
+    #[arg(long)]
+    input: PathBuf,
+    #[arg(long)]
+    output: PathBuf,
+    /// Where processed source files go [default: <input>/processed].
+    #[arg(long, conflicts_with = "delete_processed")]
+    processed: Option<PathBuf>,
+    /// Delete source files after successful processing instead of archiving them.
+    #[arg(long)]
+    delete_processed: bool,
+    /// Where failed source files go [default: <input>/failed].
+    #[arg(long)]
+    failed: Option<PathBuf>,
+    /// Seconds between scans of the input folder.
+    #[arg(long, default_value_t = 30)]
+    interval: u32,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum PolicyArg {
+    Ignore,
+    Warn,
+    Require,
 }
 
 #[derive(Subcommand)]
@@ -115,16 +230,71 @@ fn main() -> Result<()> {
         .clone()
         .unwrap_or_else(|| cli.data_dir.join(vault::MASTER_KEY_FILE));
 
-    match cli.command {
-        Command::Init => init(&cli.data_dir, &master_key_path, prompt),
-        command => {
-            let vault = Vault::open(
-                &cli.data_dir.join(vault::DB_FILE),
-                MasterKey::load(&master_key_path)?,
-            )?;
-            run(&vault, command, prompt)
-        }
+    if let Command::Init = cli.command {
+        return init(&cli.data_dir, &master_key_path, prompt);
     }
+    let vault = Vault::open(
+        &cli.data_dir.join(vault::DB_FILE),
+        MasterKey::load(&master_key_path)?,
+    )?;
+    match cli.command {
+        Command::Run { workers } => run_engine(vault, workers),
+        Command::Job(JobCommand::RunOnce { job, settle }) => run_once(vault, &job, settle),
+        command => run(&vault, command, prompt),
+    }
+}
+
+fn run_engine(vault: Vault, workers: Option<usize>) -> Result<()> {
+    let active = vault.jobs()?.iter().filter(|job| job.is_active()).count();
+    let workers = workers.unwrap_or_else(Engine::default_workers);
+    let stop = Arc::new(AtomicBool::new(false));
+    {
+        let stop = Arc::clone(&stop);
+        ctrlc::set_handler(move || stop.store(true, Ordering::Relaxed))
+            .context("installing Ctrl-C handler")?;
+    }
+    eprintln!("Running {active} active job(s) with {workers} worker(s). Ctrl-C to stop.");
+    Engine::new(Arc::new(Mutex::new(vault)), workers).run(&stop, |job, report| {
+        eprintln!("{}  {job}: {}", format_time(now()), describe_pass(report));
+    });
+    eprintln!("Stopped.");
+    Ok(())
+}
+
+fn run_once(vault: Vault, query: &str, settle: u64) -> Result<()> {
+    let job = vault.find_job(query)?;
+    if !job.is_active() {
+        bail!(
+            "job {:?} is not active ({})",
+            job.spec.name,
+            job_state(&job)
+        );
+    }
+    let vault = Mutex::new(vault);
+    let mut scanner = Scanner::default();
+    // The first scan only observes; files unchanged at the second scan are processed.
+    scanner.scan(&job.spec.input_dir)?;
+    std::thread::sleep(Duration::from_secs(settle));
+    let report = watermelon_pgp_jobs::run_pass(&vault, job.id, &mut scanner);
+    println!("{}", describe_pass(&report));
+    if report.error.is_some() || report.paused.is_some() || report.failed > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn describe_pass(report: &PassReport) -> String {
+    let mut parts = vec![format!(
+        "{} processed, {} failed",
+        report.processed, report.failed
+    )];
+    if let Some(error) = &report.error {
+        parts.push(format!("error: {error}"));
+    }
+    if let Some(reason) = &report.paused {
+        parts.push(format!("PAUSED: {reason}"));
+    }
+    parts.join("; ")
 }
 
 fn init(data_dir: &Path, master_key_path: &Path, prompt: Prompt) -> Result<()> {
@@ -227,6 +397,42 @@ fn run(vault: &Vault, command: Command, prompt: Prompt) -> Result<()> {
             println!("Wrote {}", dest.display());
             eprintln!("Reminder: the master key is not part of the backup.");
         }
+        Command::Run { .. } | Command::Job(JobCommand::RunOnce { .. }) => {
+            unreachable!("handled before")
+        }
+        Command::Job(JobCommand::Add(add)) => {
+            let (customer, spec) = job_spec(add)?;
+            let customer = vault.customer(&customer)?;
+            let job = vault.create_job(Actor::Cli, customer.id, &spec)?;
+            println!("Created job {} {:?}", job.id, job.spec.name);
+        }
+        Command::Job(JobCommand::List) => {
+            for job in vault.jobs()? {
+                println!(
+                    "{:>4}  {:<20} {:<20} {:<8} {:<10} {} -> {}",
+                    job.id,
+                    job.customer_name,
+                    job.spec.name,
+                    kind_name(job.spec.kind),
+                    job_state(&job),
+                    job.spec.input_dir.display(),
+                    job.spec.output_dir.display()
+                );
+            }
+        }
+        Command::Job(JobCommand::Show { job }) => print_job(&vault.find_job(&job)?),
+        Command::Job(JobCommand::Enable { job }) => {
+            let job = vault.enable_job(Actor::Cli, vault.find_job(&job)?.id)?;
+            println!("Enabled job {:?}", job.spec.name);
+        }
+        Command::Job(JobCommand::Disable { job }) => {
+            let job = vault.disable_job(Actor::Cli, vault.find_job(&job)?.id)?;
+            println!("Disabled job {:?}", job.spec.name);
+        }
+        Command::Job(JobCommand::Delete { job }) => {
+            let job = vault.delete_job(Actor::Cli, vault.find_job(&job)?.id)?;
+            println!("Deleted job {:?}", job.spec.name);
+        }
         Command::Passwd => {
             let password =
                 prompt.new_secret("New admin password", vault::MIN_ADMIN_PASSWORD_LEN)?;
@@ -235,6 +441,130 @@ fn run(vault: &Vault, command: Command, prompt: Prompt) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn job_spec(add: AddJob) -> Result<(String, JobSpec)> {
+    let (common, kind) = match &add {
+        AddJob::Encrypt { common, .. } => (common, JobKind::Encrypt),
+        AddJob::Decrypt { common, .. } => (common, JobKind::Decrypt),
+    };
+    let input = std::path::absolute(&common.input)?;
+    let mut spec = JobSpec::new(
+        &common.name,
+        kind,
+        &input,
+        &std::path::absolute(&common.output)?,
+    );
+    if common.delete_processed {
+        spec.processed_dir = None;
+    } else if let Some(dir) = &common.processed {
+        spec.processed_dir = Some(std::path::absolute(dir)?);
+    }
+    if let Some(dir) = &common.failed {
+        spec.failed_dir = std::path::absolute(dir)?;
+    }
+    spec.poll_interval_secs = common.interval;
+    let customer = common.customer.clone();
+    match add {
+        AddJob::Encrypt {
+            recipients,
+            sign_with,
+            armor,
+            extension,
+            seipd_v2,
+            ..
+        } => {
+            spec.recipients = recipients;
+            spec.signer = sign_with;
+            spec.armor = armor;
+            spec.extension = extension;
+            if seipd_v2 {
+                spec.container = Container::SeipdV2;
+            }
+        }
+        AddJob::Decrypt {
+            keys,
+            verifiers,
+            verify,
+            ..
+        } => {
+            spec.decrypt_keys = keys;
+            spec.verifiers = verifiers;
+            spec.verify_policy = match verify {
+                PolicyArg::Ignore => VerifyPolicy::Ignore,
+                PolicyArg::Warn => VerifyPolicy::Warn,
+                PolicyArg::Require => VerifyPolicy::Require,
+            };
+        }
+    }
+    Ok((customer, spec))
+}
+
+fn print_job(job: &Job) {
+    let spec = &job.spec;
+    println!("Job {} {:?} ({})", job.id, spec.name, job.customer_name);
+    println!("  kind:       {}", kind_name(spec.kind));
+    println!("  state:      {}", job_state(job));
+    println!("  input:      {}", spec.input_dir.display());
+    println!("  output:     {}", spec.output_dir.display());
+    match &spec.processed_dir {
+        Some(dir) => println!("  processed:  {}", dir.display()),
+        None => println!("  processed:  (deleted)"),
+    }
+    println!("  failed:     {}", spec.failed_dir.display());
+    println!("  interval:   {}s", spec.poll_interval_secs);
+    match spec.kind {
+        JobKind::Encrypt => {
+            for key in &spec.recipients {
+                println!("  recipient:  {key}");
+            }
+            if let Some(key) = &spec.signer {
+                println!("  sign with:  {key}");
+            }
+            println!(
+                "  format:     {:?}, {}, extension {}",
+                spec.container,
+                if spec.armor { "armored" } else { "binary" },
+                spec.output_extension()
+            );
+        }
+        JobKind::Decrypt => {
+            for key in &spec.decrypt_keys {
+                println!("  key:        {key}");
+            }
+            for key in &spec.verifiers {
+                println!("  verify:     {key}");
+            }
+            println!("  signatures: {:?}", spec.verify_policy);
+        }
+    }
+    if let Some(at) = job.last_run_at {
+        println!("  last run:   {}", format_time(at));
+    }
+    if let Some(error) = &job.last_error {
+        println!("  last error: {error}");
+    }
+}
+
+fn kind_name(kind: JobKind) -> &'static str {
+    match kind {
+        JobKind::Encrypt => "encrypt",
+        JobKind::Decrypt => "decrypt",
+    }
+}
+
+fn job_state(job: &Job) -> String {
+    match (&job.paused_reason, job.enabled) {
+        (Some(reason), _) => format!("PAUSED: {reason}"),
+        (None, true) => "enabled".into(),
+        (None, false) => "disabled".into(),
+    }
+}
+
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
 }
 
 fn print_keys(keys: &[KeyRecord]) {

@@ -5,6 +5,7 @@ pub mod audit;
 pub mod crypto;
 pub mod envelope;
 mod error;
+pub mod jobs;
 mod platform;
 pub mod store;
 pub mod vault;

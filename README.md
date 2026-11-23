@@ -8,8 +8,8 @@ A self-hosted, single-binary tool to manage OpenPGP keys and run folder jobs tha
 decrypt files: the glue between your customers' keys and the folders your SFTP transfers read
 from and write to.
 
-> **Status: early development.** Milestone 1 (key store + CLI) is done. The job engine and the
-> web UI are next. See [DESIGN.md](DESIGN.md) for the full plan.
+> **Status: early development.** Milestones 1 (key store + CLI) and 2 (job engine) are done.
+> The web UI is next. See [DESIGN.md](DESIGN.md) for the full plan.
 
 ## What works today
 
@@ -23,6 +23,17 @@ from and write to.
 - Every change is recorded in an append-only audit log: `watermelon audit`.
 - `watermelon backup <file>` writes a consistent database snapshot. The master key is
   deliberately **not** included, so back it up separately.
+- Folder jobs: `watermelon job add encrypt|decrypt`, `job list|show|enable|disable|delete`,
+  `job run-once`, and `watermelon run` to run all enabled jobs until Ctrl-C.
+  - A file is picked up once it is unchanged across two scans; `*.part`, `*.filepart`, `*.tmp`
+    and dotfiles are ignored.
+  - Output is streamed into a hidden temp file, synced, and published under its final name
+    without ever overwriting an existing file. Tampered input or a missing required signature
+    never produces output.
+  - Sources move to `processed/` (or are deleted) on success and to `failed/` on failure; every
+    file is audited with its SHA-256.
+  - A job whose recipient key expires or is revoked pauses itself; keys used by jobs can't be
+    deleted.
 
 ## Quick start
 
@@ -32,6 +43,11 @@ cargo build --release
 ./target/release/watermelon customer add ACME
 ./target/release/watermelon key gen --customer ACME --uid "ACME Exports <exports@acme.example>"
 ./target/release/watermelon key list
+
+# Encrypt everything dropped into ./outbox for ACME, archive the originals
+./target/release/watermelon job add encrypt --customer ACME --name outbound \
+    --input outbox --output to-sftp --recipient <ACME key ID>
+./target/release/watermelon run
 ```
 
 For scripted setups, `--passphrase-stdin` reads passwords from stdin instead of prompting, and

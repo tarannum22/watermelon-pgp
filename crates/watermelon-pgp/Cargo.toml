@@ -4,6 +4,7 @@ description = "Self-hosted web tool to manage OpenPGP keys and run folder encryp
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 
 [[bin]]
@@ -12,6 +13,8 @@ path = "src/main.rs"
 
 [dependencies]
 watermelon-pgp-core.workspace = true
+watermelon-pgp-jobs.workspace = true
+ctrlc.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 rpassword.workspace = true

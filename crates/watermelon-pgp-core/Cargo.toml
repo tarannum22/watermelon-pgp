@@ -4,6 +4,7 @@ description = "Key store, OpenPGP wrapper and audit log for watermelon-pgp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]

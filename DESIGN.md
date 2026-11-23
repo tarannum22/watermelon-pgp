@@ -75,9 +75,10 @@ config export/import, Windows as a first-class platform.
   custom extension (e.g. `.gpg`) are per-job options.
 - **Decrypt:** with our secret key, optional signature verification with policy
   `ignore` / `warn` / `require`. Strips a trailing `.pgp` / `.gpg` / `.asc`, otherwise keeps the name.
-- **Detection:** polling, per-job interval (default 30 s). A file is only picked up when it is
-  stable — size and mtime unchanged across two scans — and does not match ignore patterns
-  (`*.part`, `*.filepart`, `*.tmp`, dotfiles by default).
+- **Detection:** polling, per-job interval (default 30 s, minimum 5 s). A file is only picked up
+  when it is stable — size and mtime unchanged across two scans — and does not match ignore
+  patterns (`*.part`, `*.filepart`, `*.tmp`, `*.crdownload`, `*.partial`, dotfiles). Only regular
+  files directly in the input folder are considered; subfolders and symlinks are skipped.
 - **Processing:** streamed (bounded memory, multi-GB files). Output is written to a hidden temp file
   inside the output folder, fsynced, verified, then atomically renamed into place. SEIPD v1 input
   uses rPGP's streaming read mode; unauthenticated plaintext only ever lands in the temp file, which
@@ -85,7 +86,9 @@ config export/import, Windows as a first-class platform.
 - **After success:** source moves to the job's `processed/` folder (default) or is deleted.
 - **After failure:** source moves to the job's `failed/` folder; the error is in the audit log and on
   the job page. No automatic retries; retry is a button or moving the file back.
-- Existing output files are never overwritten — a name collision is a failure.
+- Existing output files are never overwritten — a name collision is a failure. Publishing uses a
+  hard link (atomic, fails if the name exists), falling back to a checked rename on filesystems
+  without hard links. Archived sources whose name is taken get a `.1`, `.2`, … suffix.
 - **Concurrency:** files within a job are processed sequentially; jobs run in parallel up to a
   global worker cap (default: CPU count).
 
@@ -109,8 +112,8 @@ Hash-chaining for tamper evidence comes later.
 
 ## Milestones
 
-1. **Core + CLI** — crypto wrapper, key store with master-key envelope, SQLite schema, audit log;
+1. ✅ **Core + CLI** — crypto wrapper, key store with master-key envelope, SQLite schema, audit log;
    CLI key commands (`gen` / `import` / `export` / `list`).
-2. **Job engine** — polling, stability check, encrypt/decrypt pipeline, processed/failed handling.
+2. ✅ **Job engine** — polling, stability check, encrypt/decrypt pipeline, processed/failed handling.
 3. **Web UI** — auth, customers, keys, jobs, audit view, dashboard.
 4. **Hardening & release** — TLS, security headers, interop CI, Docker image, docs, first release.

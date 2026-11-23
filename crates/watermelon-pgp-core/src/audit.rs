@@ -37,6 +37,13 @@ pub enum Action {
     KeyExportSecret,
     KeyDelete,
     Backup,
+    JobCreate,
+    JobEnable,
+    JobDisable,
+    JobDelete,
+    JobPause,
+    FileProcessed,
+    FileFailed,
 }
 
 impl Action {
@@ -51,6 +58,13 @@ impl Action {
             Action::KeyExportSecret => "key.export_secret",
             Action::KeyDelete => "key.delete",
             Action::Backup => "system.backup",
+            Action::JobCreate => "job.create",
+            Action::JobEnable => "job.enable",
+            Action::JobDisable => "job.disable",
+            Action::JobDelete => "job.delete",
+            Action::JobPause => "job.pause",
+            Action::FileProcessed => "file.processed",
+            Action::FileFailed => "file.failed",
         }
     }
 }
@@ -63,6 +77,7 @@ pub struct AuditEvent {
     pub action: String,
     pub customer_id: Option<i64>,
     pub key_fingerprint: Option<String>,
+    pub job_id: Option<i64>,
     pub detail: String,
 }
 
@@ -72,6 +87,7 @@ pub struct Entry<'a> {
     pub action: Action,
     pub customer_id: Option<i64>,
     pub key_fingerprint: Option<&'a str>,
+    pub job_id: Option<i64>,
     pub detail: String,
 }
 
@@ -82,6 +98,7 @@ impl<'a> Entry<'a> {
             action,
             customer_id: None,
             key_fingerprint: None,
+            job_id: None,
             detail: String::new(),
         }
     }
@@ -96,6 +113,11 @@ impl<'a> Entry<'a> {
         self
     }
 
+    pub fn job(mut self, id: i64) -> Self {
+        self.job_id = Some(id);
+        self
+    }
+
     pub fn detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = detail.into();
         self
@@ -104,14 +126,15 @@ impl<'a> Entry<'a> {
 
 pub fn record(conn: &Connection, entry: &Entry<'_>, now: i64) -> Result<()> {
     conn.execute(
-        "INSERT INTO audit_events (at, actor, action, customer_id, key_fingerprint, detail)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO audit_events (at, actor, action, customer_id, key_fingerprint, job_id, detail)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             now,
             entry.actor.as_str(),
             entry.action.as_str(),
             entry.customer_id,
             entry.key_fingerprint,
+            entry.job_id,
             entry.detail,
         ],
     )?;
@@ -121,7 +144,7 @@ pub fn record(conn: &Connection, entry: &Entry<'_>, now: i64) -> Result<()> {
 /// The most recent events, newest first.
 pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<AuditEvent>> {
     let mut stmt = conn.prepare(
-        "SELECT id, at, actor, action, customer_id, key_fingerprint, detail
+        "SELECT id, at, actor, action, customer_id, key_fingerprint, job_id, detail
          FROM audit_events ORDER BY id DESC LIMIT ?1",
     )?;
     let rows = stmt.query_map([limit], event_from_row)?;
@@ -136,6 +159,7 @@ fn event_from_row(row: &Row<'_>) -> rusqlite::Result<AuditEvent> {
         action: row.get(3)?,
         customer_id: row.get(4)?,
         key_fingerprint: row.get(5)?,
-        detail: row.get(6)?,
+        job_id: row.get(6)?,
+        detail: row.get(7)?,
     })
 }
