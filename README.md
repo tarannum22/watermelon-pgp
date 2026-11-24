@@ -49,6 +49,22 @@ watermelon init      # creates ./data: database, master key, admin password (pro
 watermelon serve     # web UI on http://127.0.0.1:8080, all enabled jobs running
 ```
 
+Every command works on a **data directory**: `./data` relative to where you run it, unless you
+choose another with `--data-dir` or the `WATERMELON_DATA_DIR` environment variable. Use the same
+one for every command, e.g. to keep a test setup apart:
+
+```sh
+watermelon --data-dir ~/watermelon-demo/data init
+watermelon --data-dir ~/watermelon-demo/data serve
+# or
+export WATERMELON_DATA_DIR=~/watermelon-demo/data
+watermelon init && watermelon serve
+```
+
+`init` puts the master key (`master.key`) into the data directory too, which is fine for trying
+it out. In production keep it elsewhere with `--master-key` / `WATERMELON_MASTER_KEY_FILE`; see
+[docs/deployment.md](docs/deployment.md#the-master-key).
+
 Log in, create a customer, generate or import its keys and create a job. Everything can also be
 scripted on the command line:
 
