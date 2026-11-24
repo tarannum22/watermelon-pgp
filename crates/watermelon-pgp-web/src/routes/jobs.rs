@@ -277,7 +277,7 @@ fn form_page(
                                     option value="" { "Don't sign" }
                                     @for key in data.keys.iter().filter(|k| (k.has_secret && k.can_sign && usable(k)) || form.signer == k.fingerprint) {
                                         option value=(key.fingerprint) selected[form.signer == key.fingerprint] {
-                                            (key.label()) " — " (key.customer_name) " — " (views::key_id(&key.fingerprint))
+                                            (key.label()) " — " (views::owner_name(key)) " — " (views::key_id(&key.fingerprint))
                                         }
                                     }
                                 }
@@ -331,7 +331,7 @@ fn key_choices<'a>(
     let keys: Vec<&KeyRecord> = keys.collect();
     html! {
         @if keys.is_empty() {
-            p.hint { "No suitable keys. Add them on the customer's page." }
+            p.hint { "No suitable keys. Add them on the " a href="/keys" { "Keys" } " page." }
         } @else {
             div.choices {
                 @for key in keys {
@@ -339,7 +339,7 @@ fn key_choices<'a>(
                         input type="checkbox" name=(name) value=(key.fingerprint) checked[selected.contains(&key.fingerprint)];
                         span.check-body {
                             strong { (key.label()) }
-                            span.muted { (key.customer_name) }
+                            span.muted { (views::owner_name(key)) }
                             code { (views::key_id(&key.fingerprint)) }
                             (views::key_status(key))
                         }

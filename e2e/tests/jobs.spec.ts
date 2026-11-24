@@ -91,3 +91,27 @@ test("the job form explains what's wrong and keeps the input", async ({ page }) 
   await expect(page.getByRole("alert")).toContainText("The job was not saved");
   await expect(page.getByLabel("Name", { exact: true })).toHaveValue("broken-job");
 });
+
+test("an anonymous key, with no customer, can be generated and used by a job", async ({ page }) => {
+  const customer = unique("Uses Anonymous");
+  await createCustomer(page, customer);
+
+  await page.goto("/keys");
+  await page.getByRole("button", { name: "Generate key pair" }).click();
+  const dialog = page.getByRole("dialog", { name: "Generate a key pair" });
+  await dialog.getByLabel("Customer").selectOption({ label: "No customer (anonymous key)" });
+  const name = unique("Ops Key");
+  await dialog.getByLabel("User ID").fill(`${name} <ops@example.com>`);
+  await dialog.getByRole("button", { name: "Generate key pair" }).click();
+  await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
+  await expect(page.locator(".key-details")).toContainText("anonymous");
+
+  await page.goto("/keys?show=anonymous");
+  await expect(page.locator(".key-row", { hasText: name })).toContainText("anonymous");
+
+  const outbox = folder(`${customer} outbox`);
+  const upload = folder(`${customer} upload`);
+  await createJob(page, { customer, name: "with-anonymous-key", kind: "Encrypt", input: outbox, output: upload, key: name });
+  fs.writeFileSync(path.join(outbox, "report.csv"), "a,b\n1,2\n");
+  await waitForFile(upload, /^report\.csv\.pgp$/);
+});

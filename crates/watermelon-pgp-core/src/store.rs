@@ -95,6 +95,35 @@ CREATE INDEX audit_events_job ON audit_events (job_id, id);
 CREATE INDEX audit_events_key ON audit_events (key_fingerprint, id);
 CREATE INDEX audit_events_action ON audit_events (action, at);
 "#,
+    // v4: anonymous keys, which belong to no customer. SQLite can't drop a NOT NULL
+    // constraint, so the table is rebuilt (with foreign keys off, see `migrate`).
+    r#"
+CREATE TABLE keys_new (
+    id            INTEGER PRIMARY KEY,
+    customer_id   INTEGER REFERENCES customers(id),
+    fingerprint   TEXT NOT NULL UNIQUE,
+    user_ids      TEXT NOT NULL,
+    algorithm     TEXT NOT NULL,
+    created_at    INTEGER NOT NULL,
+    expires_at    INTEGER,
+    revoked       INTEGER NOT NULL,
+    can_encrypt   INTEGER NOT NULL,
+    can_sign      INTEGER NOT NULL,
+    public_cert   BLOB NOT NULL,
+    sealed_secret BLOB,
+    added_at      INTEGER NOT NULL,
+    deleted_at    INTEGER
+);
+INSERT INTO keys_new (id, customer_id, fingerprint, user_ids, algorithm, created_at, expires_at,
+                      revoked, can_encrypt, can_sign, public_cert, sealed_secret, added_at,
+                      deleted_at)
+    SELECT id, customer_id, fingerprint, user_ids, algorithm, created_at, expires_at, revoked,
+           can_encrypt, can_sign, public_cert, sealed_secret, added_at, deleted_at
+    FROM keys;
+DROP TABLE keys;
+ALTER TABLE keys_new RENAME TO keys;
+CREATE INDEX keys_customer ON keys(customer_id);
+"#,
 ];
 
 pub struct Store {
@@ -112,8 +141,9 @@ pub struct Customer {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyRecord {
     pub id: i64,
-    pub customer_id: i64,
-    pub customer_name: String,
+    /// `None` for an anonymous key, which belongs to no customer.
+    pub customer_id: Option<i64>,
+    pub customer_name: Option<String>,
     pub fingerprint: String,
     pub user_ids: Vec<String>,
     pub algorithm: String,
@@ -138,7 +168,7 @@ impl KeyRecord {
 
 /// Everything needed to insert or replace a key row.
 pub struct KeyRow<'a> {
-    pub customer_id: i64,
+    pub customer_id: Option<i64>,
     pub fingerprint: &'a str,
     pub user_ids: &'a [String],
     pub algorithm: &'a str,
@@ -184,13 +214,33 @@ impl Store {
                 MIGRATIONS.len()
             )));
         }
-        for (version, sql) in MIGRATIONS.iter().enumerate().skip(applied) {
-            let tx = self.conn.unchecked_transaction()?;
-            tx.execute_batch(sql)?;
-            tx.pragma_update(None, "user_version", version as i64 + 1)?;
-            tx.commit()?;
+        if applied == MIGRATIONS.len() {
+            return Ok(());
         }
-        Ok(())
+        // Rebuilding a table other tables refer to needs foreign keys off (they can only be
+        // switched outside a transaction); check them all before switching them back on.
+        self.conn.pragma_update(None, "foreign_keys", "OFF")?;
+        let result = (|| {
+            for (version, sql) in MIGRATIONS.iter().enumerate().skip(applied) {
+                let tx = self.conn.unchecked_transaction()?;
+                tx.execute_batch(sql)?;
+                let broken: i64 =
+                    tx.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                        row.get(0)
+                    })?;
+                if broken > 0 {
+                    return Err(Error::Invalid(format!(
+                        "schema migration {} would break {broken} references",
+                        version + 1
+                    )));
+                }
+                tx.pragma_update(None, "user_version", version as i64 + 1)?;
+                tx.commit()?;
+            }
+            Ok(())
+        })();
+        self.conn.pragma_update(None, "foreign_keys", "ON")?;
+        result
     }
 
     /// Run `f` inside a transaction that commits only if `f` succeeds.
@@ -334,7 +384,7 @@ pub fn key_by_fingerprint(conn: &Connection, fingerprint: &str) -> Result<Option
     Ok(conn
         .query_row(
             &format!(
-                "SELECT {KEY_COLUMNS} FROM keys k JOIN customers c ON c.id = k.customer_id
+                "SELECT {KEY_COLUMNS} FROM keys k LEFT JOIN customers c ON c.id = k.customer_id
                  WHERE k.fingerprint = ?1"
             ),
             [fingerprint],
@@ -343,12 +393,12 @@ pub fn key_by_fingerprint(conn: &Connection, fingerprint: &str) -> Result<Option
         .optional()?)
 }
 
-/// Active (not deleted) keys, optionally for one customer.
+/// Active (not deleted) keys, optionally for one customer. Anonymous keys come last.
 pub fn keys(conn: &Connection, customer_id: Option<i64>) -> Result<Vec<KeyRecord>> {
     let mut stmt = conn.prepare(&format!(
-        "SELECT {KEY_COLUMNS} FROM keys k JOIN customers c ON c.id = k.customer_id
+        "SELECT {KEY_COLUMNS} FROM keys k LEFT JOIN customers c ON c.id = k.customer_id
          WHERE k.deleted_at IS NULL AND (?1 IS NULL OR k.customer_id = ?1)
-         ORDER BY c.name, k.user_ids"
+         ORDER BY c.name IS NULL, c.name, k.user_ids"
     ))?;
     let rows = stmt.query_map([customer_id], key_from_row)?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -408,4 +458,83 @@ fn key_from_row(row: &Row<'_>) -> rusqlite::Result<KeyRecord> {
         added_at: row.get(12)?,
         deleted_at: row.get(13)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A database as 0.1.0 left it (schema v3), with a key a job uses.
+    fn v3_database() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in &MIGRATIONS[..3] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 3).unwrap();
+        conn.execute_batch(
+            "INSERT INTO customers (id, name, created_at) VALUES (1, 'ACME', 0);
+             INSERT INTO keys (id, customer_id, fingerprint, user_ids, algorithm, created_at,
+                               revoked, can_encrypt, can_sign, public_cert, sealed_secret,
+                               added_at)
+                 VALUES (7, 1, 'ABCD', 'ACME', 'Ed25519', 0, 0, 1, 1, x'01', x'02', 0);
+             INSERT INTO jobs (id, customer_id, name, kind, input_dir, output_dir, failed_dir,
+                               poll_interval_secs, armor, container, verify_policy, enabled,
+                               created_at, updated_at)
+                 VALUES (3, 1, 'daily', 'encrypt', '/in', '/out', '/in/failed', 30, 0,
+                         'seipd-v1', 'ignore', 1, 0, 0);
+             INSERT INTO job_keys (job_id, fingerprint, role) VALUES (3, 'ABCD', 'recipient');",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn upgrading_from_0_1_0_keeps_keys_and_allows_anonymous_ones() {
+        let store = Store::init(v3_database()).unwrap();
+        let conn = store.conn();
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version as usize, MIGRATIONS.len());
+
+        let key = key_by_fingerprint(conn, "ABCD").unwrap().unwrap();
+        assert_eq!((key.id, key.customer_id), (7, Some(1)));
+        assert_eq!(key.customer_name.as_deref(), Some("ACME"));
+        assert!(key.has_secret);
+
+        // Foreign keys are back on and still hold: the job's key reference, customers.
+        let on: i64 = conn
+            .pragma_query_value(None, "foreign_keys", |row| row.get(0))
+            .unwrap();
+        assert_eq!(on, 1);
+        assert!(
+            conn.execute("INSERT INTO job_keys VALUES (3, 'NOPE', 'recipient')", [])
+                .is_err()
+        );
+        let row = |customer_id, fingerprint| KeyRow {
+            customer_id,
+            fingerprint,
+            user_ids: &[],
+            algorithm: "Ed25519",
+            created_at: 0,
+            expires_at: None,
+            revoked: false,
+            can_encrypt: true,
+            can_sign: true,
+            public_cert: &[1],
+            sealed_secret: None,
+        };
+        assert!(upsert_key(conn, &row(Some(99), "BAD"), 0).is_err());
+
+        // A key without a customer.
+        upsert_key(conn, &row(None, "EF01"), 0).unwrap();
+        let anonymous = key_by_fingerprint(conn, "EF01").unwrap().unwrap();
+        assert_eq!(
+            (anonymous.customer_id, anonymous.customer_name),
+            (None, None)
+        );
+        assert_eq!(keys(conn, None).unwrap().len(), 2);
+        assert_eq!(keys(conn, Some(1)).unwrap().len(), 1);
+    }
 }

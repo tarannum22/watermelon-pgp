@@ -169,10 +169,11 @@ impl Vault {
         store::keys(self.store.conn(), customer_id)
     }
 
+    /// Generate a key pair, for a customer or (with `None`) as an anonymous key.
     pub fn generate_key(
         &self,
         actor: Actor,
-        customer_id: i64,
+        customer_id: impl Into<Option<i64>>,
         user_id: &str,
         algorithm: Algorithm,
     ) -> Result<KeyRecord> {
@@ -180,7 +181,7 @@ impl Vault {
             return Err(Error::Invalid("user ID must not be empty".into()));
         }
         let key = crypto::generate(user_id.trim(), algorithm)?;
-        self.add_generated_key(actor, customer_id, key)
+        self.add_generated_key(actor, customer_id.into(), key)
     }
 
     /// Store a key made with [`crypto::generate`]. Lets callers generate (slow for RSA) without
@@ -188,9 +189,10 @@ impl Vault {
     pub fn add_generated_key(
         &self,
         actor: Actor,
-        customer_id: i64,
+        customer_id: impl Into<Option<i64>>,
         key: SignedSecretKey,
     ) -> Result<KeyRecord> {
+        let customer_id = customer_id.into();
         let cert = Cert::Secret(key);
         self.store.transaction(|tx| {
             let record = self.save(tx, customer_id, &cert)?;
@@ -206,17 +208,19 @@ impl Vault {
         })
     }
 
-    /// Import every key in `data` (armored or binary) for one customer, all or nothing.
+    /// Import every key in `data` (armored or binary) for one customer, or as anonymous keys
+    /// with `None`, all or nothing.
     ///
     /// Passphrase-protected secret keys are unlocked with `passphrase` and stored under the
     /// master key instead; the passphrase itself is not kept.
     pub fn import_keys(
         &self,
         actor: Actor,
-        customer_id: i64,
+        customer_id: impl Into<Option<i64>>,
         data: &[u8],
         passphrase: Option<&str>,
     ) -> Result<Vec<KeyRecord>> {
+        let customer_id = customer_id.into();
         let mut certs = crypto::parse_certs(data)?;
         for cert in &mut certs {
             if cert.is_locked() {
@@ -240,10 +244,16 @@ impl Vault {
                     .filter(|existing| existing.deleted_at.is_none());
                 let (record, action, detail) = match existing {
                     Some(existing) if existing.customer_id != customer_id => {
-                        return Err(Error::Conflict(format!(
-                            "key {} already belongs to customer {:?}",
-                            info.fingerprint, existing.customer_name
-                        )));
+                        return Err(Error::Conflict(match &existing.customer_name {
+                            Some(name) => format!(
+                                "key {} already belongs to customer {name:?}",
+                                info.fingerprint
+                            ),
+                            None => format!(
+                                "key {} is already imported as an anonymous key",
+                                info.fingerprint
+                            ),
+                        }));
                     }
                     Some(existing) if !(info.has_secret && !existing.has_secret) => {
                         let (record, detail) = self.refresh_public(tx, &existing, cert)?;
@@ -510,7 +520,7 @@ impl Vault {
     fn save(
         &self,
         conn: &rusqlite::Connection,
-        customer_id: i64,
+        customer_id: Option<i64>,
         cert: &Cert,
     ) -> Result<KeyRecord> {
         let info = cert.info();
@@ -703,6 +713,101 @@ mod tests {
             .unwrap();
         assert!(second[0].has_secret);
         assert_eq!(first[0].id, second[0].id);
+    }
+
+    #[test]
+    fn anonymous_keys_belong_to_no_customer() {
+        // A partner's vault, to import their key from.
+        let (_other_dir, other) = vault();
+        let (_dir, vault) = vault();
+        let acme = vault.create_customer(Actor::Cli, "ACME").unwrap().id;
+        vault
+            .generate_key(Actor::Cli, acme, "ACME", Algorithm::Curve25519)
+            .unwrap();
+        let ours = vault
+            .generate_key(
+                Actor::Admin,
+                None,
+                "Ours <ops@example.com>",
+                Algorithm::Curve25519,
+            )
+            .unwrap();
+        assert_eq!(
+            (ours.customer_id, ours.customer_name.as_deref()),
+            (None, None)
+        );
+        assert!(ours.has_secret);
+
+        // Listed with all keys (last), not with any customer's.
+        let all = vault.keys(None).unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all.last().unwrap().fingerprint, ours.fingerprint);
+        assert!(
+            vault
+                .keys(Some(acme))
+                .unwrap()
+                .iter()
+                .all(|k| k.customer_id == Some(acme))
+        );
+        assert_eq!(vault.find_key(&ours.fingerprint).unwrap().customer_id, None);
+
+        // Audited without a customer.
+        let event = &vault.audit_events(1).unwrap()[0];
+        assert_eq!(event.action, "key.generate");
+        assert_eq!(event.customer_id, None);
+        assert_eq!(
+            event.key_fingerprint.as_deref(),
+            Some(ours.fingerprint.as_str())
+        );
+
+        // Imported keys can be anonymous too, and an anonymous key can't be imported again for
+        // a customer (or the other way round): a key has one owner.
+        let partner = other
+            .generate_key(Actor::Cli, None, "Partner", Algorithm::Curve25519)
+            .unwrap();
+        let armored = other
+            .export_public(Actor::Cli, &partner.fingerprint)
+            .unwrap();
+        let imported = vault
+            .import_keys(Actor::Admin, None, armored.as_bytes(), None)
+            .unwrap();
+        assert_eq!(imported[0].customer_id, None);
+        let err = vault
+            .import_keys(Actor::Admin, acme, armored.as_bytes(), None)
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("already imported as an anonymous key"),
+            "{err}"
+        );
+        let acme_key = vault.keys(Some(acme)).unwrap().remove(0);
+        let acme_public = vault
+            .export_public(Actor::Cli, &acme_key.fingerprint)
+            .unwrap();
+        let err = vault
+            .import_keys(Actor::Admin, None, acme_public.as_bytes(), None)
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("already belongs to customer \"ACME\""),
+            "{err}"
+        );
+
+        // Usable like any other key: revoke, export, delete.
+        vault
+            .revoke_key(
+                Actor::Admin,
+                &ours.fingerprint,
+                RevocationReason::Retired,
+                "",
+            )
+            .unwrap();
+        assert!(
+            vault
+                .export_secret(Actor::Admin, &ours.fingerprint, "a new passphrase")
+                .is_ok()
+        );
+        vault.delete_key(Actor::Admin, &ours.fingerprint).unwrap();
     }
 
     #[test]

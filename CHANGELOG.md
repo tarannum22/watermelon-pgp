@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Keys
+- Anonymous keys: a key can belong to no customer, for example your own signing key used by
+  several customers' jobs. Generate or import them from the Keys page ("No customer") or with
+  `key gen` / `key import` without `--customer`. They show as "anonymous" and have their own
+  filter on the Keys page.
+- Keys can be generated and imported from the Keys page, choosing the customer in the dialog.
+- The database is upgraded automatically on first start (schema v4). Back it up first
+  (`watermelon backup`): 0.1.0 can't open the upgraded database.
+
 ### Web UI
 - New look, built on a design system: design tokens (colour roles, type, spacing) in one file,
   reusable components in `src/ui`, and a living style guide at `/design` in evaluation builds

@@ -3,7 +3,7 @@ use axum::{
     http::header,
     response::{IntoResponse, Redirect, Response},
 };
-use maud::{Markup, Render, html};
+use maud::{Markup, html};
 use serde::Deserialize;
 use watermelon_pgp_core::{
     audit::{Actor, Filter},
@@ -69,7 +69,7 @@ fn key_row(key: &KeyRecord, with_customer: bool) -> Markup {
                     (views::key_capabilities(key))
                     @if with_customer {
                         span { (ui::icon_with(icons::CUSTOMERS, "icon sm")) }
-                        a href={ "/customers/" (key.customer_id) } { (key.customer_name) }
+                        (views::key_owner(key))
                     }
                 }
             }
@@ -78,6 +78,36 @@ fn key_row(key: &KeyRecord, with_customer: bool) -> Markup {
                 span.subtle { "Created " (views::date(key.created_at)) }
             }
         }
+    }
+}
+
+/// The customer picker of the Keys page's dialogs: a customer, or explicitly none.
+fn owner_select(customers: &[Customer]) -> Markup {
+    ui::field(
+        "Customer",
+        Some("Who the key is for. A key without a customer is an anonymous key."),
+        html! {
+            select name="customer" required autofocus {
+                option value="" { "Choose…" }
+                option value=(ANONYMOUS) { "No customer (anonymous key)" }
+                @for customer in customers {
+                    option value=(customer.id) { (customer.name) }
+                }
+            }
+        },
+    )
+}
+
+/// The `customer` form value for "no customer".
+const ANONYMOUS: &str = "none";
+
+/// The customer picked in [`owner_select`]: `Some(None)` for an anonymous key.
+fn picked_owner(value: &str) -> Result<Option<i64>, AppError> {
+    match value.trim() {
+        ANONYMOUS => Ok(None),
+        other => super::parse_id(other)
+            .map(Some)
+            .ok_or_else(|| AppError::bad_request("choose a customer, or no customer")),
     }
 }
 
@@ -103,21 +133,10 @@ pub fn generate_modal(csrf: &str, owner: Owner<'_>) -> Markup {
         "generate-key",
         "Generate a key pair",
         html! {
-            @if let Owner::Choose([]) = owner {
-                p { "Every key belongs to a customer. Create one first." }
-                (ui::button("Go to customers").primary().icon(icons::CUSTOMERS).href("/customers"))
-            } @else {
-                form.form method="post" action=(action) {
+            form.form method="post" action=(action) {
                     (views::csrf_field(csrf))
                     @if let Owner::Choose(customers) = owner {
-                        (ui::field("Customer", Some("Who the key is for. Keys and jobs always belong to a customer."), html! {
-                            select name="customer" required autofocus {
-                                option value="" { "Choose…" }
-                                @for customer in customers {
-                                    option value=(customer.id) { (customer.name) }
-                                }
-                            }
-                        }))
+                        (owner_select(customers))
                     }
                     (ui::field("User ID", Some("Name and email address partners will see on the key."), html! {
                         input type="text" name="user_id" required maxlength="500" placeholder=(placeholder)
@@ -130,21 +149,26 @@ pub fn generate_modal(csrf: &str, owner: Owner<'_>) -> Markup {
                         }
                     }))
                     div.actions { (ui::button("Generate key pair").primary().icon(icons::KEY)) }
-                }
             }
         },
     )
 }
 
 /// The "Import keys" dialog, opened by `.opens("import-keys")`.
-pub fn import_modal(csrf: &str, customer: &Customer) -> Markup {
+pub fn import_modal(csrf: &str, owner: Owner<'_>) -> Markup {
+    let action = match &owner {
+        Owner::Customer(customer) => format!("/customers/{}/keys/import", customer.id),
+        Owner::Choose(_) => "/keys/import".to_owned(),
+    };
     ui::modal(
         "import-keys",
         "Import keys",
         html! {
-            form.form method="post" action={ "/customers/" (customer.id) "/keys/import" }
-                enctype="multipart/form-data" {
+            form.form method="post" action=(action) enctype="multipart/form-data" {
                 (views::csrf_field(csrf))
+                @if let Owner::Choose(customers) = owner {
+                    (owner_select(customers))
+                }
                 (ui::field("Key file", Some("Armored (.asc) or binary (.gpg, .pgp)."), html! { input type="file" name="file"; }))
                 (ui::field("…or paste an armored key", None, html! {
                     textarea name="armored" rows="5" placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----" {}
@@ -166,6 +190,7 @@ enum Show {
     Public,
     Attention,
     Revoked,
+    Anonymous,
 }
 
 const SHOW: &[(Show, &str, &str)] = &[
@@ -174,6 +199,7 @@ const SHOW: &[(Show, &str, &str)] = &[
     (Show::Public, "public", "Public only"),
     (Show::Attention, "attention", "Needs attention"),
     (Show::Revoked, "revoked", "Revoked"),
+    (Show::Anonymous, "anonymous", "Anonymous"),
 ];
 
 impl Show {
@@ -184,6 +210,7 @@ impl Show {
             Show::Public => !key.has_secret,
             Show::Attention => views::key_needs_attention(key),
             Show::Revoked => key.revoked,
+            Show::Anonymous => key.customer_id.is_none(),
         }
     }
 }
@@ -201,7 +228,7 @@ fn key_matches_text(key: &KeyRecord, text: &str) -> bool {
     key.user_ids
         .iter()
         .any(|uid| uid.to_lowercase().contains(&text))
-        || key.customer_name.to_lowercase().contains(&text)
+        || views::owner_name(key).to_lowercase().contains(&text)
         || (!hex.is_empty() && key.fingerprint.contains(&hex))
 }
 
@@ -237,9 +264,13 @@ pub async fn list(
         page,
         html! {
             (ui::page_header("Keys")
-                .subtitle(html! { "All keys of all customers. To import a partner's key, open the " a href="/customers" { "customer" } "." })
-                .actions(ui::button("Generate key pair").primary().icon(icons::KEY).opens("generate-key").render()))
+                .subtitle(html! { "All keys: those of your customers, and anonymous keys that belong to no customer." })
+                .actions(html! {
+                    (ui::button("Import keys").icon(icons::UPLOAD).opens("import-keys"))
+                    (ui::button("Generate key pair").primary().icon(icons::KEY).opens("generate-key"))
+                }))
             (generate_modal(&auth.csrf, Owner::Choose(&customers)))
+            (import_modal(&auth.csrf, Owner::Choose(&customers)))
             (ui::panel(key_list(&shown, true))
                 .actions(html! {
                     form.inline-search method="get" action="/keys" role="search" {
@@ -285,15 +316,17 @@ pub async fn show(
     let page = state.page(&auth, key.label(), Nav::Keys);
     let (name, _) = views::uid_parts(key.label());
     let base = format!("/keys/{}", key.fingerprint);
-    let customer_url = format!("/customers/{}", key.customer_id);
     let (tone, state_text) = views::key_state(&key);
     let min_passphrase = MIN_EXPORT_PASSPHRASE_LEN.to_string();
     Ok(views::layout(
         page,
         html! {
-            (ui::page_header(name)
-                .crumb("Customers", "/customers")
-                .crumb(&key.customer_name, customer_url.clone())
+            (match (key.customer_id, &key.customer_name) {
+                (Some(id), Some(customer)) => ui::page_header(name)
+                    .crumb("Customers", "/customers")
+                    .crumb(customer, format!("/customers/{id}")),
+                _ => ui::page_header(name).crumb("Keys", "/keys"),
+            }
                 .status(ui::pill(tone, &state_text))
                 .subtitle(html! {
                     @if key.has_secret { "Key pair: we hold the secret key." } @else { "Public key of a partner." }
@@ -304,7 +337,7 @@ pub async fn show(
                     (ui::fingerprint_box(&key.fingerprint))
                     dl.kv {
                         dt { "User IDs" } dd { @for uid in &key.user_ids { div { (uid) } } }
-                        dt { "Customer" } dd { a href=(customer_url) { (key.customer_name) } }
+                        dt { "Customer" } dd { (views::key_owner(&key)) }
                         dt { "Algorithm" } dd { (key.algorithm) }
                         dt { "Can" } dd { (views::key_capabilities(&key)) }
                     }
@@ -446,21 +479,20 @@ pub async fn generate(
     posted: Posted<GenerateForm>,
 ) -> Redirect {
     let back = format!("/customers/{customer_id}");
-    let outcome = generate_key(&state, customer_id, &posted.form)
+    let outcome = generate_key(&state, Some(customer_id), &posted.form)
         .await
         .map(|record| generated(&record));
     state.done(&posted.auth, &back, outcome)
 }
 
-/// Generate a key pair from the Keys page, for the customer picked in the form; on to the new
-/// key's page.
+/// Generate a key pair from the Keys page, for the customer picked in the form or as an
+/// anonymous key; on to the new key's page.
 pub async fn generate_for_customer(
     State(state): State<AppState>,
     posted: Posted<GenerateForm>,
 ) -> Redirect {
     let outcome = async {
-        let customer_id = super::parse_id(&posted.form.customer)
-            .ok_or_else(|| AppError::bad_request("choose a customer"))?;
+        let customer_id = picked_owner(&posted.form.customer)?;
         generate_key(&state, customer_id, &posted.form).await
     }
     .await;
@@ -484,7 +516,7 @@ fn generated(record: &KeyRecord) -> String {
 
 async fn generate_key(
     state: &AppState,
-    customer_id: i64,
+    customer_id: Option<i64>,
     form: &GenerateForm,
 ) -> Result<KeyRecord, AppError> {
     let algorithm = match form.algorithm.as_str() {
@@ -501,9 +533,9 @@ async fn generate_key(
         return Err(AppError::bad_request("the user ID must not be empty"));
     }
     // Make sure the customer exists before spending seconds on an RSA key.
-    state
-        .vault(move |vault| vault.customer_by_id(customer_id))
-        .await?;
+    if let Some(id) = customer_id {
+        state.vault(move |vault| vault.customer_by_id(id)).await?;
+    }
     // Generate outside the vault lock, which the job engine shares.
     let key = tokio::task::spawn_blocking(move || crypto::generate(&user_id, algorithm))
         .await
@@ -520,7 +552,9 @@ pub async fn import(
     multipart: Multipart,
 ) -> Response {
     let back = format!("/customers/{customer_id}");
-    let outcome = import_upload(&state, &auth, customer_id, multipart).await;
+    let outcome = import_upload(&state, &auth, Some(customer_id), multipart)
+        .await
+        .map(|(message, _)| message);
     if let Err(e) = &outcome
         && e.status == axum::http::StatusCode::FORBIDDEN
     {
@@ -530,12 +564,39 @@ pub async fn import(
     state.done(&auth, &back, outcome).into_response()
 }
 
+/// Import keys from the Keys page, for the customer picked in the form or as anonymous keys;
+/// on to the key's page when it was one key.
+pub async fn import_for_customer(
+    State(state): State<AppState>,
+    auth: Authed,
+    multipart: Multipart,
+) -> Response {
+    let outcome = import_upload(&state, &auth, None, multipart).await;
+    match outcome {
+        Err(e) if e.status == axum::http::StatusCode::FORBIDDEN => {
+            AppError::new(e.status, e.message()).into_response()
+        }
+        Ok((message, fingerprints)) => {
+            let to = match fingerprints.as_slice() {
+                [one] => key_url(one),
+                _ => "/keys".to_owned(),
+            };
+            state.done(&auth, &to, Ok(message)).into_response()
+        }
+        Err(e) => state.done(&auth, "/keys", Err(e)).into_response(),
+    }
+}
+
+/// Read an import form and import its keys: for `customer_id`, or (when `None`) for the
+/// customer picked in the form. Returns the message to show and the imported fingerprints.
 async fn import_upload(
     state: &AppState,
     auth: &Authed,
-    customer_id: i64,
+    customer_id: Option<i64>,
     mut multipart: Multipart,
-) -> Result<String, AppError> {
+) -> Result<(String, Vec<String>), AppError> {
+    let from_url = customer_id.is_some();
+    let mut picked = String::new();
     let mut csrf = String::new();
     let mut data = Vec::new();
     let mut pasted = String::new();
@@ -554,10 +615,16 @@ async fn import_upload(
             "file" => data = field.bytes().await.map_err(bad)?.to_vec(),
             "armored" => pasted = field.text().await.map_err(bad)?,
             "passphrase" => *passphrase = field.text().await.map_err(bad)?,
+            "customer" => picked = field.text().await.map_err(bad)?,
             _ => {}
         }
     }
     auth.check_csrf(&csrf)?;
+    let customer_id = if from_url {
+        customer_id
+    } else {
+        picked_owner(&picked)?
+    };
     if data.is_empty() {
         data = pasted.trim().as_bytes().to_vec();
     }
@@ -581,7 +648,10 @@ async fn import_upload(
             )
         })
         .collect();
-    Ok(format!("Imported or updated {}.", summary.join(", ")))
+    Ok((
+        format!("Imported or updated {}.", summary.join(", ")),
+        imported.into_iter().map(|key| key.fingerprint).collect(),
+    ))
 }
 
 pub async fn export_public(
@@ -651,8 +721,7 @@ fn key_url(fpr: &str) -> String {
 }
 
 fn download(key: &KeyRecord, kind: &str, armored: String) -> Response {
-    let customer: String = key
-        .customer_name
+    let customer: String = views::owner_name(key)
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
@@ -685,7 +754,8 @@ pub async fn delete(
     {
         Ok(key) => state.done(
             &posted.auth,
-            &format!("/customers/{}", key.customer_id),
+            &key.customer_id
+                .map_or("/keys".to_owned(), |id| format!("/customers/{id}")),
             Ok(format!("Deleted key {}.", key.label())),
         ),
         Err(e) => state.done(&posted.auth, &back, Err(e)),

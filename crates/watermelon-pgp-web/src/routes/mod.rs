@@ -41,6 +41,7 @@ pub fn router() -> Router<AppState> {
         .route("/customers/{id}/keys/import", post(keys::import))
         .route("/keys", get(keys::list))
         .route("/keys/generate", post(keys::generate_for_customer))
+        .route("/keys/import", post(keys::import_for_customer))
         .route("/keys/{fpr}", get(keys::show))
         .route("/keys/{fpr}/public", post(keys::export_public))
         .route("/keys/{fpr}/secret", post(keys::export_secret))

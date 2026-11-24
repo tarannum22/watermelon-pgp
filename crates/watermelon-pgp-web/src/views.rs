@@ -255,6 +255,19 @@ pub fn uid_parts(uid: &str) -> (&str, Option<&str>) {
     }
 }
 
+/// Whose key it is: a link to the customer, or "anonymous" for a key that belongs to no one.
+pub fn key_owner(key: &KeyRecord) -> Markup {
+    match (key.customer_id, &key.customer_name) {
+        (Some(id), Some(name)) => html! { a href={ "/customers/" (id) } { (name) } },
+        _ => ui::tag("anonymous", "belongs to no customer", false),
+    }
+}
+
+/// The customer's name, or "Anonymous", as plain text.
+pub fn owner_name(key: &KeyRecord) -> &str {
+    key.customer_name.as_deref().unwrap_or("Anonymous")
+}
+
 /// Revoked / expired / expiring soon / valid.
 pub fn key_status(key: &KeyRecord) -> Markup {
     let (tone, text) = key_state(key);

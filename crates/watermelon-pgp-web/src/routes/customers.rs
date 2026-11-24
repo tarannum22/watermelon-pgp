@@ -24,7 +24,7 @@ pub async fn list(State(state): State<AppState>, auth: Authed) -> Result<Markup,
         page,
         html! {
             (ui::page_header("Customers")
-                .subtitle(html! { "Every partner you exchange files with. Keys and jobs always belong to a customer." })
+                .subtitle(html! { "Every partner you exchange files with, with their keys and jobs." })
                 .actions(ui::button("New customer").primary().icon(icons::PLUS).opens("new-customer").render()))
             (ui::panel(html! {
                 @if customers.is_empty() {
@@ -40,7 +40,7 @@ pub async fn list(State(state): State<AppState>, auth: Authed) -> Result<Markup,
                                         td {
                                             a.strong href={ "/customers/" (customer.id) } { (customer.name) }
                                         }
-                                        td.num { (keys.iter().filter(|k| k.customer_id == customer.id).count()) }
+                                        td.num { (keys.iter().filter(|k| k.customer_id == Some(customer.id)).count()) }
                                         td.num { (jobs.iter().filter(|j| j.customer_id == customer.id).count()) }
                                         td { (views::date(customer.created_at)) }
                                     }
@@ -147,7 +147,7 @@ pub async fn show(
             })
             .flush())
             (keys::generate_modal(&auth.csrf, keys::Owner::Customer(&customer)))
-            (keys::import_modal(&auth.csrf, &customer))
+            (keys::import_modal(&auth.csrf, keys::Owner::Customer(&customer)))
 
             (ui::panel(html! {
                 @if jobs.is_empty() {

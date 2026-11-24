@@ -448,48 +448,32 @@ async fn customer_and_key_lifecycle() {
 async fn keys_can_be_generated_from_the_keys_page() {
     let app = App::new();
     let session = app.login().await;
-
-    // Without customers the dialog says to create one first.
-    let page = app.get("/keys", Some(&session)).await;
-    assert!(
-        page.body
-            .contains("Every key belongs to a customer. Create one first.")
-    );
-
     let acme = app.vault().create_customer(Actor::Cli, "Acme").unwrap();
     let page = app.get("/keys", Some(&session)).await;
     assert!(page.body.contains(r#"action="/keys/generate""#));
     assert!(
         page.body
+            .contains(r#"<option value="none">No customer (anonymous key)</option>"#)
+    );
+    assert!(
+        page.body
             .contains(&format!(r#"<option value="{}">Acme</option>"#, acme.id))
     );
 
-    // A customer must be picked.
-    let reply = app
-        .submit(
-            "/keys/generate",
-            &session,
-            "customer=&user_id=X&algorithm=curve25519",
-        )
-        .await;
-    assert_eq!(reply.location(), "/keys");
-    assert!(
-        app.follow(reply, &session)
-            .await
-            .body
-            .contains("choose a customer")
-    );
-    let reply = app
-        .submit(
-            "/keys/generate",
-            &session,
-            "customer=999&user_id=X&algorithm=curve25519",
-        )
-        .await;
-    assert_eq!(reply.location(), "/keys");
+    // A choice must be made: a customer, or explicitly none.
+    for bad in ["", "999"] {
+        let reply = app
+            .submit(
+                "/keys/generate",
+                &session,
+                &format!("customer={bad}&user_id=X&algorithm=curve25519"),
+            )
+            .await;
+        assert_eq!(reply.location(), "/keys", "{bad:?}");
+    }
     assert!(app.vault().keys(None).unwrap().is_empty());
 
-    // On success: the key belongs to the picked customer, and the new key's page opens.
+    // For a customer: the new key's page opens.
     let reply = app
         .submit(
             "/keys/generate",
@@ -503,18 +487,47 @@ async fn keys_can_be_generated_from_the_keys_page() {
         .await;
     let keys = app.vault().keys(Some(acme.id)).unwrap();
     assert_eq!(keys.len(), 1);
-    assert!(keys[0].has_secret);
     assert_eq!(reply.location(), format!("/keys/{}", keys[0].fingerprint));
     let page = app.follow(reply, &session).await;
     assert!(page.body.contains("Generated key Acme Exports"));
-    assert!(app.actions().contains(&"key.generate".to_owned()));
+
+    // Anonymous: no customer.
+    let reply = app
+        .submit(
+            "/keys/generate",
+            &session,
+            &format!(
+                "customer=none&user_id={}&algorithm=curve25519",
+                enc("Ops <ops@example.com>")
+            ),
+        )
+        .await;
+    let anonymous: Vec<_> = app
+        .vault()
+        .keys(None)
+        .unwrap()
+        .into_iter()
+        .filter(|k| k.customer_id.is_none())
+        .collect();
+    assert_eq!(anonymous.len(), 1);
+    let page = app.follow(reply, &session).await;
+    assert!(
+        page.body
+            .contains(r#"title="belongs to no customer">anonymous</span>"#)
+    );
+    assert!(
+        page.body.contains(r#"<a href="/keys">Keys</a>"#),
+        "breadcrumb to the key list"
+    );
+    let list = app.get("/keys?show=anonymous", Some(&session)).await;
+    assert!(list.body.contains("Ops") && !list.body.contains("Acme Exports"));
 
     // Like every form, it needs the CSRF token.
     let reply = app
         .post(
             "/keys/generate",
             Some(&session),
-            &format!("customer={}&user_id=Y&algorithm=curve25519", acme.id),
+            "customer=none&user_id=Y&algorithm=curve25519",
         )
         .await;
     assert_eq!(reply.status, StatusCode::FORBIDDEN);

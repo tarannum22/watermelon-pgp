@@ -184,7 +184,7 @@ fn live_panel(o: &Overview) -> Markup {
                                 (ui::icon(icons::KEY))
                                 span.what {
                                     "Key " (views::key_link(key)) " " (views::key_status(key))
-                                    span.why { (key.customer_name) }
+                                    span.why { (views::owner_name(key)) }
                                 }
                             }
                         }
