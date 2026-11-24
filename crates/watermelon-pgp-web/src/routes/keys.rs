@@ -211,7 +211,10 @@ pub async fn show(
             }
 
             section {
-                h2 { "Recent activity" }
+                div.title-row {
+                    h2 { "Recent activity" }
+                    (views::activity_search(Some(("key", key.fingerprint.clone()))))
+                }
                 (views::audit_table(&events, &names))
             }
 

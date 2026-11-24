@@ -703,3 +703,98 @@ async fn unknown_things_are_404() {
         );
     }
 }
+
+#[tokio::test]
+async fn audit_log_search_time_actor_chips_and_csv() {
+    let app = App::new();
+    let session = app.login().await;
+    let acme = {
+        let vault = app.vault();
+        let acme = vault.create_customer(Actor::Cli, "ACME Corp").unwrap().id;
+        vault
+            .create_customer(Actor::Cli, "=cmd|' /C calc'!A0")
+            .unwrap();
+        vault
+            .generate_key(
+                Actor::Cli,
+                acme,
+                "Exports <exports@acme.example>",
+                Algorithm::Curve25519,
+            )
+            .unwrap();
+        acme
+    };
+
+    // Free text over subject (customer name, key user ID) and details.
+    let found = app.get("/audit?q=exports%40acme", Some(&session)).await;
+    assert!(found.body.contains("1 event"), "{}", found.body);
+    assert!(found.body.contains("key.generate"));
+    assert!(found.body.contains("“exports@acme” ×"), "chip shown");
+    assert!(found.body.contains(r#"href="/audit">Clear all"#));
+    let none = app.get("/audit?q=nothing+like+this", Some(&session)).await;
+    assert!(none.body.contains("0 events") && none.body.contains("No events."));
+
+    // Who did it.
+    let web = app.get("/audit?actor=admin", Some(&session)).await;
+    assert!(web.body.contains("admin.login") && !web.body.contains("customer.create"));
+    assert!(web.body.contains("Web UI (admin) ×"));
+
+    // Time: a period, a custom range, a bad date.
+    let recent = app.get("/audit?period=1h", Some(&session)).await;
+    assert!(recent.body.contains("customer.create"));
+    let past = app
+        .get("/audit?from=2001-01-01&to=2001-12-31", Some(&session))
+        .await;
+    assert!(past.body.contains("0 events"));
+    assert!(past.body.contains("2001-01-01 – 2001-12-31 ×"));
+    let bad = app.get("/audit?from=yesterday", Some(&session)).await;
+    assert_eq!(bad.status, StatusCode::OK);
+    assert!(bad.body.contains("Ignored the from date"));
+
+    // Combined, and a chip removes just its own filter.
+    let both = app
+        .get(
+            &format!("/audit?customer={acme}&action=key."),
+            Some(&session),
+        )
+        .await;
+    assert!(both.body.contains("1 event"));
+    assert!(
+        both.body
+            .contains(&format!(r#"href="/audit?customer={acme}""#)),
+        "removing the action keeps the customer"
+    );
+
+    // CSV: what matches, oldest first, formula injection defused.
+    let csv = app.get("/audit.csv?action=customer.", Some(&session)).await;
+    assert_eq!(csv.status, StatusCode::OK);
+    assert!(
+        csv.headers[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("text/csv")
+    );
+    assert!(
+        csv.headers[header::CONTENT_DISPOSITION]
+            .to_str()
+            .unwrap()
+            .contains("watermelon-audit-")
+    );
+    let lines: Vec<&str> = csv.body.lines().collect();
+    assert_eq!(lines[0], "id,time_utc,actor,action,customer,job,key,detail");
+    assert_eq!(lines.len(), 3, "{}", csv.body);
+    assert!(lines[1].contains("\"ACME Corp\""));
+    assert!(lines[2].contains("\"'=cmd|' /C calc'!A0\""), "{}", lines[2]);
+    assert_eq!(
+        app.get("/audit.csv", None).await.status,
+        StatusCode::SEE_OTHER,
+        "needs login"
+    );
+
+    // Recent activity sections search the audit log, scoped to their page.
+    let page = app.get(&format!("/customers/{acme}"), Some(&session)).await;
+    assert!(page.body.contains(&format!(
+        r#"<input type="hidden" name="customer" value="{acme}">"#
+    )));
+    assert!(page.body.contains("Search activity"));
+}

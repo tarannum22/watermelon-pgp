@@ -272,6 +272,69 @@ pub fn bytes(n: u64) -> String {
     }
 }
 
+/// Time filter choices: URL value, label, length in seconds.
+pub const PERIODS: &[(&str, &str, i64)] = &[
+    ("", "Any time", 0),
+    ("1h", "Last hour", 3_600),
+    ("24h", "Last 24 hours", 86_400),
+    ("7d", "Last 7 days", 7 * 86_400),
+    ("30d", "Last 30 days", 30 * 86_400),
+];
+
+/// Who did it.
+pub const ACTORS: &[(&str, &str)] = &[
+    ("", "Anyone"),
+    ("admin", "Web UI (admin)"),
+    ("cli", "Command line"),
+    ("system", "System (jobs)"),
+];
+
+/// Action filter choices: categories, then the actions worth finding on their own.
+pub const ACTIONS: &[(&str, &str)] = &[
+    ("", "All actions"),
+    ("admin.", "Logins and admin"),
+    ("customer.", "Customers"),
+    ("key.", "Keys"),
+    ("job.", "Jobs"),
+    ("file.", "Files"),
+    ("system.", "System"),
+    ("file.processed", "Files processed"),
+    ("file.failed", "Files failed"),
+    ("file.retry", "Files retried"),
+    ("key.export_secret", "Secret key exports"),
+    ("key.revoke", "Key revocations"),
+    ("admin.login_failed", "Failed logins"),
+];
+
+/// A compact search for a "Recent activity" section. It opens the audit log, limited to
+/// `scope` (e.g. `("job", "3")`) on top of what the user picks. `hx-preserve` keeps what the
+/// user is typing when a self-refreshing panel around it is swapped.
+pub fn activity_search(scope: Option<(&str, String)>) -> Markup {
+    let id = match &scope {
+        Some((name, _)) => format!("activity-search-{name}"),
+        None => "activity-search".to_owned(),
+    };
+    html! {
+        form.activity-search #(id) hx-preserve="true" method="get" action="/audit" role="search" {
+            @if let Some((name, value)) = &scope {
+                input type="hidden" name=(name) value=(value);
+            }
+            input type="search" name="q" placeholder="Search activity…" aria-label="Search activity";
+            select name="period" aria-label="Time" {
+                @for (value, label, _) in PERIODS {
+                    option value=(value) { (label) }
+                }
+            }
+            select name="action" aria-label="Action" {
+                @for (value, label) in ACTIONS {
+                    option value=(value) { (label) }
+                }
+            }
+            button type="submit" { "Search" }
+        }
+    }
+}
+
 /// Names for the IDs an audit event refers to.
 pub trait AuditNames {
     fn customer(&self, id: i64) -> Option<&str>;

@@ -465,6 +465,10 @@ impl Vault {
         audit::query(self.store.conn(), filter)
     }
 
+    pub fn count_audit(&self, filter: &audit::Filter) -> Result<u64> {
+        audit::count(self.store.conn(), filter)
+    }
+
     pub fn count_audit_since(&self, action: Action, since: i64) -> Result<u64> {
         audit::count_since(self.store.conn(), action, since)
     }
@@ -768,6 +772,99 @@ mod tests {
             Err(Error::Conflict(_))
         ));
         assert!(partner.find_key(&key.fingerprint).unwrap().revoked);
+    }
+
+    #[test]
+    fn audit_search_by_actor_time_and_text() {
+        let (_dir, vault) = vault();
+        let acme = vault.create_customer(Actor::Admin, "ACME Corp").unwrap().id;
+        vault.create_customer(Actor::Cli, "Globex").unwrap();
+        let key = vault
+            .generate_key(
+                Actor::Cli,
+                acme,
+                "Exports <exports@acme.example>",
+                Algorithm::Curve25519,
+            )
+            .unwrap();
+        assert!(!vault.login("wrong", "203.0.113.9").unwrap());
+        vault
+            .store
+            .conn()
+            .execute(
+                "INSERT INTO audit_events (at, actor, action, detail) VALUES (1000, 'system', 'file.failed', '100% broken_file.csv')",
+                [],
+            )
+            .unwrap();
+
+        let actions = |filter: audit::Filter| {
+            let filter = audit::Filter {
+                limit: 100,
+                ..filter
+            };
+            let events: Vec<String> = vault
+                .query_audit(&filter)
+                .unwrap()
+                .into_iter()
+                .map(|e| e.action)
+                .collect();
+            assert_eq!(vault.count_audit(&filter).unwrap(), events.len() as u64);
+            events
+        };
+        let text = |t: &str| audit::Filter {
+            text: Some(t.into()),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            actions(audit::Filter {
+                actor: Some("admin".into()),
+                ..Default::default()
+            }),
+            ["admin.login_failed", "customer.create"]
+        );
+        assert_eq!(
+            actions(audit::Filter {
+                until: Some(2000),
+                ..Default::default()
+            }),
+            ["file.failed"]
+        );
+        assert!(
+            !actions(audit::Filter {
+                since: Some(2000),
+                ..Default::default()
+            })
+            .contains(&"file.failed".to_owned())
+        );
+        // Subject: customer name, key user ID, fingerprint; and the details. Case-insensitive.
+        assert_eq!(
+            actions(text("acme corp")),
+            ["key.generate", "customer.create"]
+        );
+        assert_eq!(actions(text("EXPORTS@ACME")), ["key.generate"]);
+        assert_eq!(actions(text(&key.fingerprint[30..])), ["key.generate"]);
+        assert_eq!(actions(text("203.0.113")), ["admin.login_failed"]);
+        // Wildcards are literal.
+        assert_eq!(actions(text("100%")), ["file.failed"]);
+        assert_eq!(actions(text("en_fi")), ["file.failed"]);
+        assert_eq!(actions(text("%")), ["file.failed"]);
+        // `_` only where there is an underscore, not "any character".
+        assert_eq!(actions(text("_")), ["file.failed", "admin.login_failed"]);
+        assert!(actions(text("no such thing")).is_empty());
+        assert_eq!(
+            actions(text("   ")).len(),
+            actions(audit::Filter::default()).len()
+        );
+        // Filters combine.
+        assert_eq!(
+            actions(audit::Filter {
+                text: Some("acme".into()),
+                actor: Some("cli".into()),
+                ..Default::default()
+            }),
+            ["key.generate"]
+        );
     }
 
     #[test]

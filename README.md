@@ -26,6 +26,8 @@ from and write to.
 - **Web UI.** Dashboard, customers, keys, jobs and a filterable audit log, in one binary with no
   external assets. Every page works without JavaScript.
 - **Audit log.** Every change, login, export and processed file (with its SHA-256), append-only.
+  Filter by time, who did it, action, customer or job, search names, keys and details, and export
+  the result as CSV.
 - **Secure by default.** Secret keys encrypted at rest under a master key kept outside the
   database; loopback-only until you configure HTTPS; hardened sessions, CSRF protection, login
   rate limiting, strict CSP.

@@ -53,6 +53,7 @@ pub fn router() -> Router<AppState> {
         .route("/jobs/{id}/delete", post(jobs::delete))
         .route("/jobs/{id}/retry", post(jobs::retry))
         .route("/audit", get(audit::list))
+        .route("/audit.csv", get(audit::export))
         .route("/settings", get(settings::show))
         .route("/settings/password", post(settings::change_password))
         .fallback(|| async { AppError::not_found("no such page") })

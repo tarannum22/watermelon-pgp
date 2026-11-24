@@ -140,7 +140,10 @@ fn live_panel(o: &Overview) -> Markup {
             }
 
             section {
-                h2 { "Recent activity" }
+                div.title-row {
+                    h2 { "Recent activity" }
+                    (views::activity_search(None))
+                }
                 (views::audit_table(&o.recent, &names))
                 p { a href="/audit" { "Full audit log →" } }
             }

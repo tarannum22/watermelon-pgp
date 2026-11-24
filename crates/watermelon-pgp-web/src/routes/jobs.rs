@@ -556,7 +556,10 @@ pub async fn show(
             }
 
             section {
-                h2 { "Recent activity" }
+                div.title-row {
+                    h2 { "Recent activity" }
+                    (views::activity_search(Some(("job", job.id.to_string()))))
+                }
                 (views::audit_table(&events, &names))
                 p { a href={ "/audit?job=" (job.id) } { "All activity for this job →" } }
             }

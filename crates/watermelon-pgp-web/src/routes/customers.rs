@@ -139,7 +139,10 @@ pub async fn show(
             }
 
             section {
-                h2 { "Recent activity" }
+                div.title-row {
+                    h2 { "Recent activity" }
+                    (views::activity_search(Some(("customer", customer.id.to_string()))))
+                }
                 (views::audit_table(&events, &names))
                 p { a href={ "/audit?customer=" (customer.id) } { "All activity for " (customer.name) " →" } }
             }

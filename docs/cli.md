@@ -274,8 +274,12 @@ watermelon job run-once outbound
 ### `audit`
 
 The most recent entries of the audit log, newest first: time, who (`cli`, `admin` for the web UI,
-`system` for jobs), action, key and details. `--limit <n>` (default 50) sets how many. The web UI
-has filters by action, customer, job and key.
+`system` for jobs), action, key and details. `--limit <n>` (default 50) sets how many.
+
+The web UI's audit log page can filter by time (last hour/day/week/month or a date range),
+who did it, action, customer and job, and search text across customer and job names, key
+fingerprints and user IDs, and the details. Filters are part of the URL, so a filtered view can be
+bookmarked, and **Export CSV** downloads exactly the matching events.
 
 ### `backup <file>`
 

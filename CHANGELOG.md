@@ -37,7 +37,8 @@ single binary.
   timeouts; CSRF tokens and Origin checks; login rate limiting; strict CSP.
 - Built-in HTTPS (rustls) with certificate reload on SIGHUP, or run behind a reverse proxy.
 - Text or JSON logs; `/healthz`.
-- Append-only audit log of every change, login and processed file.
+- Append-only audit log of every change, login and processed file. Filter it by time range,
+  actor, action, customer and job, search subjects and details, and export matches as CSV.
 - `watermelon backup` for consistent snapshots (the master key is deliberately excluded).
 - Docker image, systemd unit, deployment guide.
 

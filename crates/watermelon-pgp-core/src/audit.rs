@@ -166,50 +166,106 @@ pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<AuditEvent>> {
     )
 }
 
-/// Which events to list. Empty fields match everything.
+/// Which events to list. Empty fields match everything; set fields must all match.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Filter {
     /// An exact action (`job.create`) or a category prefix ending in a dot (`job.`).
     pub action: Option<String>,
+    /// `cli`, `admin` or `system`.
+    pub actor: Option<String>,
     pub customer_id: Option<i64>,
     pub job_id: Option<i64>,
     pub key_fingerprint: Option<String>,
+    /// Only events at or after this time (Unix seconds).
+    pub since: Option<i64>,
+    /// Only events before this time (Unix seconds).
+    pub until: Option<i64>,
+    /// Case-insensitive substring of the action, the details, or what the event is about:
+    /// customer name, job name, key fingerprint or key user ID.
+    pub text: Option<String>,
     /// Only events older than this ID, for paging backwards.
     pub before_id: Option<i64>,
     pub limit: u32,
 }
 
-/// Matching events, newest first.
+const FILTERED_EVENTS: &str = "
+    FROM audit_events e
+    LEFT JOIN customers c ON c.id = e.customer_id
+    LEFT JOIN jobs j ON j.id = e.job_id
+    LEFT JOIN keys k ON k.fingerprint = e.key_fingerprint
+    WHERE (?1 IS NULL OR e.action LIKE ?1 ESCAPE '\\')
+      AND (?2 IS NULL OR e.actor = ?2)
+      AND (?3 IS NULL OR e.customer_id = ?3)
+      AND (?4 IS NULL OR e.job_id = ?4)
+      AND (?5 IS NULL OR e.key_fingerprint = ?5)
+      AND (?6 IS NULL OR e.at >= ?6)
+      AND (?7 IS NULL OR e.at < ?7)
+      AND (?8 IS NULL OR e.detail LIKE ?8 ESCAPE '\\' OR e.action LIKE ?8 ESCAPE '\\'
+           OR c.name LIKE ?8 ESCAPE '\\' OR j.name LIKE ?8 ESCAPE '\\'
+           OR e.key_fingerprint LIKE ?8 ESCAPE '\\' OR k.user_ids LIKE ?8 ESCAPE '\\')
+      AND (?9 IS NULL OR e.id < ?9)";
+
+/// Escape `LIKE` wildcards so user input matches literally.
+fn like_literal(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+fn filter_params(filter: &Filter) -> [rusqlite::types::Value; 9] {
+    use rusqlite::types::Value;
+    let text = |v: Option<String>| v.map_or(Value::Null, Value::Text);
+    let int = |v: Option<i64>| v.map_or(Value::Null, Value::Integer);
+    let action = filter
+        .action
+        .as_deref()
+        .map(|action| match action.strip_suffix('.') {
+            Some(category) => format!("{}.%", like_literal(category)),
+            None => like_literal(action),
+        });
+    let search = filter
+        .text
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(|t| format!("%{}%", like_literal(t)));
+    [
+        text(action),
+        text(filter.actor.clone()),
+        int(filter.customer_id),
+        int(filter.job_id),
+        text(filter.key_fingerprint.clone()),
+        int(filter.since),
+        int(filter.until),
+        text(search),
+        int(filter.before_id),
+    ]
+}
+
+/// Matching events, newest first, at most `filter.limit`.
 pub fn query(conn: &Connection, filter: &Filter) -> Result<Vec<AuditEvent>> {
-    let action_pattern = filter.action.as_ref().map(|action| {
-        if action.ends_with('.') {
-            format!("{}%", action.replace(['%', '_'], ""))
-        } else {
-            action.clone()
-        }
-    });
-    let mut stmt = conn.prepare(
-        "SELECT id, at, actor, action, customer_id, key_fingerprint, job_id, detail
-         FROM audit_events
-         WHERE (?1 IS NULL OR action LIKE ?1)
-           AND (?2 IS NULL OR customer_id = ?2)
-           AND (?3 IS NULL OR job_id = ?3)
-           AND (?4 IS NULL OR key_fingerprint = ?4)
-           AND (?5 IS NULL OR id < ?5)
-         ORDER BY id DESC LIMIT ?6",
-    )?;
-    let rows = stmt.query_map(
-        params![
-            action_pattern,
-            filter.customer_id,
-            filter.job_id,
-            filter.key_fingerprint,
-            filter.before_id,
-            filter.limit,
-        ],
-        event_from_row,
-    )?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT e.id, e.at, e.actor, e.action, e.customer_id, e.key_fingerprint, e.job_id, e.detail
+         {FILTERED_EVENTS} ORDER BY e.id DESC LIMIT ?10"
+    ))?;
+    let mut values = filter_params(filter).to_vec();
+    values.push(rusqlite::types::Value::Integer(filter.limit.into()));
+    let rows = stmt.query_map(rusqlite::params_from_iter(values), event_from_row)?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// How many events match, ignoring `limit` and `before_id`.
+pub fn count(conn: &Connection, filter: &Filter) -> Result<u64> {
+    let filter = Filter {
+        before_id: None,
+        ..filter.clone()
+    };
+    let count: i64 = conn.query_row(
+        &format!("SELECT COUNT(*) {FILTERED_EVENTS}"),
+        rusqlite::params_from_iter(filter_params(&filter)),
+        |row| row.get(0),
+    )?;
+    Ok(count.unsigned_abs())
 }
 
 /// How many events with this action happened at or after `since`.

@@ -88,6 +88,13 @@ CREATE TABLE job_keys (
 
 ALTER TABLE audit_events ADD COLUMN job_id INTEGER;
 "#,
+    // v3: filtering the audit log by time, subject and action.
+    r#"
+CREATE INDEX audit_events_customer ON audit_events (customer_id, id);
+CREATE INDEX audit_events_job ON audit_events (job_id, id);
+CREATE INDEX audit_events_key ON audit_events (key_fingerprint, id);
+CREATE INDEX audit_events_action ON audit_events (action, at);
+"#,
 ];
 
 pub struct Store {
