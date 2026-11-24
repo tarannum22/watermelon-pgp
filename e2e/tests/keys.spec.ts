@@ -68,20 +68,42 @@ test("import a partner's public key by pasting it", async ({ page }) => {
   await expect(page.locator(".key-row")).toHaveCount(1);
 });
 
-test("revoking needs confirmation, then marks the key revoked", async ({ page }) => {
+test("revoking asks first, then marks the key revoked", async ({ page }) => {
   const customerUrl = await createCustomer(page, unique("Nordic Freight"));
   await generateKey(page, customerUrl, "Nordic Old <old@nordic.example>");
 
-  // The browser refuses the form until the box is ticked.
+  // With JavaScript the tick box gives way to a dialog. Cancelling leaves the key alone.
+  await expect(page.getByLabel("Revoke this key permanently")).toBeHidden();
+  await page.getByLabel("Reason").selectOption("retired");
   await page.getByRole("button", { name: "Revoke key" }).click();
+  const dialog = page.getByRole("dialog", { name: "Revoke key?" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toBeHidden();
   await expect(page.locator(".page-head .pill")).toHaveText("valid");
 
-  await page.getByLabel("Reason").selectOption("retired");
-  await page.getByLabel("Revoke this key permanently").check();
   await page.getByRole("button", { name: "Revoke key" }).click();
+  await dialog.getByRole("button", { name: "Revoke key" }).click();
   await expect(page.getByRole("status")).toContainText("Revoked key");
   await expect(page.locator(".page-head .pill")).toHaveText("revoked");
 
   await page.goto("/keys?show=revoked");
   await expect(page.locator(".key-row", { hasText: "old@nordic.example" })).toBeVisible();
+});
+
+test.describe("without JavaScript", () => {
+  test.use({ javaScriptEnabled: false });
+
+  test("deleting a key needs the tick box", async ({ page }) => {
+    // The dialogs still open: browsers do that themselves (invoker commands).
+    const customerUrl = await createCustomer(page, unique("No Script"));
+    await generateKey(page, customerUrl, "No Script Key <noscript@example.com>");
+
+    // The browser refuses the form until the box is ticked.
+    await page.getByRole("button", { name: "Delete key" }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "No Script Key" })).toBeVisible();
+    await page.getByLabel("Delete this key").check();
+    await page.getByRole("button", { name: "Delete key" }).click();
+    await expect(page.getByRole("status")).toContainText("Deleted key No Script Key");
+  });
 });

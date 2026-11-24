@@ -15,7 +15,7 @@ use crate::{
     crypto::{self, Algorithm, Cert, RevocationReason, SignedPublicKey, SignedSecretKey},
     envelope::MasterKey,
     platform,
-    store::{self, Customer, KeyRecord, KeyRow, Store},
+    store::{self, Customer, KeyOwner, KeyRecord, KeyRow, Store},
 };
 
 pub const DB_FILE: &str = "watermelon.db";
@@ -243,13 +243,13 @@ impl Vault {
                 let existing = store::key_by_fingerprint(tx, &info.fingerprint)?
                     .filter(|existing| existing.deleted_at.is_none());
                 let (record, action, detail) = match existing {
-                    Some(existing) if existing.customer_id != customer_id => {
-                        return Err(Error::Conflict(match &existing.customer_name {
-                            Some(name) => format!(
+                    Some(existing) if existing.owner.customer_id() != customer_id => {
+                        return Err(Error::Conflict(match &existing.owner {
+                            KeyOwner::Customer { name, .. } => format!(
                                 "key {} already belongs to customer {name:?}",
                                 info.fingerprint
                             ),
-                            None => format!(
+                            KeyOwner::Anonymous => format!(
                                 "key {} is already imported as an anonymous key",
                                 info.fingerprint
                             ),
@@ -291,7 +291,7 @@ impl Vault {
         audit::record(
             self.store.conn(),
             &Entry::new(actor, Action::KeyExportPublic)
-                .customer(record.customer_id)
+                .customer(record.owner.customer_id())
                 .key(&record.fingerprint),
             now(),
         )?;
@@ -311,7 +311,7 @@ impl Vault {
         audit::record(
             self.store.conn(),
             &Entry::new(actor, Action::KeyExportSecret)
-                .customer(record.customer_id)
+                .customer(record.owner.customer_id())
                 .key(&record.fingerprint),
             now(),
         )?;
@@ -344,7 +344,7 @@ impl Vault {
         let mut key = self.secret_key(&record.fingerprint)?;
         crypto::revoke(&mut key, reason, comment.trim())?;
         self.store.transaction(|tx| {
-            let updated = self.save(tx, record.customer_id, &Cert::Secret(key))?;
+            let updated = self.save(tx, record.owner.customer_id(), &Cert::Secret(key))?;
             let mut detail = format!("{reason:?}");
             if !comment.trim().is_empty() {
                 detail = format!("{detail}: {}", comment.trim());
@@ -352,7 +352,7 @@ impl Vault {
             audit::record(
                 tx,
                 &Entry::new(actor, Action::KeyRevoke)
-                    .customer(record.customer_id)
+                    .customer(record.owner.customer_id())
                     .key(&record.fingerprint)
                     .detail(detail),
                 now(),
@@ -383,7 +383,7 @@ impl Vault {
                 existing.fingerprint
             )));
         }
-        let record = self.save(conn, existing.customer_id, &merged)?;
+        let record = self.save(conn, existing.owner.customer_id(), &merged)?;
         let mut changes = Vec::new();
         if record.revoked && !existing.revoked {
             changes.push("now revoked".to_owned());
@@ -419,7 +419,7 @@ impl Vault {
             audit::record(
                 tx,
                 &Entry::new(actor, Action::KeyDelete)
-                    .customer(record.customer_id)
+                    .customer(record.owner.customer_id())
                     .key(&record.fingerprint)
                     .detail(record.label()),
                 now(),
@@ -732,10 +732,7 @@ mod tests {
                 Algorithm::Curve25519,
             )
             .unwrap();
-        assert_eq!(
-            (ours.customer_id, ours.customer_name.as_deref()),
-            (None, None)
-        );
+        assert_eq!(ours.owner, KeyOwner::Anonymous);
         assert!(ours.has_secret);
 
         // Listed with all keys (last), not with any customer's.
@@ -747,9 +744,12 @@ mod tests {
                 .keys(Some(acme))
                 .unwrap()
                 .iter()
-                .all(|k| k.customer_id == Some(acme))
+                .all(|k| k.owner.customer_id() == Some(acme))
         );
-        assert_eq!(vault.find_key(&ours.fingerprint).unwrap().customer_id, None);
+        assert_eq!(
+            vault.find_key(&ours.fingerprint).unwrap().owner,
+            KeyOwner::Anonymous
+        );
 
         // Audited without a customer.
         let event = &vault.audit_events(1).unwrap()[0];
@@ -771,7 +771,7 @@ mod tests {
         let imported = vault
             .import_keys(Actor::Admin, None, armored.as_bytes(), None)
             .unwrap();
-        assert_eq!(imported[0].customer_id, None);
+        assert_eq!(imported[0].owner, KeyOwner::Anonymous);
         let err = vault
             .import_keys(Actor::Admin, acme, armored.as_bytes(), None)
             .unwrap_err();

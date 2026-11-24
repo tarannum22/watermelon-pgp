@@ -1,12 +1,12 @@
 mod audit;
 mod customers;
 mod dashboard;
-#[cfg(feature = "evaluation")]
-mod design;
 mod jobs;
 mod keys;
 mod session;
 mod settings;
+#[cfg(debug_assertions)]
+mod styleguide;
 
 use std::collections::HashMap;
 
@@ -37,11 +37,17 @@ pub fn router() -> Router<AppState> {
         .route("/static/{file}", get(static_file))
         .route("/customers", get(customers::list).post(customers::create))
         .route("/customers/{id}", get(customers::show))
-        .route("/customers/{id}/keys/generate", post(keys::generate))
-        .route("/customers/{id}/keys/import", post(keys::import))
+        .route(
+            "/customers/{id}/keys/generate",
+            post(keys::generate_for_customer),
+        )
+        .route(
+            "/customers/{id}/keys/import",
+            post(keys::import_for_customer),
+        )
         .route("/keys", get(keys::list))
-        .route("/keys/generate", post(keys::generate_for_customer))
-        .route("/keys/import", post(keys::import_for_customer))
+        .route("/keys/generate", post(keys::generate))
+        .route("/keys/import", post(keys::import))
         .route("/keys/{fpr}", get(keys::show))
         .route("/keys/{fpr}/public", post(keys::export_public))
         .route("/keys/{fpr}/secret", post(keys::export_secret))
@@ -61,8 +67,8 @@ pub fn router() -> Router<AppState> {
         .route("/settings", get(settings::show))
         .route("/settings/password", post(settings::change_password))
         .route("/theme", post(settings::set_theme));
-    #[cfg(feature = "evaluation")]
-    let router = router.route("/design", get(design::show));
+    #[cfg(debug_assertions)]
+    let router = router.route("/styleguide", get(styleguide::show));
     router.fallback(|| async { AppError::not_found("no such page") })
 }
 
@@ -92,7 +98,7 @@ impl AppState {
 #[derive(Deserialize)]
 pub struct Empty {}
 
-/// A form guarded by [`crate::views::confirm_box`].
+/// A form guarded by [`crate::ui::confirm`].
 #[derive(Deserialize)]
 pub struct Confirmed {
     #[serde(default)]

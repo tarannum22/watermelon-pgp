@@ -22,7 +22,9 @@ form.job-form:has(input[name="kind"][value="encrypt"]:checked) .decrypt-only { d
 .summary { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--color-text-muted); }
 .summary strong { color: var(--color-text); }
 
-/* Style guide (evaluation builds). */
+/* Style guide (debug builds). */
+.toast-demo .toasts { position: static; width: auto; }
+.toast-demo .toast.good { animation: none; }
 .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--space-3); }
 .swatch { border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; font-size: var(--text-xs); font-family: var(--font-mono); }
 .swatch > span { display: block; height: 44px; border-bottom: 1px solid var(--color-border); }

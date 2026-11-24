@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { BINARY, DATA_DIR, PASSWORD, PORT, RUN_DIR } from "./env.ts";
 
 if (!fs.existsSync(BINARY)) {
-  console.error(`No binary at ${BINARY}. Build it with: cargo build --features evaluation`);
+  console.error(`No binary at ${BINARY}. Build it with: cargo build`);
   process.exit(1);
 }
 fs.rmSync(RUN_DIR, { recursive: true, force: true });

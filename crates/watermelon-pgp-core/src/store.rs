@@ -137,13 +137,31 @@ pub struct Customer {
     pub created_at: i64,
 }
 
+/// Whose key it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyOwner {
+    Customer {
+        id: i64,
+        name: String,
+    },
+    /// An anonymous key, which belongs to no customer.
+    Anonymous,
+}
+
+impl KeyOwner {
+    pub fn customer_id(&self) -> Option<i64> {
+        match self {
+            KeyOwner::Customer { id, .. } => Some(*id),
+            KeyOwner::Anonymous => None,
+        }
+    }
+}
+
 /// A stored key, without its secret material.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyRecord {
     pub id: i64,
-    /// `None` for an anonymous key, which belongs to no customer.
-    pub customer_id: Option<i64>,
-    pub customer_name: Option<String>,
+    pub owner: KeyOwner,
     pub fingerprint: String,
     pub user_ids: Vec<String>,
     pub algorithm: String,
@@ -438,10 +456,13 @@ pub fn soft_delete_key(conn: &Connection, fingerprint: &str, now: i64) -> Result
 
 fn key_from_row(row: &Row<'_>) -> rusqlite::Result<KeyRecord> {
     let user_ids: String = row.get(4)?;
+    let owner = match (row.get(1)?, row.get(2)?) {
+        (Some(id), Some(name)) => KeyOwner::Customer { id, name },
+        _ => KeyOwner::Anonymous,
+    };
     Ok(KeyRecord {
         id: row.get(0)?,
-        customer_id: row.get(1)?,
-        customer_name: row.get(2)?,
+        owner,
         fingerprint: row.get(3)?,
         user_ids: user_ids
             .split('\n')
@@ -499,8 +520,14 @@ mod tests {
         assert_eq!(version as usize, MIGRATIONS.len());
 
         let key = key_by_fingerprint(conn, "ABCD").unwrap().unwrap();
-        assert_eq!((key.id, key.customer_id), (7, Some(1)));
-        assert_eq!(key.customer_name.as_deref(), Some("ACME"));
+        assert_eq!(key.id, 7);
+        assert_eq!(
+            key.owner,
+            KeyOwner::Customer {
+                id: 1,
+                name: "ACME".into()
+            }
+        );
         assert!(key.has_secret);
 
         // Foreign keys are back on and still hold: the job's key reference, customers.
@@ -530,10 +557,7 @@ mod tests {
         // A key without a customer.
         upsert_key(conn, &row(None, "EF01"), 0).unwrap();
         let anonymous = key_by_fingerprint(conn, "EF01").unwrap().unwrap();
-        assert_eq!(
-            (anonymous.customer_id, anonymous.customer_name),
-            (None, None)
-        );
+        assert_eq!(anonymous.owner, KeyOwner::Anonymous);
         assert_eq!(keys(conn, None).unwrap().len(), 2);
         assert_eq!(keys(conn, Some(1)).unwrap().len(), 1);
     }

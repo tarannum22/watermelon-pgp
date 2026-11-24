@@ -1,0 +1,34 @@
+/* Views: the domain renderers in `src/views.rs`, built on the components. One section per
+ * renderer that needs its own styles; each uses only tokens. */
+
+/* Key list (`views::key_list`): one rich row per key. */
+
+.key-list { display: flex; flex-direction: column; }
+.key-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  transition: background var(--transition);
+}
+.key-row:last-child { border-bottom: none; }
+.key-row:hover { background: var(--color-surface-sunken); }
+.key-row.revoked .key-name { text-decoration: line-through; color: var(--color-text-muted); }
+.key-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.key-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.key-name { font-weight: 650; font-size: var(--text-lg); color: var(--color-text); text-decoration: none; overflow-wrap: anywhere; }
+a.key-name:hover { color: var(--color-primary); }
+/* The whole row is a link target, without nesting links. */
+a.key-name::after { content: ""; position: absolute; inset: 0; }
+.key-row .fpr, .key-row .copy, .key-row a:not(.key-name) { position: relative; z-index: 1; }
+.key-sub { font-size: var(--text-sm); color: var(--color-text-muted); overflow-wrap: anywhere; }
+.key-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-1); font-size: var(--text-sm); color: var(--color-text-muted); }
+.key-side { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-2); text-align: right; font-size: var(--text-sm); color: var(--color-text-muted); }
+.key-side time { font-family: var(--font-mono); font-size: var(--text-mono); }
+
+@media (max-width: 640px) {
+  .key-row { grid-template-columns: auto minmax(0, 1fr); }
+  .key-side { grid-column: 2; align-items: flex-start; text-align: left; flex-direction: row; flex-wrap: wrap; }
+}

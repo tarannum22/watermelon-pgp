@@ -15,7 +15,7 @@ use watermelon_pgp_core::{
     crypto::{self, Algorithm, Container, RevocationReason},
     envelope::MasterKey,
     jobs::{Job, JobKind, JobSpec, VerifyPolicy},
-    store::KeyRecord,
+    store::{KeyOwner, KeyRecord},
     vault::{self, Vault},
 };
 use watermelon_pgp_jobs::{Engine, PassReport, scan::Scanner};
@@ -856,7 +856,10 @@ fn print_keys(keys: &[KeyRecord]) {
             "{}  {:<10} {:<20} {}  [{}] {}",
             key.fingerprint,
             key.algorithm,
-            key.customer_name.as_deref().unwrap_or("(anonymous)"),
+            match &key.owner {
+                KeyOwner::Customer { name, .. } => name.as_str(),
+                KeyOwner::Anonymous => "(anonymous)",
+            },
             expires,
             flags.join(", "),
             key.label(),

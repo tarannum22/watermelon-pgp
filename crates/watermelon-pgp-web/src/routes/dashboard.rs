@@ -11,7 +11,7 @@ use crate::{
     AppState,
     auth::{Authed, Watching},
     error::AppError,
-    ui::{self, Stat, Tone, icons},
+    ui::{self, Icon, Stat, Tone},
     views::{self, Nav},
 };
 
@@ -49,8 +49,8 @@ pub async fn show(State(state): State<AppState>, auth: Authed) -> Result<Markup,
             (ui::page_header("Dashboard")
                 .subtitle(html! { "Jobs, files and keys at a glance. Updates every 10 seconds." })
                 .actions(html! {
-                    (ui::button("Audit log").icon(icons::AUDIT).href("/audit"))
-                    (ui::button("New job").primary().icon(icons::PLUS).href("/jobs/new"))
+                    (ui::button("Audit log").icon(Icon::Audit).href("/audit"))
+                    (ui::button("New job").primary().icon(Icon::Plus).href("/jobs/new"))
                 }))
             (live_panel(&overview))
         },
@@ -67,27 +67,18 @@ pub async fn live(
 
 fn live_panel(o: &Overview) -> Markup {
     let running = o.jobs.iter().filter(|j| j.is_active()).count();
-    let paused: Vec<&Job> = o
-        .jobs
-        .iter()
-        .filter(|j| j.paused_reason.is_some())
-        .collect();
-    let erroring: Vec<&Job> = o
-        .jobs
-        .iter()
-        .filter(|j| j.is_active() && j.last_error.is_some())
-        .collect();
-    let keys_attention: Vec<&KeyRecord> = o
+    let paused = o.jobs.iter().filter(|j| j.paused_reason.is_some()).count();
+    let keys_attention = o
         .keys
         .iter()
         .filter(|k| views::key_needs_attention(k))
-        .collect();
+        .count();
+    let attention = views::attention(&o.jobs, &o.keys);
     let names = Names::new(&o.customers, &o.jobs);
-    let attention = paused.len() + erroring.len() + keys_attention.len();
     let stats = [
         Stat {
             href: "/jobs",
-            icon: icons::JOBS,
+            icon: Icon::Jobs,
             label: "Jobs running",
             value: running.to_string(),
             detail: format!("of {} jobs", o.jobs.len()),
@@ -95,15 +86,15 @@ fn live_panel(o: &Overview) -> Markup {
         },
         Stat {
             href: "/jobs",
-            icon: icons::PAUSE,
+            icon: Icon::Pause,
             label: "Paused jobs",
-            value: paused.len().to_string(),
-            detail: if paused.is_empty() {
+            value: paused.to_string(),
+            detail: if paused == 0 {
                 "none".into()
             } else {
                 "need a look".into()
             },
-            tone: if paused.is_empty() {
+            tone: if paused == 0 {
                 Tone::Neutral
             } else {
                 Tone::Bad
@@ -111,7 +102,7 @@ fn live_panel(o: &Overview) -> Markup {
         },
         Stat {
             href: "/audit?action=file.processed&period=24h",
-            icon: icons::FILE_CHECK,
+            icon: Icon::FileCheck,
             label: "Files processed",
             value: o.processed.to_string(),
             detail: "last 24 hours".into(),
@@ -119,7 +110,7 @@ fn live_panel(o: &Overview) -> Markup {
         },
         Stat {
             href: "/audit?action=file.failed&period=24h",
-            icon: icons::FILE_X,
+            icon: Icon::FileX,
             label: "Files failed",
             value: o.failed.to_string(),
             detail: "last 24 hours".into(),
@@ -131,11 +122,11 @@ fn live_panel(o: &Overview) -> Markup {
         },
         Stat {
             href: "/keys",
-            icon: icons::KEY,
+            icon: Icon::Key,
             label: "Keys",
             value: o.keys.len().to_string(),
-            detail: format!("{} need attention", keys_attention.len()),
-            tone: if keys_attention.is_empty() {
+            detail: format!("{keys_attention} need attention"),
+            tone: if keys_attention == 0 {
                 Tone::Neutral
             } else {
                 Tone::Warn
@@ -153,52 +144,22 @@ fn live_panel(o: &Overview) -> Markup {
                         li { "Generate or import its keys." }
                         li { a href="/jobs/new" { "Create a job" } " that watches a folder and encrypts or decrypts what arrives." }
                     }
-                }).title("Getting started").icon(icons::INFO))
+                }).title("Getting started").icon(Icon::Info))
             }
 
-            @if attention == 0 {
+            @if attention.is_empty() {
                 (ui::alert(Tone::Good, Some("All clear"), html! { "No paused jobs, job errors or keys about to expire." }))
             } @else {
-                (ui::panel(html! {
-                    ul.attention {
-                        @for job in &paused {
-                            li.bad {
-                                (ui::icon(icons::PAUSE))
-                                span.what {
-                                    a href={ "/jobs/" (job.id) } { "Job " (job.spec.name) } " is paused"
-                                    span.why { (job.paused_reason.as_deref().unwrap_or("")) }
-                                }
-                            }
-                        }
-                        @for job in &erroring {
-                            li {
-                                (ui::icon(icons::WARNING))
-                                span.what {
-                                    a href={ "/jobs/" (job.id) } { "Job " (job.spec.name) } " has an error"
-                                    span.why { (job.last_error.as_deref().unwrap_or("")) }
-                                }
-                            }
-                        }
-                        @for key in &keys_attention {
-                            li.bad[key.revoked] {
-                                (ui::icon(icons::KEY))
-                                span.what {
-                                    "Key " (views::key_link(key)) " " (views::key_status(key))
-                                    span.why { (views::owner_name(key)) }
-                                }
-                            }
-                        }
-                    }
-                })
-                .title("Needs attention")
-                .icon(icons::WARNING)
-                .tone(Tone::Warn)
-                .flush())
+                (ui::panel(ui::notice_list(&attention))
+                    .title("Needs attention")
+                    .icon(Icon::Warning)
+                    .tone(Tone::Warn)
+                    .flush())
             }
 
             (ui::panel(views::audit_table(&o.recent, &names))
                 .title("Recent activity")
-                .icon(icons::ACTIVITY)
+                .icon(Icon::Activity)
                 .actions(views::activity_search(None))
                 .flush()
                 .footer(html! {

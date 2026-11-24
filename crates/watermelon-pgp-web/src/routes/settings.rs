@@ -12,7 +12,7 @@ use crate::{
     AppState,
     auth::{self, Authed, Posted},
     error::AppError,
-    ui::{self, Theme, Tone, icons},
+    ui::{self, Icon, Theme, Tone},
     views::{self, Nav},
 };
 
@@ -35,12 +35,12 @@ pub async fn show(State(state): State<AppState>, auth: Authed) -> Markup {
                         (ui::field("Repeat new password", None, html! { input type="password" name="repeat" required minlength=(min) autocomplete="new-password"; }))
                         div.actions { (ui::button("Change password").primary()) }
                     }
-                }).title("Admin password").icon(icons::LOCK))
+                }).title("Admin password").icon(Icon::Lock))
                 div.stack {
                     (ui::panel(html! {
                         p { "Follow the system setting, or pick one. Remembered in this browser." }
                         (ui::theme_switch(views::csrf_field(&auth.csrf), auth.theme))
-                    }).title("Appearance").icon(icons::SUN))
+                    }).title("Appearance").icon(Icon::Sun))
                     (ui::panel(html! {
                         p { "Take a consistent snapshot of the database on the server:" }
                         (ui::terminal(html! { "watermelon backup /backups/watermelon-$(date +%F).db" }))
@@ -48,7 +48,7 @@ pub async fn show(State(state): State<AppState>, auth: Authed) -> Markup {
                             "The master key is not part of the backup. Keep a copy of it somewhere else, "
                             "or the secret keys in the backup are unrecoverable."
                         }))
-                    }).title("Backups").icon(icons::DOWNLOAD))
+                    }).title("Backups").icon(Icon::Download))
                 }
             }
         },

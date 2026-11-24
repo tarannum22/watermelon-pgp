@@ -18,6 +18,7 @@ test("search, narrow down, clear filters and export the audit log", async ({ pag
   await htmxReady(page, "form.toolbar");
   await page.getByLabel("Who").selectOption("system");
   await expect(page).toHaveURL(/actor=system/);
+  await expect(page).not.toHaveURL(/period=|from=|&action=/); // empty filters left out
   await expect(page.locator("#audit-results")).toContainText("0 events");
 
   // Each active filter is a chip that removes it.

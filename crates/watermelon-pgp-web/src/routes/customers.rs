@@ -11,7 +11,7 @@ use crate::{
     AppState,
     auth::{Authed, Posted},
     error::AppError,
-    ui::{self, icons},
+    ui::{self, Icon},
     views::{self, Nav},
 };
 
@@ -25,29 +25,24 @@ pub async fn list(State(state): State<AppState>, auth: Authed) -> Result<Markup,
         html! {
             (ui::page_header("Customers")
                 .subtitle(html! { "Every partner you exchange files with, with their keys and jobs." })
-                .actions(ui::button("New customer").primary().icon(icons::PLUS).opens("new-customer").render()))
+                .actions(ui::button("New customer").primary().icon(Icon::Plus).opens("new-customer").render()))
             (ui::panel(html! {
                 @if customers.is_empty() {
-                    (ui::empty(icons::CUSTOMERS, "No customers yet", "Create the first one to add its keys and jobs.",
-                        Some(ui::button("New customer").primary().icon(icons::PLUS).opens("new-customer").render())))
+                    (ui::empty(Icon::Customers, "No customers yet", "Create the first one to add its keys and jobs.",
+                        Some(ui::button("New customer").primary().icon(Icon::Plus).opens("new-customer").render())))
                 } @else {
-                    div.table-wrap {
-                        table.table {
-                            thead { tr { th { "Name" } th.num { "Keys" } th.num { "Jobs" } th { "Created" } } }
-                            tbody {
-                                @for customer in &customers {
-                                    tr {
-                                        td {
-                                            a.strong href={ "/customers/" (customer.id) } { (customer.name) }
-                                        }
-                                        td.num { (keys.iter().filter(|k| k.customer_id == Some(customer.id)).count()) }
-                                        td.num { (jobs.iter().filter(|j| j.customer_id == customer.id).count()) }
-                                        td { (views::date(customer.created_at)) }
-                                    }
+                    (ui::table("", &[ui::col("Name"), ui::num_col("Keys"), ui::num_col("Jobs"), ui::col("Created")], html! {
+                        @for customer in &customers {
+                            tr {
+                                td {
+                                    a.strong href={ "/customers/" (customer.id) } { (customer.name) }
                                 }
+                                td.num { (keys.iter().filter(|k| k.owner.customer_id() == Some(customer.id)).count()) }
+                                td.num { (jobs.iter().filter(|j| j.customer_id == customer.id).count()) }
+                                td { (views::date(customer.created_at)) }
                             }
                         }
-                    }
+                    }))
                 }
             }).flush())
             (ui::modal("new-customer", "New customer", html! {
@@ -57,7 +52,7 @@ pub async fn list(State(state): State<AppState>, auth: Authed) -> Result<Markup,
                         input type="text" name="name" required maxlength="200" placeholder="Alpine Outdoor GmbH" autofocus;
                     }))
                     div.actions {
-                        (ui::button("Create customer").primary().icon(icons::PLUS))
+                        (ui::button("Create customer").primary().icon(Icon::Plus))
                     }
                 }
             }))
@@ -123,27 +118,27 @@ pub async fn show(
                 .crumb("Customers", "/customers")
                 .subtitle(html! { "Customer since " (views::date(customer.created_at)) })
                 .actions(html! {
-                    (ui::button("New job").primary().icon(icons::PLUS).href(&new_job))
+                    (ui::button("New job").primary().icon(Icon::Plus).href(&new_job))
                 }))
 
             (ui::panel(html! {
                 @if keys.is_empty() {
-                    (ui::empty(icons::KEY, "No keys yet", "Generate a key pair, or import the public key the customer sent you.",
+                    (ui::empty(Icon::Key, "No keys yet", "Generate a key pair, or import the public key the customer sent you.",
                         Some(html! {
                             div.btn-row {
-                                (ui::button("Generate key pair").primary().icon(icons::KEY).opens("generate-key"))
-                                (ui::button("Import keys").icon(icons::UPLOAD).opens("import-keys"))
+                                (ui::button("Generate key pair").primary().icon(Icon::Key).opens("generate-key"))
+                                (ui::button("Import keys").icon(Icon::Upload).opens("import-keys"))
                             }
                         })))
                 } @else {
-                    (keys::key_list(&keys.iter().collect::<Vec<_>>(), false))
+                    (views::key_list(&keys.iter().collect::<Vec<_>>(), false))
                 }
             })
             .title("Keys")
-            .icon(icons::KEY)
+            .icon(Icon::Key)
             .actions(html! {
-                (ui::button("Import keys").small().icon(icons::UPLOAD).opens("import-keys"))
-                (ui::button("Generate key pair").small().icon(icons::KEY).opens("generate-key"))
+                (ui::button("Import keys").small().icon(Icon::Upload).opens("import-keys"))
+                (ui::button("Generate key pair").small().icon(Icon::Key).opens("generate-key"))
             })
             .flush())
             (keys::generate_modal(&auth.csrf, keys::Owner::Customer(&customer)))
@@ -151,16 +146,16 @@ pub async fn show(
 
             (ui::panel(html! {
                 @if jobs.is_empty() {
-                    (ui::empty(icons::JOBS, "No jobs yet", "A job watches a folder and encrypts or decrypts every file that arrives.",
-                        Some(ui::button("New job").icon(icons::PLUS).href(&new_job).render())))
+                    (ui::empty(Icon::Jobs, "No jobs yet", "A job watches a folder and encrypts or decrypts every file that arrives.",
+                        Some(ui::button("New job").icon(Icon::Plus).href(&new_job).render())))
                 } @else {
                     (super::jobs::job_table(&jobs, false))
                 }
-            }).title("Jobs").icon(icons::JOBS).flush())
+            }).title("Jobs").icon(Icon::Jobs).flush())
 
             (ui::panel(views::audit_table(&events, &names))
                 .title("Recent activity")
-                .icon(icons::ACTIVITY)
+                .icon(Icon::Activity)
                 .actions(views::activity_search(Some(("customer", customer.id.to_string()))))
                 .flush()
                 .footer(ui::link_arrow(&all_activity, &format!("All activity for {}", customer.name))))

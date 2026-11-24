@@ -31,6 +31,7 @@
   --color-surface-muted: light-dark(#e6ecf4, #202a35);
   --color-surface-strong: light-dark(#dbe3ee, #2a3542);
   --color-overlay: light-dark(rgb(255 255 255 / 0.85), rgb(13 18 24 / 0.85));
+  --color-backdrop: light-dark(rgb(13 18 24 / 0.45), rgb(0 0 0 / 0.6)); /* behind dialogs */
 
   /* Text. */
   --color-text: light-dark(#101c29, #e6edf5);
@@ -67,6 +68,7 @@
   --color-code-bg: light-dark(#eef2f7, #19212b);
   --color-terminal-bg: #1b2532;
   --color-terminal-text: #e9f1ff;
+  --color-terminal-comment: #8b9bb0;
 
   /* Type. */
   --font-sans: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -79,6 +81,8 @@
   --text-xl: 20px;   /* section titles */
   --text-2xl: 28px;  /* page titles */
   --text-stat: 30px; /* numbers on stat cards */
+  --text-mono: 12.5px;    /* monospace within text: times, fingerprints, code */
+  --text-mono-lg: 15px;   /* the fingerprint on a key's page */
 
   --leading-tight: 1.25;
   --leading-normal: 1.5;
@@ -103,6 +107,7 @@
   --shadow-sm: 0 1px 2px light-dark(rgb(16 28 41 / 0.06), rgb(0 0 0 / 0.4));
   --shadow-md: 0 1px 2px light-dark(rgb(16 28 41 / 0.06), rgb(0 0 0 / 0.4)),
     0 6px 18px light-dark(rgb(16 28 41 / 0.07), rgb(0 0 0 / 0.35));
+  --shadow-lg: 0 24px 60px light-dark(rgb(16 28 41 / 0.2), rgb(0 0 0 / 0.5)); /* dialogs, toasts */
 
   /* Layout. */
   --sidebar-width: 248px;

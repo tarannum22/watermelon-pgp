@@ -17,13 +17,25 @@ All notable changes to this project are documented here. The format follows
 
 ### Web UI
 - New look, built on a design system: design tokens (colour roles, type, spacing) in one file,
-  reusable components in `src/ui`, and a living style guide at `/design` in evaluation builds
-  (`--features evaluation`; release builds don't include it). See `docs/design-system.md`.
+  reusable components in `src/ui`, and a living style guide at `/styleguide` in debug builds
+  (release builds don't include it). See `docs/design-system.md`.
+- The stylesheet is bundled and minified at build time (lightningcss); every static file's URL
+  carries a hash of its content.
 - Sidebar navigation, a search box for the audit log on every page, and a dashboard with stat
   cards, a "Needs attention" list and recent activity.
 - Keys as rich rows with the fingerprint, status and capabilities, filters (key pairs, public
   only, needs attention, revoked) and search. A key's page shows the full fingerprint.
 - New customers, key generation and key import open in dialogs from the page or panel header.
+- Revoking or deleting a key and deleting a job ask in a dialog first. Without JavaScript, a
+  tick box does the same.
+- The outcome of a form shows as a toast in the corner. Slow actions such as generating an RSA
+  key show a spinner while they run.
+- The job form is in numbered steps, and a rejected job shows the reason next to the field to
+  blame.
+- Table headings stay in view while scrolling; long audit details show three lines and the rest
+  on demand.
+- The audit log's address leaves out empty filters (`/audit?q=acme`, not
+  `/audit?q=acme&period=&from=…`).
 - A key's page: details across the top, the public and secret exports side by side with their
   buttons level, and revoke/delete below.
 - Copy buttons for fingerprints (where the browser allows clipboard access).
@@ -35,7 +47,8 @@ All notable changes to this project are documented here. The format follows
 ### Tests
 - End-to-end tests of the core flows in a real browser (Playwright): logging in and out,
   customers, generating, importing and revoking keys, an encrypt and decrypt round trip with a
-  failed file and its retry, the audit log's filters and CSV export, and the theme switch.
+  failed file and its retry, the audit log's filters and CSV export, the theme switch, and the
+  confirmation dialogs with and without JavaScript.
 
 ## [0.1.0] - 2026-11-24
 

@@ -2,11 +2,11 @@
 //! export what matches as CSV.
 
 use axum::{
-    extract::{Query, State},
-    http::header,
-    response::{IntoResponse, Response},
+    extract::{Query, RawQuery, State},
+    http::{HeaderMap, HeaderValue, header},
+    response::{IntoResponse, Redirect, Response},
 };
-use maud::{Markup, html};
+use maud::html;
 use serde::{Deserialize, Serialize};
 use watermelon_pgp_core::audit::{AuditEvent, Filter};
 
@@ -15,7 +15,7 @@ use crate::{
     AppState,
     auth::Authed,
     error::AppError,
-    ui::{self, Tone, icons},
+    ui::{self, Icon, Tone},
     views::{self, Nav},
 };
 
@@ -195,11 +195,25 @@ fn chips(query: &AuditQuery, names: &Names) -> Vec<(String, String)> {
     chips
 }
 
+/// The audit log. Filter forms send every field, empty or not (`?q=x&period=&from=…`); the
+/// address bar shows only the filters in use: htmx is told which URL to push, and a plain form
+/// submission is redirected to it.
 pub async fn list(
     State(state): State<AppState>,
     auth: Authed,
     Query(query): Query<AuditQuery>,
-) -> Result<Markup, AppError> {
+    RawQuery(raw): RawQuery,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    let clean = query.url("/audit");
+    let has_empty = raw.as_deref().is_some_and(|raw| {
+        raw.split('&')
+            .any(|pair| pair.is_empty() || pair.ends_with('='))
+    });
+    let from_htmx = headers.contains_key("hx-request");
+    if has_empty && !from_htmx {
+        return Ok(Redirect::to(&clean).into_response());
+    }
     let (filter, problems) = query.filter(PAGE_SIZE);
     let (events, total, customers, jobs) = state
         .vault(move |vault| {
@@ -227,12 +241,12 @@ pub async fn list(
     let custom_range = !query.from.is_empty() || !query.to.is_empty();
     let page = state.page(&auth, "Audit log", Nav::Audit);
     let newest = (!query.before.is_empty()).then(|| query.first_page().url("/audit"));
-    Ok(views::layout(
+    let page = views::layout(
         page,
         html! {
             (ui::page_header("Audit log")
                 .subtitle(html! { "Everything that happened: logins, key and job changes, every file processed. Append-only." })
-                .actions(html! { (ui::button("Export CSV").icon(icons::DOWNLOAD).href(&export).download()) }))
+                .actions(html! { (ui::button("Export CSV").icon(Icon::Download).href(&export).download()) }))
             // Live filtering with htmx: only the results are swapped, and the URL follows, so
             // a filtered view can be bookmarked. Without JavaScript the Filter button does it.
             (ui::panel(html! {
@@ -243,7 +257,7 @@ pub async fn list(
                     div.wide {
                         (ui::field("Search", None, html! {
                             span.search {
-                                (ui::icon(icons::SEARCH))
+                                (ui::icon(Icon::Search))
                                 input type="search" name="q" value=(query.q) maxlength=(MAX_SEARCH_LEN)
                                     placeholder="Customer, job, key, user ID, file name, details…" autocomplete="off";
                             }
@@ -294,9 +308,9 @@ pub async fn list(
                     @if !query.key.is_empty() {
                         input type="hidden" name="key" value=(query.key);
                     }
-                    div { (ui::button("Filter").icon(icons::FILTER)) }
+                    div { (ui::button("Filter").icon(Icon::Filter)) }
                 }
-            }).title("Filters").icon(icons::FILTER))
+            }).title("Filters").icon(Icon::Filter))
 
             div #audit-results.stack {
                 @for problem in &problems {
@@ -318,7 +332,7 @@ pub async fn list(
                         }
                     })
                     .title("Events")
-                    .icon(icons::AUDIT)
+                    .icon(Icon::Audit)
                     .flush()
                     .footer(html! {
                         span { "Newest first, " (PAGE_SIZE) " per page" }
@@ -329,7 +343,12 @@ pub async fn list(
                     }))
             }
         },
-    ))
+    );
+    let mut response = page.into_response();
+    if from_htmx && let Ok(url) = HeaderValue::from_str(&clean) {
+        response.headers_mut().insert("hx-push-url", url);
+    }
+    Ok(response)
 }
 
 /// Everything matching the filter as CSV, oldest first, for audits and spreadsheets.

@@ -336,20 +336,22 @@ impl Vault {
         let mut spec = spec.clone();
         spec.name = spec.name.trim().to_owned();
         if spec.name.is_empty() {
-            return Err(Error::Invalid("job name must not be empty".into()));
+            return Err(Error::invalid_field("name", "job name must not be empty"));
         }
         if spec.poll_interval_secs < MIN_POLL_INTERVAL_SECS {
-            return Err(Error::Invalid(format!(
-                "polling interval must be at least {MIN_POLL_INTERVAL_SECS} seconds"
-            )));
+            return Err(Error::invalid_field(
+                "interval",
+                format!("polling interval must be at least {MIN_POLL_INTERVAL_SECS} seconds"),
+            ));
         }
         validate_dirs(&spec)?;
 
         match spec.kind {
             JobKind::Encrypt => {
                 if spec.recipients.is_empty() {
-                    return Err(Error::Invalid(
-                        "an encrypt job needs at least one recipient".into(),
+                    return Err(Error::invalid_field(
+                        "recipients",
+                        "an encrypt job needs at least one recipient",
                     ));
                 }
                 if !spec.decrypt_keys.is_empty() || !spec.verifiers.is_empty() {
@@ -360,7 +362,10 @@ impl Vault {
                 if let Some(ext) = &spec.extension
                     && (!ext.starts_with('.') || ext.len() < 2 || ext.contains(['/', '\\']))
                 {
-                    return Err(Error::Invalid(format!("invalid extension {ext:?}")));
+                    return Err(Error::invalid_field(
+                        "extension",
+                        format!("invalid extension {ext:?}"),
+                    ));
                 }
                 spec.recipients = self.resolve_keys(&spec.recipients, |key| {
                     usable(key)?;
@@ -374,8 +379,9 @@ impl Vault {
             }
             JobKind::Decrypt => {
                 if spec.decrypt_keys.is_empty() {
-                    return Err(Error::Invalid(
-                        "a decrypt job needs at least one decryption key".into(),
+                    return Err(Error::invalid_field(
+                        "decrypt_keys",
+                        "a decrypt job needs at least one decryption key",
                     ));
                 }
                 if !spec.recipients.is_empty() || spec.signer.is_some() {
@@ -384,8 +390,9 @@ impl Vault {
                     ));
                 }
                 if spec.verify_policy != VerifyPolicy::Ignore && spec.verifiers.is_empty() {
-                    return Err(Error::Invalid(
-                        "verifying signatures needs at least one sender key".into(),
+                    return Err(Error::invalid_field(
+                        "verifiers",
+                        "verifying signatures needs at least one sender key",
                     ));
                 }
                 spec.decrypt_keys = self.resolve_keys(&spec.decrypt_keys, |key| {
@@ -474,6 +481,7 @@ fn needs_secret_signing(key: &KeyRecord) -> std::result::Result<(), String> {
 }
 
 fn validate_dirs(spec: &JobSpec) -> Result<()> {
+    // The labels are also the job form's field names.
     let mut dirs = vec![
         ("input", &spec.input_dir),
         ("output", &spec.output_dir),
@@ -484,26 +492,27 @@ fn validate_dirs(spec: &JobSpec) -> Result<()> {
     }
     for (label, dir) in &dirs {
         if !dir.is_absolute() {
-            return Err(Error::Invalid(format!(
-                "{label} folder must be an absolute path: {}",
-                dir.display()
-            )));
+            return Err(Error::invalid_field(
+                label,
+                format!("{label} folder must be an absolute path: {}", dir.display()),
+            ));
         }
     }
     for (label, dir) in [("input", &spec.input_dir), ("output", &spec.output_dir)] {
         if !dir.is_dir() {
-            return Err(Error::Invalid(format!(
-                "{label} folder {} does not exist",
-                dir.display()
-            )));
+            return Err(Error::invalid_field(
+                label,
+                format!("{label} folder {} does not exist", dir.display()),
+            ));
         }
     }
     for (i, (a_label, a)) in dirs.iter().enumerate() {
         for (b_label, b) in &dirs[i + 1..] {
             if a == b {
-                return Err(Error::Invalid(format!(
-                    "the {a_label} and {b_label} folders must differ"
-                )));
+                return Err(Error::invalid_field(
+                    b_label,
+                    format!("the {a_label} and {b_label} folders must differ"),
+                ));
             }
         }
     }
@@ -848,6 +857,37 @@ mod tests {
                 "should reject {spec:?}"
             );
         }
+    }
+
+    #[test]
+    fn invalid_specs_name_the_field_to_blame() {
+        let f = fixture();
+        let base = encrypt_spec(&f);
+        let field = |spec: JobSpec| match f.vault.create_job(Actor::Cli, f.customer, &spec) {
+            Err(Error::InvalidField { field, .. }) => field,
+            other => panic!("expected a field error, got {other:?}"),
+        };
+        assert_eq!(
+            field(JobSpec {
+                recipients: vec![],
+                ..base.clone()
+            }),
+            "recipients"
+        );
+        assert_eq!(
+            field(JobSpec {
+                output_dir: f.dir.path().join("missing"),
+                ..base.clone()
+            }),
+            "output"
+        );
+        assert_eq!(
+            field(JobSpec {
+                poll_interval_secs: 1,
+                ..base.clone()
+            }),
+            "interval"
+        );
     }
 
     #[test]

@@ -12,7 +12,7 @@ use super::Empty;
 use crate::{
     AppState,
     auth::{self, Authed, Client, Posted, ThemeChoice},
-    ui::{self, Theme, Tone, icons},
+    ui::{self, Icon, Theme, Tone},
     views,
 };
 
@@ -32,7 +32,7 @@ fn login_page(theme: Theme, error: Option<&str>) -> Markup {
                 (ui::field("Admin password", None, html! {
                     input type="password" name="password" autocomplete="current-password" required autofocus;
                 }))
-                (ui::button("Log in").primary().block().icon(icons::LOCK))
+                (ui::button("Log in").primary().block().icon(Icon::Lock))
             }
         })
         .render(),

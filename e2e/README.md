@@ -6,7 +6,7 @@ requests straight into the router: these also cover htmx, the JavaScript, the CS
 and shows parts of forms, file downloads, and the job engine processing real files.
 
 ```sh
-cargo build --features evaluation   # from the repository root
+cargo build                         # from the repository root (debug: has the style guide)
 cd e2e
 npm ci
 npx playwright install chromium
@@ -30,8 +30,8 @@ npm run report                      # the HTML report of the last run
 | Test | Flow |
 |---|---|
 | `auth.spec.ts` | Login required, wrong password refused, log in and out |
-| `keys.spec.ts` | Generate a key pair and download its public key; import a partner's key by pasting it; key list filters and search; revoking needs confirmation |
+| `keys.spec.ts` | Generate a key pair and download its public key; import a partner's key by pasting it; key list filters and search; revoking asks in a dialog; without JavaScript, deleting needs the tick box |
 | `jobs.spec.ts` | Encrypt a dropped file and decrypt it again; a failed file shows up and can be retried; disable and enable; a rejected job form keeps its input |
 | `audit.spec.ts` | Search from the top bar, live filters, removable filter chips, CSV export |
 | `theme.spec.ts` | The theme switch is remembered, also on the login page |
-| `design.spec.ts` | The style guide renders; no page triggers a Content-Security-Policy violation; the new-customer dialog opens and closes |
+| `design.spec.ts` | The style guide renders; no page triggers a Content-Security-Policy violation; the new-customer dialog opens, keeps focus inside, and closes |

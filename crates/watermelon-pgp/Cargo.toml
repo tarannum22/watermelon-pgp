@@ -23,8 +23,3 @@ anyhow.workspace = true
 clap.workspace = true
 rpassword.workspace = true
 time.workspace = true
-
-[features]
-# Evaluation builds: the web UI's /design style guide. Not for releases:
-# `cargo build --features evaluation`.
-evaluation = ["watermelon-pgp-web/evaluation"]

@@ -10,7 +10,7 @@ export const PASSWORD = "e2e-admin-password";
 /** Everything a run writes: database, job folders, the login state. Wiped at the start. */
 export const RUN_DIR = path.resolve(here, "..", ".run");
 export const DATA_DIR = path.join(RUN_DIR, "data");
-/** The binary under test; build it first (`cargo build --features evaluation`). */
+/** The binary under test; build it first (`cargo build`). */
 export const BINARY = path.resolve(
   here,
   "..",

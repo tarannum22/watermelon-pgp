@@ -141,12 +141,12 @@ Please report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
 cargo test --release   # includes GnuPG interop tests when `gpg` is installed
 
 # End-to-end tests: the core user flows in a real browser (needs Node.js 22).
-cargo build --features evaluation
+cargo build
 cd e2e && npm ci && npx playwright install chromium && npm test
 ```
 
 The web UI is built from a small design system (tokens, components and a living style guide in
-evaluation builds): see [docs/design-system.md](docs/design-system.md). The end-to-end tests are
+debug builds): see [docs/design-system.md](docs/design-system.md). The end-to-end tests are
 described in [e2e/README.md](e2e/README.md).
 
 CI runs the tests on Linux and macOS against several GnuPG versions, runs the end-to-end tests,

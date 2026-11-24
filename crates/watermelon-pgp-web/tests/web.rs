@@ -13,6 +13,7 @@ use watermelon_pgp_core::{
     audit::Actor,
     crypto::{self, Algorithm},
     envelope::MasterKey,
+    store::KeyOwner,
     vault::{self, Vault},
 };
 use watermelon_pgp_web::{AppState, Config, SESSION_COOKIE, router};
@@ -507,7 +508,7 @@ async fn keys_can_be_generated_from_the_keys_page() {
         .keys(None)
         .unwrap()
         .into_iter()
-        .filter(|k| k.customer_id.is_none())
+        .filter(|k| k.owner == KeyOwner::Anonymous)
         .collect();
     assert_eq!(anonymous.len(), 1);
     let page = app.follow(reply, &session).await;
@@ -616,6 +617,34 @@ async fn jobs_are_created_edited_and_controlled_from_forms() {
     assert_eq!(rejected.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(rejected.body.contains("at least one recipient"));
     assert!(rejected.body.contains(r#"value="outbound""#), "values kept");
+    assert!(
+        rejected
+            .body
+            .contains(r#"<fieldset class="field invalid" aria-describedby="recipients-error">"#),
+        "the error sits at the field: {}",
+        rejected.body
+    );
+    assert!(rejected.body.contains(r##"<a href="#recipients-error">"##));
+
+    // A folder that doesn't exist is marked on the folder's field.
+    let missing = format!(
+        "customer={customer}&name=outbound&kind=encrypt&input={}&output={}&interval=30&recipients={partner}",
+        enc(&input),
+        enc("/does/not/exist")
+    );
+    let rejected = app.submit("/jobs", &session, &missing).await;
+    assert!(
+        rejected
+            .body
+            .contains(r#"aria-invalid="true" aria-describedby="output-error""#),
+        "{}",
+        rejected.body
+    );
+    assert!(
+        rejected
+            .body
+            .contains(r#"<p class="field-error" id="output-error">"#)
+    );
 
     let fields = format!("{fields}&recipients={partner}&recipients={ours}&armor=on");
     let created = app.submit("/jobs", &session, &fields).await;
@@ -808,11 +837,18 @@ async fn the_stylesheet_points_at_served_fonts() {
     let app = App::new();
     let css = app.get("/static/app.css", None).await.body;
     for font in ["geist-1.9.0.woff2", "jetbrains-mono-5.3.0.woff2"] {
-        assert!(css.contains(&format!(r#"url("{font}")"#)), "{font}");
+        assert!(css.contains(&format!("url({font})")), "{font}");
     }
-    // All five layers are in it, tokens first.
-    assert!(css.starts_with("/* Design tokens"));
-    assert!(css.contains(".shell {") && css.contains(".btn {") && css.contains(".job-form"));
+    // All six layers are in it, tokens first, minified.
+    let at = |needle: &str| {
+        css.find(needle)
+            .unwrap_or_else(|| panic!("{needle} in the stylesheet"))
+    };
+    assert!(at("--color-bg:") < at(".shell{"));
+    assert!(at(".shell{") < at(".btn{"));
+    assert!(at(".btn{") < at(".key-row{"));
+    assert!(at(".key-row{") < at(".job-form{"));
+    assert!(!css.contains("/*") && !css.contains("\n  "), "minified");
 }
 
 #[tokio::test]
@@ -884,20 +920,90 @@ async fn the_theme_choice_is_a_cookie_and_returns_to_the_page() {
 }
 
 #[tokio::test]
-async fn the_style_guide_is_only_in_evaluation_builds() {
+async fn the_style_guide_is_only_in_debug_builds() {
     let app = App::new();
     let session = app.login().await;
-    let design = app.get("/design", Some(&session)).await;
+    let guide = app.get("/styleguide", Some(&session)).await;
     let dashboard = app.get("/", Some(&session)).await;
-    if cfg!(feature = "evaluation") {
-        assert_eq!(design.status, StatusCode::OK);
-        assert!(dashboard.body.contains("Evaluation build"));
+    if cfg!(debug_assertions) {
+        assert_eq!(guide.status, StatusCode::OK);
+        assert!(dashboard.body.contains("Development build"));
     } else {
-        assert_eq!(design.status, StatusCode::NOT_FOUND);
+        assert_eq!(guide.status, StatusCode::NOT_FOUND);
         assert!(
-            !dashboard.body.contains("Evaluation build") && !dashboard.body.contains("/design")
+            !dashboard.body.contains("Development build")
+                && !dashboard.body.contains("/styleguide")
         );
     }
+}
+
+#[tokio::test]
+async fn outcomes_are_toasts_and_irreversible_forms_ask_first() {
+    let app = App::new();
+    let session = app.login().await;
+    let created = app.submit("/customers", &session, "name=ACME").await;
+    let page = app.follow(created, &session).await;
+    assert!(
+        page.body
+            .contains(r#"<div class="toast good" role="status">"#),
+        "{}",
+        page.body
+    );
+    assert!(
+        page.body
+            .contains(r#"<dialog class="modal" id="confirm-dialog""#)
+    );
+
+    let customer = app.vault().customers().unwrap().remove(0).id;
+    let key = app
+        .vault()
+        .generate_key(Actor::Cli, customer, "ACME", Algorithm::Curve25519)
+        .unwrap();
+    let page = app
+        .get(&format!("/keys/{}", key.fingerprint), Some(&session))
+        .await;
+    for action in ["revoke", "delete"] {
+        let form = format!(
+            r#"action="/keys/{}/{action}" data-confirm=""#,
+            key.fingerprint
+        );
+        assert!(page.body.contains(&form), "{action} asks first");
+    }
+    assert!(
+        page.body
+            .contains(r#"<input type="checkbox" name="confirm" value="yes" required>"#),
+        "the tick box, for browsers without JavaScript"
+    );
+}
+
+#[tokio::test]
+async fn audit_urls_leave_out_empty_filters() {
+    let app = App::new();
+    let session = app.login().await;
+    // A plain form submission sends every field: redirected to the filters in use.
+    let reply = app
+        .get(
+            "/audit?q=acme&period=&from=&to=&actor=admin&action=",
+            Some(&session),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER);
+    assert_eq!(reply.location(), "/audit?q=acme&actor=admin");
+    let reply = app.get("/audit?q=&period=", Some(&session)).await;
+    assert_eq!(reply.location(), "/audit");
+    // Links with only real filters are left alone, in any order.
+    let page = app
+        .get("/audit?action=file.processed&period=24h", Some(&session))
+        .await;
+    assert_eq!(page.status, StatusCode::OK);
+
+    // htmx pushes the URL into the address bar itself: it's told the clean one.
+    let request = Request::get("/audit?q=acme&period=&actor=")
+        .header("hx-request", "true")
+        .header(header::COOKIE, &session.cookie);
+    let reply = app.send(request.body(Body::empty()).unwrap()).await;
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(reply.headers["hx-push-url"], "/audit?q=acme");
 }
 
 #[tokio::test]

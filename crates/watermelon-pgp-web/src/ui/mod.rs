@@ -3,11 +3,12 @@
 //!
 //! Each component renders the classes styled in the same-named section of
 //! `assets/css/components.css`, and all styling goes through the tokens in `tokens.css`.
-//! Builders (`Button`, `Panel`, `PageHeader`) implement [`Render`], so they drop straight into
-//! `html!`. With the `evaluation` feature, `/design` shows every component in every state.
+//! Builders (`Button`, `Panel`, `PageHeader`, `Field`) implement [`Render`], so they drop
+//! straight into `html!`. Debug builds show every component in every state at `/styleguide`.
 
-pub mod icons;
+mod icons;
 
+pub use icons::Icon;
 use maud::{Markup, PreEscaped, Render, html};
 
 /// The colour of a status. Always paired with text: colour only repeats what the words say.
@@ -30,13 +31,18 @@ impl Tone {
         }
     }
 
-    fn icon(self) -> &'static str {
+    fn icon(self) -> Icon {
         match self {
-            Tone::Good => icons::CHECK,
-            Tone::Warn => icons::WARNING,
-            Tone::Bad => icons::CIRCLE_ALERT,
-            Tone::Neutral => icons::INFO,
+            Tone::Good => Icon::Check,
+            Tone::Warn => Icon::Warning,
+            Tone::Bad => Icon::CircleAlert,
+            Tone::Neutral => Icon::Info,
         }
+    }
+
+    /// Bad news interrupts a screen reader; everything else waits its turn.
+    fn role(self) -> &'static str {
+        if self == Tone::Bad { "alert" } else { "status" }
     }
 }
 
@@ -78,14 +84,14 @@ impl Theme {
 
 // Icon
 
-/// A Lucide icon from [`icons`], decorative (hidden from screen readers).
-pub fn icon(svg: &str) -> Markup {
-    icon_with(svg, "icon")
+/// A Lucide icon, decorative (hidden from screen readers).
+pub fn icon(icon: Icon) -> Markup {
+    icon_with(icon, "icon")
 }
 
-pub fn icon_with(svg: &str, class: &str) -> Markup {
+pub fn icon_with(icon: Icon, class: &str) -> Markup {
     html! {
-        svg class=(class) viewBox="0 0 24 24" aria-hidden="true" focusable="false" { (PreEscaped(svg)) }
+        svg class=(class) viewBox="0 0 24 24" aria-hidden="true" focusable="false" { (PreEscaped(icon.svg())) }
     }
 }
 
@@ -104,13 +110,14 @@ enum Variant {
 #[must_use]
 pub struct Button<'a> {
     label: &'a str,
-    icon: Option<&'static str>,
+    icon: Option<Icon>,
     variant: Variant,
     small: bool,
     block: bool,
     href: Option<&'a str>,
     opens: Option<&'a str>,
     download: bool,
+    busy: Option<&'a str>,
 }
 
 pub fn button(label: &str) -> Button<'_> {
@@ -123,6 +130,7 @@ pub fn button(label: &str) -> Button<'_> {
         href: None,
         opens: None,
         download: false,
+        busy: None,
     }
 }
 
@@ -147,8 +155,8 @@ impl<'a> Button<'a> {
         self.block = true;
         self
     }
-    pub fn icon(mut self, svg: &'static str) -> Self {
-        self.icon = Some(svg);
+    pub fn icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
         self
     }
     /// Make it a link.
@@ -164,6 +172,12 @@ impl<'a> Button<'a> {
     /// A file download: a normal request, not an htmx swap.
     pub fn download(mut self) -> Self {
         self.download = true;
+        self
+    }
+    /// What the button says while its form is being sent, for slow actions such as generating
+    /// an RSA key. Shown with a spinner.
+    pub fn busy(mut self, label: &'a str) -> Self {
+        self.busy = Some(label);
         self
     }
 
@@ -189,7 +203,8 @@ impl Render for Button<'_> {
     fn render(&self) -> Markup {
         let inner = html! {
             @if let Some(svg) = self.icon { (icon_with(svg, if self.small { "icon sm" } else { "icon" })) }
-            span { (self.label) }
+            span.btn-label { (self.label) }
+            @if let Some(busy) = self.busy { span.btn-busy aria-hidden="true" { (busy) } }
         };
         let boost = self.download.then_some("false");
         match (self.href, self.opens) {
@@ -197,7 +212,7 @@ impl Render for Button<'_> {
                 a class=(self.class()) href=(href) hx-boost=[boost] download[self.download] { (inner) }
             },
             (None, Some(id)) => html! {
-                button class=(self.class()) type="button" popovertarget=(id) { (inner) }
+                button class=(self.class()) type="button" commandfor=(id) command="show-modal" { (inner) }
             },
             (None, None) => html! { button class=(self.class()) type="submit" { (inner) } },
         }
@@ -271,7 +286,7 @@ impl Render for PageHeader<'_> {
                         nav.crumbs aria-label="Breadcrumbs" {
                             @for (label, href) in &self.crumbs {
                                 a href=(href) { (label) }
-                                (icon_with(icons::CHEVRON_RIGHT, "icon sm"))
+                                (icon_with(Icon::ChevronRight, "icon sm"))
                             }
                         }
                     }
@@ -291,7 +306,8 @@ impl Render for PageHeader<'_> {
 #[must_use]
 pub struct Panel<'a> {
     title: Option<&'a str>,
-    icon: Option<&'static str>,
+    icon: Option<Icon>,
+    step: Option<u8>,
     description: Option<Markup>,
     actions: Option<Markup>,
     body: Markup,
@@ -312,6 +328,7 @@ pub fn panel(body: Markup) -> Panel<'static> {
     Panel {
         title: None,
         icon: None,
+        step: None,
         description: None,
         actions: None,
         body,
@@ -330,8 +347,13 @@ impl<'a> Panel<'a> {
             ..self
         }
     }
-    pub fn icon(mut self, svg: &'static str) -> Self {
-        self.icon = Some(svg);
+    pub fn icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+    /// Number the panel as a step of a longer form, in place of its icon.
+    pub fn step(mut self, number: u8) -> Self {
+        self.step = Some(number);
         self
     }
     pub fn description(mut self, description: Markup) -> Self {
@@ -346,7 +368,8 @@ impl<'a> Panel<'a> {
         self.footer = Some(footer);
         self
     }
-    /// No padding around the body: for tables and lists that run edge to edge.
+    /// No padding around the body: for tables and lists that run edge to edge. Put anything
+    /// that needs padding in a [`panel_section`].
     pub fn flush(mut self) -> Self {
         self.flush = true;
         self
@@ -389,7 +412,11 @@ impl Render for Panel<'_> {
                     div.panel-head {
                         @if let Some(title) = self.title {
                             h2.panel-title {
-                                @if let Some(svg) = self.icon { (icon(svg)) }
+                                @if let Some(number) = self.step {
+                                    span.step-number { span.visually-hidden { "Step " } (number) }
+                                } @else if let Some(svg) = self.icon {
+                                    (icon(svg))
+                                }
                                 (title)
                             }
                         }
@@ -404,12 +431,17 @@ impl Render for Panel<'_> {
     }
 }
 
+/// A padded part of a [`Panel::flush`] panel, such as a summary above a table.
+pub fn panel_section(body: Markup) -> Markup {
+    html! { div.panel-section { (body) } }
+}
+
 // Stat
 
 /// A number on the dashboard, linking to the details behind it.
 pub struct Stat<'a> {
     pub href: &'a str,
-    pub icon: &'static str,
+    pub icon: Icon,
     pub label: &'a str,
     pub value: String,
     pub detail: String,
@@ -426,6 +458,62 @@ impl Render for Stat<'_> {
                 }
                 span.stat-value { (self.value) }
                 span.stat-detail { (self.detail) }
+            }
+        }
+    }
+}
+
+// Table
+
+/// A table column heading. Numeric columns are right-aligned.
+#[derive(Debug, Clone, Copy)]
+pub struct Column<'a> {
+    label: &'a str,
+    numeric: bool,
+}
+
+pub fn col(label: &str) -> Column<'_> {
+    Column {
+        label,
+        numeric: false,
+    }
+}
+
+pub fn num_col(label: &str) -> Column<'_> {
+    Column {
+        label,
+        numeric: true,
+    }
+}
+
+/// A table with sticky headings; `rows` are the `tr`s. Put it in a [`Panel::flush`] panel.
+/// Give numeric cells `td.num`, and a row `tr.bad` or `tr.warn` to make it stand out.
+pub fn table(class: &str, columns: &[Column<'_>], rows: Markup) -> Markup {
+    html! {
+        div.table-wrap {
+            table class={ "table " (class) } {
+                thead {
+                    tr {
+                        @for column in columns {
+                            th.num[column.numeric] { (column.label) }
+                        }
+                    }
+                }
+                tbody { (rows) }
+            }
+        }
+    }
+}
+
+/// Text that can run long (paths, error details): the first lines, and the rest on demand.
+pub fn long_text(text: &str) -> Markup {
+    const SHORT: usize = 160;
+    html! {
+        @if text.chars().count() <= SHORT && !text.contains('\n') {
+            (text)
+        } @else {
+            details.long-text {
+                summary { span.clamp { (text) } span.more { "Show all" } span.less { "Show less" } }
             }
         }
     }
@@ -481,8 +569,8 @@ pub fn fingerprint_box(fpr: &str) -> Markup {
 pub fn copy_button(text: &str, what: &str) -> Markup {
     html! {
         button.copy type="button" data-copy=(text) aria-label={ "Copy " (what) } title={ "Copy " (what) } {
-            span.idle { (icon(icons::COPY)) }
-            span.done { (icon(icons::CHECK)) }
+            span.idle { (icon(Icon::Copy)) }
+            span.done { (icon(Icon::Check)) }
         }
     }
 }
@@ -503,7 +591,7 @@ pub fn chip(href: &str, label: &str, count: Option<usize>, current: bool) -> Mar
 pub fn removable_chip(href: &str, label: &str) -> Markup {
     html! {
         a.chip.removable href=(href) title="Remove this filter" {
-            (label) (icon_with(icons::CLOSE, "icon sm"))
+            (label) (icon_with(Icon::Close, "icon sm"))
         }
     }
 }
@@ -511,7 +599,7 @@ pub fn removable_chip(href: &str, label: &str) -> Markup {
 // Empty state
 
 /// What to show instead of an empty list, and what to do about it.
-pub fn empty(svg: &'static str, title: &str, text: &str, action: Option<Markup>) -> Markup {
+pub fn empty(svg: Icon, title: &str, text: &str, action: Option<Markup>) -> Markup {
     html! {
         div.empty {
             span.empty-icon { (icon(svg)) }
@@ -524,15 +612,58 @@ pub fn empty(svg: &'static str, title: &str, text: &str, action: Option<Markup>)
 
 // Alert
 
-/// A message in a box: flash messages after a form, and notices on a page.
+/// A message in a box on the page: form errors and notices. The outcome of what the user just
+/// did is a [`toast`] instead.
 pub fn alert(tone: Tone, title: Option<&str>, text: Markup) -> Markup {
-    let role = if tone == Tone::Bad { "alert" } else { "status" };
     html! {
-        div class={ "alert " (tone.class()) } role=(role) {
+        div class={ "alert " (tone.class()) } role=(tone.role()) {
             (icon(tone.icon()))
             div.alert-text {
                 @if let Some(title) = title { strong { (title) } }
                 (text)
+            }
+        }
+    }
+}
+
+// Toast
+
+/// The outcome of what the user just did, in the corner of the screen. Good news fades after a
+/// few seconds; bad news stays until closed.
+pub fn toast(tone: Tone, text: Markup) -> Markup {
+    html! {
+        div.toasts {
+            div class={ "toast " (tone.class()) } role=(tone.role()) {
+                (icon(tone.icon()))
+                div.toast-text { (text) }
+                button.toast-close type="button" aria-label="Close" { (icon_with(Icon::Close, "icon sm")) }
+            }
+        }
+    }
+}
+
+// Notice list
+
+/// One thing that needs attention: what, and why.
+pub struct Notice {
+    pub tone: Tone,
+    pub icon: Icon,
+    pub what: Markup,
+    pub why: String,
+}
+
+/// Things that need attention, most urgent first. For a flush panel.
+pub fn notice_list(notices: &[Notice]) -> Markup {
+    html! {
+        ul.notices {
+            @for notice in notices {
+                li class=(notice.tone.class()) {
+                    (icon(notice.icon))
+                    span.notice-what {
+                        (notice.what)
+                        @if !notice.why.is_empty() { span.notice-why { (notice.why) } }
+                    }
+                }
             }
         }
     }
@@ -543,26 +674,98 @@ pub fn alert(tone: Tone, title: Option<&str>, text: Markup) -> Markup {
 /// A labelled form control. The label wraps the control, so clicking it focuses the control;
 /// the hint sits outside the label so it isn't read out as part of the field's name.
 pub fn field(label: &str, hint: Option<&str>, control: Markup) -> Markup {
-    field_with(html! { (label) }, hint, control)
+    form_field(label, control).hint(hint).render()
 }
 
 /// Like [`field`], marked optional.
 pub fn optional_field(label: &str, hint: Option<&str>, control: Markup) -> Markup {
-    field_with(
-        html! { (label) " " span.optional { "(optional)" } },
-        hint,
-        control,
-    )
+    form_field(label, control).hint(hint).optional().render()
 }
 
-fn field_with(label: Markup, hint: Option<&str>, control: Markup) -> Markup {
-    html! {
-        div.field {
-            label {
-                span.field-label { (label) }
-                (control)
+/// The id of the error message under the field named `name`, for the control's
+/// `aria-describedby`.
+pub fn error_id(name: &str) -> String {
+    format!("{name}-error")
+}
+
+/// A form field with everything: hint, optional marker, and the server's complaint about it.
+/// For a field with an error, give the control `aria-invalid="true"` and
+/// `aria-describedby=(error_id(name))`.
+#[must_use]
+pub struct Field<'a> {
+    label: &'a str,
+    hint: Option<&'a str>,
+    optional: bool,
+    error: Option<(&'a str, &'a str)>,
+    group: bool,
+    control: Markup,
+}
+
+pub fn form_field(label: &str, control: Markup) -> Field<'_> {
+    Field {
+        label,
+        hint: None,
+        optional: false,
+        error: None,
+        group: false,
+        control,
+    }
+}
+
+impl<'a> Field<'a> {
+    pub fn hint(mut self, hint: Option<&'a str>) -> Self {
+        self.hint = hint;
+        self
+    }
+    pub fn optional(mut self) -> Self {
+        self.optional = true;
+        self
+    }
+    /// What's wrong with the field named `name`, if anything.
+    pub fn error(mut self, name: &'a str, message: Option<&'a str>) -> Self {
+        self.error = message.map(|message| (name, message));
+        self
+    }
+    /// Several controls under one heading (a list of checkboxes): a `fieldset` with a legend.
+    pub fn group(mut self) -> Self {
+        self.group = true;
+        self
+    }
+}
+
+impl Render for Field<'_> {
+    fn render(&self) -> Markup {
+        let label = html! {
+            (self.label)
+            @if self.optional { " " span.optional { "(optional)" } }
+        };
+        let error_id = self.error.map(|(name, _)| error_id(name));
+        let error = html! {
+            @if let (Some((_, message)), Some(id)) = (self.error, &error_id) {
+                p.field-error id=(id) { (icon_with(Icon::CircleAlert, "icon sm")) (message) }
             }
-            @if let Some(hint) = hint { span.hint { (hint) } }
+        };
+        let hint = html! { @if let Some(hint) = self.hint { span.hint { (hint) } } };
+        if self.group {
+            html! {
+                fieldset.field.invalid[self.error.is_some()] aria-describedby=[error_id.as_deref()] {
+                    legend.field-label { (label) }
+                    (hint)
+                    (self.control)
+                    (error)
+                }
+            }
+        } else {
+            html! {
+                div.field.invalid[self.error.is_some()] {
+                    label {
+                        span.field-label { (label) }
+                        (self.control)
+                    }
+                    (hint)
+                    (error)
+                }
+            }
         }
     }
 }
@@ -580,10 +783,12 @@ pub fn checkbox(name: &str, checked: bool, label: &str, hint: Option<&str>) -> M
     }
 }
 
-/// A required checkbox guarding destructive actions; works without JavaScript.
+/// The tick box of a form that does something irreversible. Give the form
+/// `data-confirm="<question>"`: with JavaScript, submitting asks in the [`confirm_dialog`]
+/// instead and the box is hidden; without, the browser refuses the form until it's ticked.
 pub fn confirm(label: &str) -> Markup {
     html! {
-        label.check {
+        label.check.confirm-box {
             input type="checkbox" name="confirm" value="yes" required;
             span { (label) }
         }
@@ -604,7 +809,7 @@ pub fn choice_card(name: &str, value: &str, checked: bool, title: &str, text: &s
 pub fn search_input(name: &str, value: &str, placeholder: &str, label: &str) -> Markup {
     html! {
         span.search {
-            (icon(icons::SEARCH))
+            (icon(Icon::Search))
             input type="search" name=(name) value=(value) placeholder=(placeholder) aria-label=(label) autocomplete="off";
         }
     }
@@ -636,19 +841,38 @@ pub fn avatar(name: &str, tone: Tone) -> Markup {
 
 // Modal
 
-/// A dialog over the page, opened by a [`Button::opens`] with the same id. Built on the
-/// browser's popover feature: no JavaScript, closes with Esc or a click outside, and focuses
-/// the first `autofocus` control. Browsers without popovers show it in place instead.
+/// A modal `<dialog>`, opened by a [`Button::opens`] with the same id. The page behind it is
+/// inert while it's open; Esc, the close button or a click outside close it. Browsers open it
+/// with invoker commands; `app.js` does it for those without.
 pub fn modal(id: &str, title: &str, body: Markup) -> Markup {
     html! {
-        div.modal id=(id) popover role="dialog" aria-labelledby={ (id) "-title" } {
+        dialog.modal id=(id) aria-labelledby={ (id) "-title" } closedby="any" {
             div.modal-head {
                 h2.panel-title id={ (id) "-title" } { (title) }
-                button.btn.ghost.sm type="button" popovertarget=(id) popovertargetaction="hide" aria-label="Close" {
-                    (icon_with(icons::CLOSE, "icon sm"))
+                button.btn.ghost.sm type="button" commandfor=(id) command="close" aria-label="Close" {
+                    (icon_with(Icon::Close, "icon sm"))
                 }
             }
             div.modal-body { (body) }
+        }
+    }
+}
+
+/// The dialog that asks before a `form[data-confirm]` is sent (see [`confirm`]). One per page;
+/// `app.js` fills in the question and the button.
+pub fn confirm_dialog() -> Markup {
+    html! {
+        dialog.modal #confirm-dialog aria-labelledby="confirm-dialog-title" aria-describedby="confirm-dialog-text" closedby="any" {
+            div.modal-head {
+                h2.panel-title #confirm-dialog-title { (icon(Icon::Warning)) span data-confirm-title { "Are you sure?" } }
+            }
+            div.modal-body {
+                p #confirm-dialog-text data-confirm-text {}
+                div.btn-row.end {
+                    button.btn type="button" commandfor="confirm-dialog" command="close" autofocus { "Cancel" }
+                    button.btn.danger type="button" data-confirm-ok { "Confirm" }
+                }
+            }
         }
     }
 }
@@ -658,9 +882,9 @@ pub fn modal(id: &str, title: &str, body: Markup) -> Markup {
 /// System / light / dark, as three submit buttons: works without JavaScript.
 pub fn theme_switch(csrf_field: Markup, current: Theme) -> Markup {
     let options = [
-        (Theme::System, icons::MONITOR, "Use the system theme"),
-        (Theme::Light, icons::SUN, "Light theme"),
-        (Theme::Dark, icons::MOON, "Dark theme"),
+        (Theme::System, Icon::Monitor, "Use the system theme"),
+        (Theme::Light, Icon::Sun, "Light theme"),
+        (Theme::Dark, Icon::Moon, "Dark theme"),
     ];
     html! {
         // A full page load: htmx would swap only the body, and the theme lives on <html>.
@@ -686,7 +910,7 @@ pub fn terminal(text: Markup) -> Markup {
 
 /// "See more →" links at the end of a section.
 pub fn link_arrow(href: &str, label: &str) -> Markup {
-    html! { a.link-arrow href=(href) { (label) (icon(icons::ARROW_RIGHT)) } }
+    html! { a.link-arrow href=(href) { (label) (icon(Icon::ArrowRight)) } }
 }
 
 #[cfg(test)]
@@ -724,6 +948,40 @@ mod tests {
         let submit = button("Delete").danger().small().render().into_string();
         assert!(submit.starts_with(r#"<button class="btn danger sm" type="submit">"#));
         let opener = button("New").opens("new-thing").render().into_string();
-        assert!(opener.contains(r#"type="button" popovertarget="new-thing""#));
+        assert!(opener.contains(r#"type="button" commandfor="new-thing" command="show-modal""#));
+        let slow = button("Generate")
+            .busy("Generating…")
+            .render()
+            .into_string();
+        assert!(slow.contains(r#"<span class="btn-busy" aria-hidden="true">Generating…</span>"#));
+    }
+
+    #[test]
+    fn field_errors_are_tied_to_the_field() {
+        let html = form_field("Input folder", html! { input name="input"; })
+            .error("input", Some("input folder /x does not exist"))
+            .render()
+            .into_string();
+        assert!(html.starts_with(r#"<div class="field invalid">"#), "{html}");
+        assert!(
+            html.contains(r#"<p class="field-error" id="input-error">"#),
+            "{html}"
+        );
+        let fine = form_field("Input folder", html! {})
+            .error("input", None)
+            .render()
+            .into_string();
+        assert!(!fine.contains("invalid") && !fine.contains("field-error"));
+    }
+
+    #[test]
+    fn long_text_can_be_expanded() {
+        assert_eq!(long_text("short").into_string(), "short");
+        let long = "x".repeat(400);
+        assert!(
+            long_text(&long)
+                .into_string()
+                .starts_with(r#"<details class="long-text">"#)
+        );
     }
 }

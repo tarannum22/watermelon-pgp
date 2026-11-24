@@ -3,12 +3,12 @@ use axum::{
     http::header,
     response::{IntoResponse, Redirect, Response},
 };
-use maud::{Markup, html};
+use maud::{Markup, Render, html};
 use serde::Deserialize;
 use watermelon_pgp_core::{
     audit::{Actor, Filter},
     crypto::{self, Algorithm, RevocationReason},
-    store::{Customer, KeyRecord},
+    store::{Customer, KeyOwner, KeyRecord},
 };
 use zeroize::Zeroizing;
 
@@ -17,69 +17,12 @@ use crate::{
     AppState,
     auth::{Authed, CSRF_FIELD, Posted},
     error::AppError,
-    ui::{self, Tone, icons},
+    ui::{self, Icon, Tone},
     views::{self, Nav},
 };
 
 /// Minimum passphrase length for exported secret keys.
 const MIN_EXPORT_PASSPHRASE_LEN: usize = 8;
-
-/// Keys as rich rows: who, status, fingerprint, what they can do, expiry.
-pub fn key_list(keys: &[&KeyRecord], with_customer: bool) -> Markup {
-    html! {
-        @if keys.is_empty() {
-            (ui::empty(icons::KEY, "No keys", "Generate a key pair or import the public key a partner sent you.", None))
-        } @else {
-            div.key-list {
-                @for key in keys {
-                    (key_row(key, with_customer))
-                }
-            }
-        }
-    }
-}
-
-fn key_row(key: &KeyRecord, with_customer: bool) -> Markup {
-    let (tone, state) = views::key_state(key);
-    let avatar_tone = match tone {
-        Tone::Good if key.has_secret => Tone::Good,
-        Tone::Good => Tone::Neutral,
-        other => other,
-    };
-    let other_ids = key.user_ids.len().saturating_sub(1);
-    let (name, email) = views::uid_parts(key.label());
-    html! {
-        div.key-row.revoked[key.revoked] {
-            (ui::avatar(name, avatar_tone))
-            div.key-main {
-                div.key-title {
-                    a.key-name href={ "/keys/" (key.fingerprint) } { (name) }
-                    (ui::pill(tone, &state))
-                    @if key.has_secret { (ui::tag("key pair", "we hold the secret key", true)) } @else { (ui::tag("public", "public key only", false)) }
-                }
-                @if email.is_some() || other_ids > 0 {
-                    span.key-sub {
-                        @if let Some(email) = email { (email) }
-                        @if other_ids > 0 { " " span.subtle { "+" (other_ids) " more user IDs" } }
-                    }
-                }
-                div.key-meta {
-                    (ui::fingerprint(&key.fingerprint, true))
-                    (ui::tag(&key.algorithm, "algorithm", false))
-                    (views::key_capabilities(key))
-                    @if with_customer {
-                        span { (ui::icon_with(icons::CUSTOMERS, "icon sm")) }
-                        (views::key_owner(key))
-                    }
-                }
-            }
-            div.key-side {
-                span { "Expires " @match key.expires_at { Some(at) => (views::date(at)), None => "never" } }
-                span.subtle { "Created " (views::date(key.created_at)) }
-            }
-        }
-    }
-}
 
 /// The customer picker of the Keys page's dialogs: a customer, or explicitly none.
 fn owner_select(customers: &[Customer]) -> Markup {
@@ -101,7 +44,7 @@ fn owner_select(customers: &[Customer]) -> Markup {
 /// The `customer` form value for "no customer".
 const ANONYMOUS: &str = "none";
 
-/// The customer picked in [`owner_select`]: `Some(None)` for an anonymous key.
+/// The customer picked in [`owner_select`]: `None` for an anonymous key.
 fn picked_owner(value: &str) -> Result<Option<i64>, AppError> {
     match value.trim() {
         ANONYMOUS => Ok(None),
@@ -117,38 +60,49 @@ pub enum Owner<'a> {
     Choose(&'a [Customer]),
 }
 
+impl Owner<'_> {
+    /// Where the dialog's form posts `what` (`generate`, `import`): under the customer, or to
+    /// the Keys page's own route.
+    fn action(&self, what: &str) -> String {
+        match self {
+            Owner::Customer(customer) => format!("/customers/{}/keys/{what}", customer.id),
+            Owner::Choose(_) => format!("/keys/{what}"),
+        }
+    }
+
+    /// The customer picker, when the dialog asks for one.
+    fn picker(&self) -> Option<Markup> {
+        match self {
+            Owner::Customer(_) => None,
+            Owner::Choose(customers) => Some(owner_select(customers)),
+        }
+    }
+}
+
 /// The "Generate a key pair" dialog, opened by `.opens("generate-key")`.
 pub fn generate_modal(csrf: &str, owner: Owner<'_>) -> Markup {
-    let (action, placeholder) = match &owner {
-        Owner::Customer(customer) => (
-            format!("/customers/{}/keys/generate", customer.id),
-            format!("{} <pgp@example.com>", customer.name),
-        ),
-        Owner::Choose(_) => (
-            "/keys/generate".to_owned(),
-            "Name <pgp@example.com>".to_owned(),
-        ),
+    let placeholder = match &owner {
+        Owner::Customer(customer) => format!("{} <pgp@example.com>", customer.name),
+        Owner::Choose(_) => "Name <pgp@example.com>".to_owned(),
     };
     ui::modal(
         "generate-key",
         "Generate a key pair",
         html! {
-            form.form method="post" action=(action) {
-                    (views::csrf_field(csrf))
-                    @if let Owner::Choose(customers) = owner {
-                        (owner_select(customers))
+            form.form method="post" action=(owner.action("generate")) {
+                (views::csrf_field(csrf))
+                @if let Some(picker) = owner.picker() { (picker) }
+                (ui::field("User ID", Some("Name and email address partners will see on the key."), html! {
+                    input type="text" name="user_id" required maxlength="500" placeholder=(placeholder)
+                        autofocus[owner.picker().is_none()];
+                }))
+                (ui::field("Algorithm", None, html! {
+                    select name="algorithm" {
+                        option value="curve25519" selected { "Ed25519 + Cv25519 (recommended)" }
+                        option value="rsa4096" { "RSA 4096 (for older partners; slow to generate)" }
                     }
-                    (ui::field("User ID", Some("Name and email address partners will see on the key."), html! {
-                        input type="text" name="user_id" required maxlength="500" placeholder=(placeholder)
-                            autofocus[matches!(owner, Owner::Customer(_))];
-                    }))
-                    (ui::field("Algorithm", None, html! {
-                        select name="algorithm" {
-                            option value="curve25519" selected { "Ed25519 + Cv25519 (recommended)" }
-                            option value="rsa4096" { "RSA 4096 (for older partners; slow to generate)" }
-                        }
-                    }))
-                    div.actions { (ui::button("Generate key pair").primary().icon(icons::KEY)) }
+                }))
+                div.actions { (ui::button("Generate key pair").primary().icon(Icon::Key).busy("Generating…")) }
             }
         },
     )
@@ -156,19 +110,13 @@ pub fn generate_modal(csrf: &str, owner: Owner<'_>) -> Markup {
 
 /// The "Import keys" dialog, opened by `.opens("import-keys")`.
 pub fn import_modal(csrf: &str, owner: Owner<'_>) -> Markup {
-    let action = match &owner {
-        Owner::Customer(customer) => format!("/customers/{}/keys/import", customer.id),
-        Owner::Choose(_) => "/keys/import".to_owned(),
-    };
     ui::modal(
         "import-keys",
         "Import keys",
         html! {
-            form.form method="post" action=(action) enctype="multipart/form-data" {
+            form.form method="post" action=(owner.action("import")) enctype="multipart/form-data" {
                 (views::csrf_field(csrf))
-                @if let Owner::Choose(customers) = owner {
-                    (owner_select(customers))
-                }
+                @if let Some(picker) = owner.picker() { (picker) }
                 (ui::field("Key file", Some("Armored (.asc) or binary (.gpg, .pgp)."), html! { input type="file" name="file"; }))
                 (ui::field("…or paste an armored key", None, html! {
                     textarea name="armored" rows="5" placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----" {}
@@ -176,7 +124,7 @@ pub fn import_modal(csrf: &str, owner: Owner<'_>) -> Markup {
                 (ui::optional_field("Passphrase", Some("Only for protected secret keys. Secret keys are re-encrypted under the master key; the passphrase is not kept."), html! {
                     input type="password" name="passphrase" autocomplete="off";
                 }))
-                div.actions { (ui::button("Import").primary().icon(icons::UPLOAD)) }
+                div.actions { (ui::button("Import").primary().icon(Icon::Upload).busy("Importing…")) }
             }
         },
     )
@@ -210,7 +158,7 @@ impl Show {
             Show::Public => !key.has_secret,
             Show::Attention => views::key_needs_attention(key),
             Show::Revoked => key.revoked,
-            Show::Anonymous => key.customer_id.is_none(),
+            Show::Anonymous => key.owner == KeyOwner::Anonymous,
         }
     }
 }
@@ -266,12 +214,27 @@ pub async fn list(
             (ui::page_header("Keys")
                 .subtitle(html! { "All keys: those of your customers, and anonymous keys that belong to no customer." })
                 .actions(html! {
-                    (ui::button("Import keys").icon(icons::UPLOAD).opens("import-keys"))
-                    (ui::button("Generate key pair").primary().icon(icons::KEY).opens("generate-key"))
+                    (ui::button("Import keys").icon(Icon::Upload).opens("import-keys"))
+                    (ui::button("Generate key pair").primary().icon(Icon::Key).opens("generate-key"))
                 }))
             (generate_modal(&auth.csrf, Owner::Choose(&customers)))
             (import_modal(&auth.csrf, Owner::Choose(&customers)))
-            (ui::panel(key_list(&shown, true))
+            (ui::panel(html! {
+                @if keys.is_empty() {
+                    (ui::empty(Icon::Key, "No keys yet", "Generate a key pair of your own, or import the public key a partner sent you.",
+                        Some(html! {
+                            div.btn-row {
+                                (ui::button("Generate key pair").primary().icon(Icon::Key).opens("generate-key"))
+                                (ui::button("Import keys").icon(Icon::Upload).opens("import-keys"))
+                            }
+                        })))
+                } @else if shown.is_empty() {
+                    (ui::empty(Icon::Search, "No keys match", "Try another filter or search.",
+                        Some(ui::button("Clear filters").href("/keys").render())))
+                } @else {
+                    (views::key_list(&shown, true))
+                }
+            })
                 .actions(html! {
                     form.inline-search method="get" action="/keys" role="search" {
                         @if show != Show::All { input type="hidden" name="show" value=(query.show); }
@@ -321,11 +284,11 @@ pub async fn show(
     Ok(views::layout(
         page,
         html! {
-            (match (key.customer_id, &key.customer_name) {
-                (Some(id), Some(customer)) => ui::page_header(name)
+            (match &key.owner {
+                KeyOwner::Customer { id, name: customer } => ui::page_header(name)
                     .crumb("Customers", "/customers")
                     .crumb(customer, format!("/customers/{id}")),
-                _ => ui::page_header(name).crumb("Keys", "/keys"),
+                KeyOwner::Anonymous => ui::page_header(name).crumb("Keys", "/keys"),
             }
                 .status(ui::pill(tone, &state_text))
                 .subtitle(html! {
@@ -350,7 +313,7 @@ pub async fn show(
                         }
                     }
                 }
-            }).title("Key").icon(icons::FINGERPRINT))
+            }).title("Key").icon(Icon::Fingerprint))
 
             div.grid-2 {
                 (ui::panel(html! {
@@ -358,9 +321,9 @@ pub async fn show(
                     form.form.fill method="post" action={ (base) "/public" } hx-boost="false" {
                         (views::csrf_field(&auth.csrf))
                         p { "Share this with partners so they can encrypt to us or check our signatures." }
-                        div.actions { (ui::button("Download public key (.asc)").icon(icons::DOWNLOAD)) }
+                        div.actions { (ui::button("Download public key (.asc)").icon(Icon::Download)) }
                     }
-                }).title("Public key").icon(icons::DOWNLOAD))
+                }).title("Public key").icon(Icon::Download))
                 @if key.has_secret {
                     (ui::panel(html! {
                         form.form.fill method="post" action={ (base) "/secret" } hx-boost="false" {
@@ -370,21 +333,21 @@ pub async fn show(
                                 (ui::field("New passphrase", None, html! { input type="password" name="passphrase" required minlength=(min_passphrase) autocomplete="new-password"; }))
                                 (ui::field("Repeat passphrase", None, html! { input type="password" name="repeat" required minlength=(min_passphrase) autocomplete="new-password"; }))
                             }
-                            div.actions { (ui::button("Download secret key (.asc)").icon(icons::LOCK)) }
+                            div.actions { (ui::button("Download secret key (.asc)").icon(Icon::Lock)) }
                         }
-                    }).title("Export secret key").icon(icons::LOCK))
+                    }).title("Export secret key").icon(Icon::Lock))
                 }
             }
 
             (ui::panel(views::audit_table(&events, &names))
                 .title("Recent activity")
-                .icon(icons::ACTIVITY)
+                .icon(Icon::Activity)
                 .actions(views::activity_search(Some(("key", key.fingerprint.clone()))))
                 .flush())
 
             @if key.has_secret && !key.revoked {
                 (ui::panel(html! {
-                    form.form method="post" action={ (base) "/revoke" } {
+                    form.form method="post" action={ (base) "/revoke" } data-confirm="Partners who have the public key will stop using it. This cannot be undone." {
                         (views::csrf_field(&auth.csrf))
                         p {
                             "Revoking tells everyone who has the public key to stop using it. It cannot be undone. "
@@ -403,22 +366,22 @@ pub async fn show(
                             (ui::optional_field("Comment", None, html! { input type="text" name="comment" maxlength="500"; }))
                         }
                         (ui::confirm("Revoke this key permanently"))
-                        div.actions { (ui::button("Revoke key").danger().icon(icons::BAN)) }
+                        div.actions { (ui::button("Revoke key").danger().icon(Icon::Ban)) }
                     }
-                }).title("Revoke key").icon(icons::BAN).tone(Tone::Bad))
+                }).title("Revoke key").icon(Icon::Ban).tone(Tone::Bad))
             }
             (ui::panel(html! {
                 @if used_by.is_empty() {
-                    form.form method="post" action={ (base) "/delete" } {
+                    form.form method="post" action={ (base) "/delete" } data-confirm="The key can no longer be used. Its audit history stays." {
                         (views::csrf_field(&auth.csrf))
                         p { "Deleted keys stay in the database so the audit log keeps resolving, but can no longer be used." }
                         (ui::confirm("Delete this key"))
-                        div.actions { (ui::button("Delete key").danger().icon(icons::TRASH)) }
+                        div.actions { (ui::button("Delete key").danger().icon(Icon::Trash)) }
                     }
                 } @else {
                     p { "This key is used by " (used_by.join(", ")) ". Change or delete those jobs first." }
                 }
-            }).title("Delete key").icon(icons::TRASH).tone(Tone::Bad))
+            }).title("Delete key").icon(Icon::Trash).tone(Tone::Bad))
         },
     ))
 }
@@ -473,7 +436,7 @@ pub struct GenerateForm {
 }
 
 /// Generate a key pair from a customer's page; back there afterwards.
-pub async fn generate(
+pub async fn generate_for_customer(
     State(state): State<AppState>,
     Path(customer_id): Path<i64>,
     posted: Posted<GenerateForm>,
@@ -487,10 +450,7 @@ pub async fn generate(
 
 /// Generate a key pair from the Keys page, for the customer picked in the form or as an
 /// anonymous key; on to the new key's page.
-pub async fn generate_for_customer(
-    State(state): State<AppState>,
-    posted: Posted<GenerateForm>,
-) -> Redirect {
+pub async fn generate(State(state): State<AppState>, posted: Posted<GenerateForm>) -> Redirect {
     let outcome = async {
         let customer_id = picked_owner(&posted.form.customer)?;
         generate_key(&state, customer_id, &posted.form).await
@@ -545,7 +505,8 @@ async fn generate_key(
         .await
 }
 
-pub async fn import(
+/// Import keys from a customer's page; back there afterwards.
+pub async fn import_for_customer(
     State(state): State<AppState>,
     auth: Authed,
     Path(customer_id): Path<i64>,
@@ -566,11 +527,7 @@ pub async fn import(
 
 /// Import keys from the Keys page, for the customer picked in the form or as anonymous keys;
 /// on to the key's page when it was one key.
-pub async fn import_for_customer(
-    State(state): State<AppState>,
-    auth: Authed,
-    multipart: Multipart,
-) -> Response {
+pub async fn import(State(state): State<AppState>, auth: Authed, multipart: Multipart) -> Response {
     let outcome = import_upload(&state, &auth, None, multipart).await;
     match outcome {
         Err(e) if e.status == axum::http::StatusCode::FORBIDDEN => {
@@ -754,7 +711,8 @@ pub async fn delete(
     {
         Ok(key) => state.done(
             &posted.auth,
-            &key.customer_id
+            &key.owner
+                .customer_id()
                 .map_or("/keys".to_owned(), |id| format!("/customers/{id}")),
             Ok(format!("Deleted key {}.", key.label())),
         ),
