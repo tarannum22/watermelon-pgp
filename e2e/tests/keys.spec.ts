@@ -27,6 +27,23 @@ test("generate a key pair and download its public key", async ({ page }) => {
   await expect(row.getByRole("link", { name: customer })).toBeVisible();
 });
 
+test("generate a key pair from the Keys page, for a chosen customer", async ({ page }) => {
+  const customer = unique("Keys Page");
+  await createCustomer(page, customer);
+
+  await page.goto("/keys");
+  await page.getByRole("button", { name: "Generate key pair" }).click();
+  const dialog = page.getByRole("dialog", { name: "Generate a key pair" });
+  await dialog.getByLabel("Customer").selectOption({ label: customer });
+  await dialog.getByLabel("User ID").fill("Keys Page Key <keys-page@example.com>");
+  await dialog.getByRole("button", { name: "Generate key pair" }).click();
+
+  // The new key's page opens.
+  await expect(page.getByRole("status")).toContainText("Generated key Keys Page Key");
+  await expect(page.getByRole("heading", { level: 1, name: "Keys Page Key" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Breadcrumbs" })).toContainText(customer);
+});
+
 test("import a partner's public key by pasting it", async ({ page }) => {
   const customerUrl = await createCustomer(page, unique("Brightwave Retail"));
   const armored = partnerPublicKey("Brightwave SFTP <sftp@brightwave.example>");

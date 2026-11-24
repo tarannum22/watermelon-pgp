@@ -146,7 +146,7 @@ pub async fn show(
                 (ui::button("Generate key pair").small().icon(icons::KEY).opens("generate-key"))
             })
             .flush())
-            (keys::generate_modal(&auth.csrf, &customer))
+            (keys::generate_modal(&auth.csrf, keys::Owner::Customer(&customer)))
             (keys::import_modal(&auth.csrf, &customer))
 
             (ui::panel(html! {

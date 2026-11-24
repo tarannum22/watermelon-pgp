@@ -445,6 +445,82 @@ async fn customer_and_key_lifecycle() {
 }
 
 #[tokio::test]
+async fn keys_can_be_generated_from_the_keys_page() {
+    let app = App::new();
+    let session = app.login().await;
+
+    // Without customers the dialog says to create one first.
+    let page = app.get("/keys", Some(&session)).await;
+    assert!(
+        page.body
+            .contains("Every key belongs to a customer. Create one first.")
+    );
+
+    let acme = app.vault().create_customer(Actor::Cli, "Acme").unwrap();
+    let page = app.get("/keys", Some(&session)).await;
+    assert!(page.body.contains(r#"action="/keys/generate""#));
+    assert!(
+        page.body
+            .contains(&format!(r#"<option value="{}">Acme</option>"#, acme.id))
+    );
+
+    // A customer must be picked.
+    let reply = app
+        .submit(
+            "/keys/generate",
+            &session,
+            "customer=&user_id=X&algorithm=curve25519",
+        )
+        .await;
+    assert_eq!(reply.location(), "/keys");
+    assert!(
+        app.follow(reply, &session)
+            .await
+            .body
+            .contains("choose a customer")
+    );
+    let reply = app
+        .submit(
+            "/keys/generate",
+            &session,
+            "customer=999&user_id=X&algorithm=curve25519",
+        )
+        .await;
+    assert_eq!(reply.location(), "/keys");
+    assert!(app.vault().keys(None).unwrap().is_empty());
+
+    // On success: the key belongs to the picked customer, and the new key's page opens.
+    let reply = app
+        .submit(
+            "/keys/generate",
+            &session,
+            &format!(
+                "customer={}&user_id={}&algorithm=curve25519",
+                acme.id,
+                enc("Acme Exports <exports@acme.example>")
+            ),
+        )
+        .await;
+    let keys = app.vault().keys(Some(acme.id)).unwrap();
+    assert_eq!(keys.len(), 1);
+    assert!(keys[0].has_secret);
+    assert_eq!(reply.location(), format!("/keys/{}", keys[0].fingerprint));
+    let page = app.follow(reply, &session).await;
+    assert!(page.body.contains("Generated key Acme Exports"));
+    assert!(app.actions().contains(&"key.generate".to_owned()));
+
+    // Like every form, it needs the CSRF token.
+    let reply = app
+        .post(
+            "/keys/generate",
+            Some(&session),
+            &format!("customer={}&user_id=Y&algorithm=curve25519", acme.id),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn keys_can_be_imported_by_upload() {
     let app = App::new();
     let session = app.login().await;

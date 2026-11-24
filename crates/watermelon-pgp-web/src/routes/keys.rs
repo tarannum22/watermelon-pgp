@@ -3,7 +3,7 @@ use axum::{
     http::header,
     response::{IntoResponse, Redirect, Response},
 };
-use maud::{Markup, html};
+use maud::{Markup, Render, html};
 use serde::Deserialize;
 use watermelon_pgp_core::{
     audit::{Actor, Filter},
@@ -81,25 +81,56 @@ fn key_row(key: &KeyRecord, with_customer: bool) -> Markup {
     }
 }
 
+/// Whose key a dialog creates: a given customer's, or one picked in the dialog.
+pub enum Owner<'a> {
+    Customer(&'a Customer),
+    Choose(&'a [Customer]),
+}
+
 /// The "Generate a key pair" dialog, opened by `.opens("generate-key")`.
-pub fn generate_modal(csrf: &str, customer: &Customer) -> Markup {
-    let placeholder = format!("{} <pgp@example.com>", customer.name);
+pub fn generate_modal(csrf: &str, owner: Owner<'_>) -> Markup {
+    let (action, placeholder) = match &owner {
+        Owner::Customer(customer) => (
+            format!("/customers/{}/keys/generate", customer.id),
+            format!("{} <pgp@example.com>", customer.name),
+        ),
+        Owner::Choose(_) => (
+            "/keys/generate".to_owned(),
+            "Name <pgp@example.com>".to_owned(),
+        ),
+    };
     ui::modal(
         "generate-key",
         "Generate a key pair",
         html! {
-            form.form method="post" action={ "/customers/" (customer.id) "/keys/generate" } {
-                (views::csrf_field(csrf))
-                (ui::field("User ID", Some("Name and email address partners will see on the key."), html! {
-                    input type="text" name="user_id" required maxlength="500" placeholder=(placeholder) autofocus;
-                }))
-                (ui::field("Algorithm", None, html! {
-                    select name="algorithm" {
-                        option value="curve25519" selected { "Ed25519 + Cv25519 (recommended)" }
-                        option value="rsa4096" { "RSA 4096 (for older partners; slow to generate)" }
+            @if let Owner::Choose([]) = owner {
+                p { "Every key belongs to a customer. Create one first." }
+                (ui::button("Go to customers").primary().icon(icons::CUSTOMERS).href("/customers"))
+            } @else {
+                form.form method="post" action=(action) {
+                    (views::csrf_field(csrf))
+                    @if let Owner::Choose(customers) = owner {
+                        (ui::field("Customer", Some("Who the key is for. Keys and jobs always belong to a customer."), html! {
+                            select name="customer" required autofocus {
+                                option value="" { "Choose…" }
+                                @for customer in customers {
+                                    option value=(customer.id) { (customer.name) }
+                                }
+                            }
+                        }))
                     }
-                }))
-                div.actions { (ui::button("Generate key pair").primary().icon(icons::KEY)) }
+                    (ui::field("User ID", Some("Name and email address partners will see on the key."), html! {
+                        input type="text" name="user_id" required maxlength="500" placeholder=(placeholder)
+                            autofocus[matches!(owner, Owner::Customer(_))];
+                    }))
+                    (ui::field("Algorithm", None, html! {
+                        select name="algorithm" {
+                            option value="curve25519" selected { "Ed25519 + Cv25519 (recommended)" }
+                            option value="rsa4096" { "RSA 4096 (for older partners; slow to generate)" }
+                        }
+                    }))
+                    div.actions { (ui::button("Generate key pair").primary().icon(icons::KEY)) }
+                }
             }
         },
     )
@@ -179,7 +210,9 @@ pub async fn list(
     auth: Authed,
     Query(query): Query<ListQuery>,
 ) -> Result<Markup, AppError> {
-    let keys = state.vault(|vault| vault.keys(None)).await?;
+    let (keys, customers) = state
+        .vault(|vault| Ok((vault.keys(None)?, vault.customers()?)))
+        .await?;
     let show = SHOW
         .iter()
         .find(|(_, value, _)| *value == query.show)
@@ -204,7 +237,9 @@ pub async fn list(
         page,
         html! {
             (ui::page_header("Keys")
-                .subtitle(html! { "All keys of all customers. To add keys, open a " a href="/customers" { "customer" } "." }))
+                .subtitle(html! { "All keys of all customers. To import a partner's key, open the " a href="/customers" { "customer" } "." })
+                .actions(ui::button("Generate key pair").primary().icon(icons::KEY).opens("generate-key").render()))
+            (generate_modal(&auth.csrf, Owner::Choose(&customers)))
             (ui::panel(key_list(&shown, true))
                 .actions(html! {
                     form.inline-search method="get" action="/keys" role="search" {
@@ -397,49 +432,85 @@ pub async fn revoke(
 
 #[derive(Deserialize)]
 pub struct GenerateForm {
+    /// Only from the Keys page; on a customer's page the URL says whose key it is.
+    #[serde(default)]
+    customer: String,
     user_id: String,
     algorithm: String,
 }
 
+/// Generate a key pair from a customer's page; back there afterwards.
 pub async fn generate(
     State(state): State<AppState>,
     Path(customer_id): Path<i64>,
     posted: Posted<GenerateForm>,
 ) -> Redirect {
     let back = format!("/customers/{customer_id}");
+    let outcome = generate_key(&state, customer_id, &posted.form)
+        .await
+        .map(|record| generated(&record));
+    state.done(&posted.auth, &back, outcome)
+}
+
+/// Generate a key pair from the Keys page, for the customer picked in the form; on to the new
+/// key's page.
+pub async fn generate_for_customer(
+    State(state): State<AppState>,
+    posted: Posted<GenerateForm>,
+) -> Redirect {
     let outcome = async {
-        let algorithm = match posted.form.algorithm.as_str() {
-            "curve25519" => Algorithm::Curve25519,
-            "rsa4096" => Algorithm::Rsa4096,
-            other => {
-                return Err(AppError::bad_request(format!(
-                    "unknown algorithm {other:?}"
-                )));
-            }
-        };
-        let user_id = posted.form.user_id.trim().to_owned();
-        if user_id.is_empty() {
-            return Err(AppError::bad_request("the user ID must not be empty"));
-        }
-        // Make sure the customer exists before spending seconds on an RSA key.
-        state
-            .vault(move |vault| vault.customer_by_id(customer_id))
-            .await?;
-        // Generate outside the vault lock, which the job engine shares.
-        let key = tokio::task::spawn_blocking(move || crypto::generate(&user_id, algorithm))
-            .await
-            .map_err(AppError::internal)??;
-        let record = state
-            .vault(move |vault| vault.add_generated_key(Actor::Admin, customer_id, key))
-            .await?;
-        Ok(format!(
-            "Generated key {} ({}).",
-            record.label(),
-            views::key_id(&record.fingerprint)
-        ))
+        let customer_id = super::parse_id(&posted.form.customer)
+            .ok_or_else(|| AppError::bad_request("choose a customer"))?;
+        generate_key(&state, customer_id, &posted.form).await
     }
     .await;
-    state.done(&posted.auth, &back, outcome)
+    match outcome {
+        Ok(record) => state.done(
+            &posted.auth,
+            &key_url(&record.fingerprint),
+            Ok(generated(&record)),
+        ),
+        Err(e) => state.done(&posted.auth, "/keys", Err(e)),
+    }
+}
+
+fn generated(record: &KeyRecord) -> String {
+    format!(
+        "Generated key {} ({}).",
+        record.label(),
+        views::key_id(&record.fingerprint)
+    )
+}
+
+async fn generate_key(
+    state: &AppState,
+    customer_id: i64,
+    form: &GenerateForm,
+) -> Result<KeyRecord, AppError> {
+    let algorithm = match form.algorithm.as_str() {
+        "curve25519" => Algorithm::Curve25519,
+        "rsa4096" => Algorithm::Rsa4096,
+        other => {
+            return Err(AppError::bad_request(format!(
+                "unknown algorithm {other:?}"
+            )));
+        }
+    };
+    let user_id = form.user_id.trim().to_owned();
+    if user_id.is_empty() {
+        return Err(AppError::bad_request("the user ID must not be empty"));
+    }
+    // Make sure the customer exists before spending seconds on an RSA key.
+    state
+        .vault(move |vault| vault.customer_by_id(customer_id))
+        .await?;
+    // Generate outside the vault lock, which the job engine shares.
+    let key = tokio::task::spawn_blocking(move || crypto::generate(&user_id, algorithm))
+        .await
+        .map_err(AppError::internal)??;
+    state
+        .vault(move |vault| vault.add_generated_key(Actor::Admin, customer_id, key))
+        .await
 }
 
 pub async fn import(
