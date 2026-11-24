@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>watermelon-pgp: OpenPGP for your file transfers</title>
+<title>WatermelonPGP: OpenPGP for your file transfers</title>
 <meta name="description" content="Self-hosted, single-binary tool to manage your customers' OpenPGP keys and automatically encrypt or decrypt the files your SFTP transfers pick up and drop off. Web UI, audit log, open source.">
 <link rel="icon" href="img/logo.svg" type="image/svg+xml">
-<meta property="og:title" content="watermelon-pgp">
+<meta property="og:title" content="WatermelonPGP">
 <meta property="og:description" content="OpenPGP keys and folder encryption jobs for file transfers, in one self-hosted binary with a web UI and an audit log.">
 <meta property="og:image" content="https://tarannum22.github.io/watermelon-pgp/img/dashboard.png">
 <style>
@@ -52,13 +52,26 @@ header nav a:hover { color: var(--text); }
 .hero { padding: 88px 0 40px; text-align: center; }
 .hero .badge { display: inline-block; background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: 14px;
   padding: 5px 12px; border-radius: 999px; margin-bottom: 22px; text-decoration: none; }
-.hero h1 { font-size: clamp(36px, 5.5vw, 62px); line-height: 1.08; letter-spacing: -0.025em; margin: 0 auto 20px; max-width: 900px; }
+.hero .logo { width: 128px; height: 128px; margin: 0 auto 20px; filter: drop-shadow(0 10px 24px rgba(27,122,67,.25)); }
+.hero h1 { font-size: clamp(34px, 11vw, 80px); line-height: 1; letter-spacing: -0.035em; margin: 0 0 18px; font-weight: 800; }
 .hero h1 span { color: var(--accent); }
+.hero .tagline { font-size: clamp(24px, 3.2vw, 36px); line-height: 1.2; letter-spacing: -0.02em; font-weight: 700; margin: 0 auto 18px; max-width: 820px; }
+.hero .tagline span { color: var(--accent); }
 .hero p.lead { font-size: 20px; color: var(--muted); max-width: 720px; margin: 0 auto 32px; }
 .hero .actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
-.hero .install-line { margin: 26px auto 0; display: inline-flex; align-items: center; gap: 10px; background: var(--surface);
-  border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; font-size: 15px; }
-.hero .install-line code { background: none; padding: 0; }
+.hero .install-line { margin: 26px auto 0; display: inline-flex; align-items: center; gap: 14px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 10px; padding: 8px 8px 8px 16px; font-size: 15px; max-width: 100%; }
+.hero .install-line code { background: none; padding: 0; overflow-x: auto; white-space: nowrap; min-width: 0; }
+.hero .install-line code::before { content: "$ "; color: var(--muted); }
+.copy { font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; border-radius: 7px; padding: 5px 10px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); white-space: nowrap; }
+.copy:hover { border-color: var(--accent); color: var(--accent); }
+.copy.done { border-color: var(--accent); background: var(--accent); color: #fff; }
+.code { position: relative; }
+.code .copy { position: absolute; top: 8px; right: 8px; background: #22272e; border-color: #3a414b; color: #c9d1d9; }
+.code .copy:hover { color: #fff; border-color: #6e7681; }
+.code .copy.done { background: var(--accent); border-color: var(--accent); color: #fff; }
+.code pre { padding-right: 84px; }
 .shot { margin: 56px auto 0; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); box-shadow: var(--shadow); background: var(--surface); }
 .shot .chrome { height: 34px; display: flex; align-items: center; gap: 7px; padding: 0 14px; border-bottom: 1px solid var(--border); }
 .shot .chrome i { width: 11px; height: 11px; border-radius: 50%; background: var(--border); display: block; }
@@ -90,7 +103,7 @@ h2 { font-size: clamp(28px, 3.6vw, 40px); letter-spacing: -0.02em; line-height: 
 .step p { margin: 0; color: var(--muted); font-size: 16px; }
 
 /* Features */
-.features { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
+.features { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 20px; }
 .feature { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 26px; }
 .feature svg { width: 26px; height: 26px; color: var(--accent); margin-bottom: 14px; }
 .feature h3 { margin: 0 0 8px; font-size: 19px; }
@@ -117,8 +130,10 @@ h2 { font-size: clamp(28px, 3.6vw, 40px); letter-spacing: -0.02em; line-height: 
 /* Install */
 .install { display: grid; grid-template-columns: 1fr; gap: 16px; }
 .install .card { display: grid; grid-template-columns: 260px 1fr; gap: 8px 28px; align-items: start; }
-.install .card > pre { grid-column: 2; grid-row: 1 / span 3; }
-@media (max-width: 900px) { .install .card { grid-template-columns: 1fr; } .install .card > pre { grid-column: 1; grid-row: auto; } }
+.install .card > .code { grid-column: 2; grid-row: 1 / span 3; }
+.install .card > *, .card, .code { min-width: 0; }
+@media (max-width: 900px) { .install .card { grid-template-columns: 1fr; } .install .card > .code { grid-column: 1; grid-row: auto; } }
+@media (max-width: 420px) { header nav a:not(.btn) { display: none; } .wrap { padding: 0 16px; } }
 .card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; min-width: 0; }
 .card h3 { margin: 0 0 4px; font-size: 18px; }
 .card p { color: var(--muted); margin: 0 0 14px; font-size: 15px; }
@@ -127,7 +142,7 @@ pre .c { color: #8b949e; }
 .quickstart { margin-top: 28px; }
 
 /* Docs */
-.docs { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+.docs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); gap: 16px; }
 .doc { display: block; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px 20px; text-decoration: none; color: var(--text); }
 .doc:hover { border-color: var(--accent); }
 .doc strong { display: block; margin-bottom: 4px; }
@@ -149,7 +164,7 @@ footer a { color: var(--muted); }
 
 <header class="top">
   <div class="wrap">
-    <a class="brand" href="#"><img src="img/logo.svg" alt="" width="32" height="32">watermelon-pgp</a>
+    <a class="brand" href="#"><img src="img/logo.svg" alt="" width="32" height="32">WatermelonPGP</a>
     <nav>
       <a class="hide-sm" href="#how">How it works</a>
       <a class="hide-sm" href="#features">Features</a>
@@ -163,14 +178,16 @@ footer a { color: var(--muted); }
 <main>
 <div class="hero">
   <div class="wrap">
+    <img class="logo" src="img/logo.svg" alt="WatermelonPGP logo" width="128" height="128">
+    <h1>Watermelon<span>PGP</span></h1>
+    <p class="tagline">OpenPGP for your file transfers, <span>without the scripts</span></p>
     <a class="badge" href="https://github.com/tarannum22/watermelon-pgp/releases">v0.1.0 · first release · open source</a>
-    <h1>OpenPGP for your file transfers, <span>without the scripts</span></h1>
     <p class="lead">Manage your customers' PGP keys and let folders encrypt and decrypt themselves: every CSV or PDF dropped for your SFTP transfers is processed automatically, safely and with a full audit trail. One self-hosted binary with a web UI.</p>
     <div class="actions">
       <a class="btn primary" href="#install">Get started</a>
       <a class="btn" href="https://github.com/tarannum22/watermelon-pgp">View on GitHub</a>
     </div>
-    <div class="install-line"><code>brew install tarannum22/tap/watermelon-pgp</code></div>
+    <div class="install-line"><code>brew install tarannum22/tap/watermelon-pgp</code><button class="copy" type="button" data-copy="brew install tarannum22/tap/watermelon-pgp" aria-label="Copy the brew install command">Copy</button></div>
     <div class="shot">
       <div class="chrome"><i></i><i></i><i></i></div>
       <picture>
@@ -185,7 +202,7 @@ footer a { color: var(--muted); }
   <div class="wrap">
     <p class="eyebrow">Why</p>
     <h2>Encrypted file exchange shouldn't depend on a pile of cron jobs</h2>
-    <p class="section-lead">Customers send you their public keys, sometimes their own key pairs. Exports need encrypting before the SFTP job picks them up; incoming files need decrypting before anything can read them. Usually that's a tangle of shell scripts, <code>gpg</code> calls and keys nobody remembers the passphrase of. watermelon-pgp replaces it with one tool you can see into.</p>
+    <p class="section-lead">Customers send you their public keys, sometimes their own key pairs. Exports need encrypting before the SFTP job picks them up; incoming files need decrypting before anything can read them. Usually that's a tangle of shell scripts, <code>gpg</code> calls and keys nobody remembers the passphrase of. WatermelonPGP replaces it with one tool you can see into.</p>
     <div class="replaces">
       <span><s>cron + gpg scripts</s></span>
       <span><s>keys on someone's laptop</s></span>
@@ -204,7 +221,7 @@ footer a { color: var(--muted); }
     <div class="flow" aria-label="Files flow from the source system into a watched folder, through watermelon-pgp, into an output folder for SFTP">
       <div class="node"><strong>Your system</strong><small>ERP, reports, exports</small></div>
       <div class="arrow">→</div>
-      <div class="node main"><strong>watermelon-pgp</strong><small>encrypt to the customer's key,<br>sign with yours</small></div>
+      <div class="node main"><strong>WatermelonPGP</strong><small>encrypt to the customer's key,<br>sign with yours</small></div>
       <div class="arrow">→</div>
       <div class="node"><strong>SFTP folder</strong><small>picked up by the transfer</small></div>
     </div>
@@ -323,7 +340,7 @@ footer a { color: var(--muted); }
     <div>
       <p class="eyebrow">Security</p>
       <h2>Built for data you can't afford to leak</h2>
-      <p class="section-lead">watermelon-pgp holds private keys and decrypted customer data, so it is conservative by default and open about its design.</p>
+      <p class="section-lead">WatermelonPGP holds private keys and decrypted customer data, so it is conservative by default and open about its design.</p>
       <p><a href="https://github.com/tarannum22/watermelon-pgp/blob/main/DESIGN.md">Read the design document</a> · <a href="https://github.com/tarannum22/watermelon-pgp/blob/main/SECURITY.md">Report a vulnerability</a></p>
     </div>
     <ul class="checks">
@@ -345,34 +362,34 @@ footer a { color: var(--muted); }
       <div class="card">
         <h3>Homebrew</h3>
         <p>macOS (Apple silicon and Intel) and Linux.</p>
-<pre>brew install tarannum22/tap/watermelon-pgp
+<div class="code"><pre>brew install tarannum22/tap/watermelon-pgp
 <span class="c"># once: database, master key, admin password</span>
 watermelon --data-dir "$(brew --prefix)/var/watermelon" init
 <span class="c"># run it in the background on http://127.0.0.1:8080</span>
-brew services start watermelon-pgp</pre>
+brew services start watermelon-pgp</pre></div>
       </div>
       <div class="card">
         <h3>Docker</h3>
         <p>Multi-arch image, runs as a non-root user.</p>
-<pre>docker run --rm -it -v wm:/data \
+<div class="code"><pre>docker run --rm -it -v wm:/data \
   ghcr.io/tarannum22/watermelon-pgp init
 docker run -d -p 127.0.0.1:8080:8080 \
-  -v wm:/data ghcr.io/tarannum22/watermelon-pgp</pre>
+  -v wm:/data ghcr.io/tarannum22/watermelon-pgp</pre></div>
       </div>
       <div class="card">
         <h3>Binaries</h3>
         <p>Linux (x86_64, arm64) and macOS, with checksums.</p>
-<pre><span class="c"># from the releases page:</span>
+<div class="code"><pre><span class="c"># from the releases page:</span>
 tar xzf watermelon-pgp-v0.1.0-*.tar.gz
-./watermelon-pgp-v0.1.0-*/watermelon --help</pre>
+./watermelon-pgp-v0.1.0-*/watermelon --help</pre></div>
         <p style="margin:12px 0 0"><a href="https://github.com/tarannum22/watermelon-pgp/releases/latest">Download the latest release →</a></p>
       </div>
     </div>
     <div class="card quickstart">
       <h3>Quick start</h3>
       <p>Create the database, master key and admin password once, then start the web UI and the job engine.</p>
-<pre>watermelon --data-dir ~/watermelon init    <span class="c"># prompts for the admin password</span>
-watermelon --data-dir ~/watermelon serve   <span class="c"># open http://127.0.0.1:8080</span></pre>
+<div class="code"><pre>watermelon --data-dir ~/watermelon init    <span class="c"># prompts for the admin password</span>
+watermelon --data-dir ~/watermelon serve   <span class="c"># open http://127.0.0.1:8080</span></pre></div>
     </div>
   </div>
 </section>
@@ -394,9 +411,47 @@ watermelon --data-dir ~/watermelon serve   <span class="c"># open http://127.0.0
 
 <footer>
   <div class="wrap">
-    <span>watermelon-pgp · open source under MIT or Apache-2.0</span>
+    <span>WatermelonPGP · open source under MIT or Apache-2.0</span>
     <span><a href="https://github.com/tarannum22/watermelon-pgp">GitHub</a> · <a href="https://github.com/tarannum22/watermelon-pgp/releases">Releases</a> · <a href="https://github.com/tarannum22/watermelon-pgp/blob/main/SECURITY.md">Security</a></span>
   </div>
 </footer>
+<script>
+// Copy buttons: the hero command, and every command block (comments left out).
+document.querySelectorAll('.code').forEach(function (block) {
+  var button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'copy';
+  button.textContent = 'Copy';
+  button.setAttribute('aria-label', 'Copy these commands');
+  block.appendChild(button);
+});
+document.addEventListener('click', function (event) {
+  var button = event.target.closest('.copy');
+  if (!button) return;
+  var text = button.dataset.copy;
+  if (!text) {
+    var pre = button.parentElement.querySelector('pre').cloneNode(true);
+    pre.querySelectorAll('.c').forEach(function (comment) { comment.remove(); });
+    text = pre.textContent.split('\n').map(function (l) { return l.replace(/\s+$/, ''); })
+      .filter(function (l) { return l.length; }).join('\n');
+  }
+  var done = function () {
+    button.textContent = 'Copied';
+    button.classList.add('done');
+    setTimeout(function () { button.textContent = 'Copy'; button.classList.remove('done'); }, 1600);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(done);
+  } else {
+    var area = document.createElement('textarea');
+    area.value = text;
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand('copy');
+    area.remove();
+    done();
+  }
+});
+</script>
 </body>
 </html>
