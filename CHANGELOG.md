@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [0.1.0] - unreleased
+## [0.1.0] - 2026-11-24
 
 The first release: key management and folder encryption/decryption jobs with a web UI, as a
 single binary.
@@ -41,6 +41,8 @@ single binary.
   actor, action, customer and job, search subjects and details, and export matches as CSV.
 - `watermelon backup` for consistent snapshots (the master key is deliberately excluded).
 - Docker image, systemd unit, deployment guide.
+- Release binaries for Linux (x86_64, arm64) and macOS (Apple silicon, Intel), a Homebrew tap
+  (`brew install tarannum22/tap/watermelon-pgp`, with `brew services` support) and a website.
 
 ### Known issues
 - Two advisories in rPGP's dependencies have no usable fix yet (RUSTSEC-2023-0071 in `rsa`,

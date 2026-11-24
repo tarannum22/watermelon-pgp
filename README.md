@@ -8,6 +8,8 @@ A self-hosted, single-binary tool to manage OpenPGP keys and run folder jobs tha
 decrypt files: the glue between your customers' keys and the folders your SFTP transfers read
 from and write to.
 
+**Website: [tarannum22.github.io/watermelon-pgp](https://tarannum22.github.io/watermelon-pgp/)**
+
 > **Status: 0.1, the first release.** Everything planned for v1 works and is tested, including
 > against GnuPG 2.2–2.5; expect rough edges. See [DESIGN.md](DESIGN.md) for the decisions behind
 > it and [CHANGELOG.md](CHANGELOG.md) for what's in each release.
@@ -35,7 +37,10 @@ from and write to.
 
 ## Install
 
-- **Release binaries** for Linux (x86_64, arm64) and macOS (arm64):
+- **Homebrew** (macOS and Linux): `brew install tarannum22/tap/watermelon-pgp`, then
+  `brew services start watermelon-pgp` to run it in the background (run `init` first, as the
+  install message explains).
+- **Release binaries** for Linux (x86_64, arm64) and macOS (Apple silicon, Intel):
   [GitHub releases](https://github.com/tarannum22/watermelon-pgp/releases), with `SHA256SUMS`.
 - **Docker:** `docker pull ghcr.io/tarannum22/watermelon-pgp`, or `docker build -t watermelon-pgp .`
 - **From source:** Rust 1.89 or later, then `cargo build --release`; the binary is
