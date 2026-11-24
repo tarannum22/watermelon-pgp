@@ -11,6 +11,7 @@ use crate::{
     AppState,
     auth::{Authed, Watching},
     error::AppError,
+    ui::{self, Stat, Tone, icons},
     views::{self, Nav},
 };
 
@@ -45,7 +46,12 @@ pub async fn show(State(state): State<AppState>, auth: Authed) -> Result<Markup,
     Ok(views::layout(
         page,
         html! {
-            h1 { "Dashboard" }
+            (ui::page_header("Dashboard")
+                .subtitle(html! { "Jobs, files and keys at a glance. Updates every 10 seconds." })
+                .actions(html! {
+                    (ui::button("Audit log").icon(icons::AUDIT).href("/audit"))
+                    (ui::button("New job").primary().icon(icons::PLUS).href("/jobs/new"))
+                }))
             (live_panel(&overview))
         },
     ))
@@ -77,76 +83,128 @@ fn live_panel(o: &Overview) -> Markup {
         .filter(|k| views::key_needs_attention(k))
         .collect();
     let names = Names::new(&o.customers, &o.jobs);
+    let attention = paused.len() + erroring.len() + keys_attention.len();
+    let stats = [
+        Stat {
+            href: "/jobs",
+            icon: icons::JOBS,
+            label: "Jobs running",
+            value: running.to_string(),
+            detail: format!("of {} jobs", o.jobs.len()),
+            tone: Tone::Neutral,
+        },
+        Stat {
+            href: "/jobs",
+            icon: icons::PAUSE,
+            label: "Paused jobs",
+            value: paused.len().to_string(),
+            detail: if paused.is_empty() {
+                "none".into()
+            } else {
+                "need a look".into()
+            },
+            tone: if paused.is_empty() {
+                Tone::Neutral
+            } else {
+                Tone::Bad
+            },
+        },
+        Stat {
+            href: "/audit?action=file.processed&period=24h",
+            icon: icons::FILE_CHECK,
+            label: "Files processed",
+            value: o.processed.to_string(),
+            detail: "last 24 hours".into(),
+            tone: Tone::Neutral,
+        },
+        Stat {
+            href: "/audit?action=file.failed&period=24h",
+            icon: icons::FILE_X,
+            label: "Files failed",
+            value: o.failed.to_string(),
+            detail: "last 24 hours".into(),
+            tone: if o.failed > 0 {
+                Tone::Bad
+            } else {
+                Tone::Neutral
+            },
+        },
+        Stat {
+            href: "/keys",
+            icon: icons::KEY,
+            label: "Keys",
+            value: o.keys.len().to_string(),
+            detail: format!("{} need attention", keys_attention.len()),
+            tone: if keys_attention.is_empty() {
+                Tone::Neutral
+            } else {
+                Tone::Warn
+            },
+        },
+    ];
     html! {
-        div #live hx-get="/dashboard/live" hx-trigger="every 10s" hx-swap="outerHTML" {
-            div.tiles {
-                a.tile href="/jobs" {
-                    span.value { (running) }
-                    span.label { "of " (o.jobs.len()) " jobs running" }
-                }
-                a.tile.bad[!paused.is_empty()] href="/jobs" {
-                    span.value { (paused.len()) }
-                    span.label { "paused jobs" }
-                }
-                a.tile href="/audit?action=file.processed" {
-                    span.value { (o.processed) }
-                    span.label { "files processed (24 h)" }
-                }
-                a.tile.bad[o.failed > 0] href="/audit?action=file.failed" {
-                    span.value { (o.failed) }
-                    span.label { "files failed (24 h)" }
-                }
-                a.tile.warn[!keys_attention.is_empty()] href="/keys" {
-                    span.value { (o.keys.len()) }
-                    span.label { "keys, " (keys_attention.len()) " need attention" }
-                }
-            }
+        div #live.stack hx-get="/dashboard/live" hx-trigger="every 10s" hx-swap="outerHTML" {
+            div.stats { @for stat in &stats { (stat) } }
 
             @if o.customers.is_empty() {
-                section.card {
-                    h2 { "Getting started" }
-                    ol {
-                        li { a href="/customers" { "Create a customer" } "." }
+                (ui::panel(html! {
+                    ol.getting-started {
+                        li { a href="/customers" { "Create a customer" } " for each partner you exchange files with." }
                         li { "Generate or import its keys." }
-                        li { a href="/jobs/new" { "Create a job" } " that watches a folder." }
+                        li { a href="/jobs/new" { "Create a job" } " that watches a folder and encrypts or decrypts what arrives." }
                     }
-                }
+                }).title("Getting started").icon(icons::INFO))
             }
 
-            @if !(paused.is_empty() && erroring.is_empty() && keys_attention.is_empty()) {
-                section.card {
-                    h2 { "Needs attention" }
+            @if attention == 0 {
+                (ui::alert(Tone::Good, Some("All clear"), html! { "No paused jobs, job errors or keys about to expire." }))
+            } @else {
+                (ui::panel(html! {
                     ul.attention {
                         @for job in &paused {
                             li.bad {
-                                a href={ "/jobs/" (job.id) } { "Job " (job.spec.name) }
-                                " is paused: " (job.paused_reason.as_deref().unwrap_or(""))
+                                (ui::icon(icons::PAUSE))
+                                span.what {
+                                    a href={ "/jobs/" (job.id) } { "Job " (job.spec.name) } " is paused"
+                                    span.why { (job.paused_reason.as_deref().unwrap_or("")) }
+                                }
                             }
                         }
                         @for job in &erroring {
-                            li.warn {
-                                a href={ "/jobs/" (job.id) } { "Job " (job.spec.name) }
-                                ": " (job.last_error.as_deref().unwrap_or(""))
+                            li {
+                                (ui::icon(icons::WARNING))
+                                span.what {
+                                    a href={ "/jobs/" (job.id) } { "Job " (job.spec.name) } " has an error"
+                                    span.why { (job.last_error.as_deref().unwrap_or("")) }
+                                }
                             }
                         }
                         @for key in &keys_attention {
-                            li.warn {
-                                "Key " (views::key_link(key)) " (" (key.customer_name) ") "
-                                (views::key_status(key))
+                            li.bad[key.revoked] {
+                                (ui::icon(icons::KEY))
+                                span.what {
+                                    "Key " (views::key_link(key)) " " (views::key_status(key))
+                                    span.why { (key.customer_name) }
+                                }
                             }
                         }
                     }
-                }
+                })
+                .title("Needs attention")
+                .icon(icons::WARNING)
+                .tone(Tone::Warn)
+                .flush())
             }
 
-            section {
-                div.title-row {
-                    h2 { "Recent activity" }
-                    (views::activity_search(None))
-                }
-                (views::audit_table(&o.recent, &names))
-                p { a href="/audit" { "Full audit log →" } }
-            }
+            (ui::panel(views::audit_table(&o.recent, &names))
+                .title("Recent activity")
+                .icon(icons::ACTIVITY)
+                .actions(views::activity_search(None))
+                .flush()
+                .footer(html! {
+                    span { "Latest " (o.recent.len()) " events" }
+                    (ui::link_arrow("/audit", "Full audit log"))
+                }))
         }
     }
 }

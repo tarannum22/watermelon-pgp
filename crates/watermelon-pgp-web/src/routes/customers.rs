@@ -2,7 +2,7 @@ use axum::{
     extract::{Path, State},
     response::Redirect,
 };
-use maud::{Markup, html};
+use maud::{Markup, Render, html};
 use serde::Deserialize;
 use watermelon_pgp_core::{audit::Actor, audit::Filter};
 
@@ -11,6 +11,7 @@ use crate::{
     AppState,
     auth::{Authed, Posted},
     error::AppError,
+    ui::{self, icons},
     views::{self, Nav},
 };
 
@@ -22,31 +23,41 @@ pub async fn list(State(state): State<AppState>, auth: Authed) -> Result<Markup,
     Ok(views::layout(
         page,
         html! {
-            h1 { "Customers" }
-            @if customers.is_empty() {
-                p.muted { "No customers yet. Keys and jobs always belong to a customer." }
-            } @else {
-                table {
-                    thead { tr { th { "Name" } th.num { "Keys" } th.num { "Jobs" } th { "Created" } } }
-                    tbody {
-                        @for customer in &customers {
-                            tr {
-                                td { a href={ "/customers/" (customer.id) } { (customer.name) } }
-                                td.num { (keys.iter().filter(|k| k.customer_id == customer.id).count()) }
-                                td.num { (jobs.iter().filter(|j| j.customer_id == customer.id).count()) }
-                                td { (views::date(customer.created_at)) }
+            (ui::page_header("Customers")
+                .subtitle(html! { "Every partner you exchange files with. Keys and jobs always belong to a customer." }))
+            div.dashboard-grid {
+                (ui::panel(html! {
+                    @if customers.is_empty() {
+                        (ui::empty(icons::CUSTOMERS, "No customers yet", "Create the first one to add its keys and jobs.", None))
+                    } @else {
+                        div.table-wrap {
+                            table.table {
+                                thead { tr { th { "Name" } th.num { "Keys" } th.num { "Jobs" } th { "Created" } } }
+                                tbody {
+                                    @for customer in &customers {
+                                        tr {
+                                            td {
+                                                a.strong href={ "/customers/" (customer.id) } { (customer.name) }
+                                            }
+                                            td.num { (keys.iter().filter(|k| k.customer_id == customer.id).count()) }
+                                            td.num { (jobs.iter().filter(|j| j.customer_id == customer.id).count()) }
+                                            td { (views::date(customer.created_at)) }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
-                }
-            }
-            section.card {
-                h2 { "New customer" }
-                form.inline method="post" action="/customers" {
-                    (views::csrf_field(&auth.csrf))
-                    label { "Name" input type="text" name="name" required maxlength="200"; }
-                    button.primary type="submit" { "Create" }
-                }
+                }).flush())
+                (ui::panel(html! {
+                    form.form method="post" action="/customers" {
+                        (views::csrf_field(&auth.csrf))
+                        (ui::field("Name", Some("Usually the company, as you'd look for it later."), html! {
+                            input type="text" name="name" required maxlength="200" placeholder="Alpine Outdoor GmbH";
+                        }))
+                        div.actions { (ui::button("Create customer").primary().icon(icons::PLUS)) }
+                    }
+                }).title("New customer").icon(icons::PLUS))
             }
         },
     ))
@@ -101,51 +112,42 @@ pub async fn show(
         .await?;
     let names = Names::new(&customers, &jobs);
     let page = state.page(&auth, &customer.name, Nav::Customers);
+    let new_job = format!("/jobs/new?customer={}", customer.id);
+    let all_activity = format!("/audit?customer={}", customer.id);
     Ok(views::layout(
         page,
         html! {
-            p.crumbs { a href="/customers" { "Customers" } " /" }
-            h1 { (customer.name) }
+            (ui::page_header(&customer.name)
+                .crumb("Customers", "/customers")
+                .subtitle(html! { "Customer since " (views::date(customer.created_at)) })
+                .actions(html! {
+                    (ui::button("New job").primary().icon(icons::PLUS).href(&new_job))
+                }))
 
-            section {
-                h2 { "Keys" }
-                (keys::key_table(&keys, false))
-            }
-            div.columns {
+            (ui::panel(keys::key_list(&keys.iter().collect::<Vec<_>>(), false))
+                .title("Keys")
+                .icon(icons::KEY)
+                .flush())
+            div.grid-2 {
                 (keys::generate_form(&auth.csrf, &customer))
                 (keys::import_form(&auth.csrf, &customer))
             }
 
-            section {
-                h2 { "Jobs" }
+            (ui::panel(html! {
                 @if jobs.is_empty() {
-                    p.muted { "No jobs yet." }
+                    (ui::empty(icons::JOBS, "No jobs yet", "A job watches a folder and encrypts or decrypts every file that arrives.",
+                        Some(ui::button("New job").icon(icons::PLUS).href(&new_job).render())))
                 } @else {
-                    table {
-                        thead { tr { th { "Name" } th { "Kind" } th { "State" } th { "Input → output" } } }
-                        tbody {
-                            @for job in &jobs {
-                                tr {
-                                    td { a href={ "/jobs/" (job.id) } { (job.spec.name) } }
-                                    td { (views::kind_name(job)) }
-                                    td { (views::job_state(job)) }
-                                    td.paths { code { (job.spec.input_dir.display()) } " → " code { (job.spec.output_dir.display()) } }
-                                }
-                            }
-                        }
-                    }
+                    (super::jobs::job_table(&jobs, false))
                 }
-                p { a.button href={ "/jobs/new?customer=" (customer.id) } { "New job" } }
-            }
+            }).title("Jobs").icon(icons::JOBS).flush())
 
-            section {
-                div.title-row {
-                    h2 { "Recent activity" }
-                    (views::activity_search(Some(("customer", customer.id.to_string()))))
-                }
-                (views::audit_table(&events, &names))
-                p { a href={ "/audit?customer=" (customer.id) } { "All activity for " (customer.name) " →" } }
-            }
+            (ui::panel(views::audit_table(&events, &names))
+                .title("Recent activity")
+                .icon(icons::ACTIVITY)
+                .actions(views::activity_search(Some(("customer", customer.id.to_string()))))
+                .flush()
+                .footer(ui::link_arrow(&all_activity, &format!("All activity for {}", customer.name))))
         },
     ))
 }

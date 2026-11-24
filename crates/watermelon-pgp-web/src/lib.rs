@@ -6,6 +6,7 @@
 mod auth;
 mod error;
 mod routes;
+mod ui;
 mod views;
 
 use std::{
@@ -154,7 +155,7 @@ pub async fn serve(
 }
 
 const CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; \
-    connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
+    font-src 'self'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
 
 async fn security_headers(State(state): State<AppState>, request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;

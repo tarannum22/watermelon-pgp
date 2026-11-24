@@ -4,40 +4,48 @@ use axum::{
     http::{StatusCode, header},
     response::{IntoResponse, Redirect, Response},
 };
-use maud::{Markup, html};
+use maud::{Markup, Render, html};
 use serde::Deserialize;
 use zeroize::Zeroizing;
 
 use super::Empty;
 use crate::{
     AppState,
-    auth::{self, Authed, Client, Posted},
+    auth::{self, Authed, Client, Posted, ThemeChoice},
+    ui::{self, Theme, Tone, icons},
     views,
 };
 
-fn login_page(error: Option<&str>) -> Markup {
+fn login_page(theme: Theme, error: Option<&str>) -> Markup {
     views::bare(
         "Log in",
-        html! {
-            h1 { "Log in" }
-            @if let Some(error) = error {
-                p.flash.error role="alert" { (error) }
-            }
-            form.stack method="post" action="/login" {
-                label {
-                    "Admin password"
-                    input type="password" name="password" autocomplete="current-password" required autofocus;
+        theme,
+        ui::panel(html! {
+            form.form method="post" action="/login" {
+                div {
+                    h1 { "Log in" }
+                    p.muted { "Manage keys and file encryption jobs." }
                 }
-                button.primary type="submit" { "Log in" }
+                @if let Some(error) = error {
+                    (ui::alert(Tone::Bad, None, html! { (error) }))
+                }
+                (ui::field("Admin password", None, html! {
+                    input type="password" name="password" autocomplete="current-password" required autofocus;
+                }))
+                (ui::button("Log in").primary().block().icon(icons::LOCK))
             }
-        },
+        })
+        .render(),
     )
 }
 
-pub async fn login_form(auth: Result<Authed, Response>) -> Response {
+pub async fn login_form(
+    ThemeChoice(theme): ThemeChoice,
+    auth: Result<Authed, Response>,
+) -> Response {
     match auth {
         Ok(_) => Redirect::to("/").into_response(),
-        Err(_) => login_page(None).into_response(),
+        Err(_) => login_page(theme, None).into_response(),
     }
 }
 
@@ -49,6 +57,7 @@ pub struct LoginForm {
 pub async fn login(
     State(state): State<AppState>,
     Client(client): Client,
+    ThemeChoice(theme): ThemeChoice,
     Form(form): Form<LoginForm>,
 ) -> Response {
     let password = Zeroizing::new(form.password);
@@ -57,7 +66,11 @@ pub async fn login(
             "Too many failed attempts. Try again in {} seconds.",
             wait.as_secs() + 1
         );
-        return (StatusCode::TOO_MANY_REQUESTS, login_page(Some(&message))).into_response();
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            login_page(theme, Some(&message)),
+        )
+            .into_response();
     }
     let checked = {
         let client = client.clone();
@@ -82,7 +95,7 @@ pub async fn login(
             state.limiter().failed(&client);
             (
                 StatusCode::UNAUTHORIZED,
-                login_page(Some("Wrong password.")),
+                login_page(theme, Some("Wrong password.")),
             )
                 .into_response()
         }

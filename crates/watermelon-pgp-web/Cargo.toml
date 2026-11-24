@@ -30,3 +30,7 @@ tower.workspace = true
 http-body-util.workspace = true
 rcgen.workspace = true
 tokio-rustls.workspace = true
+
+[features]
+# Evaluation builds: adds the /design style guide page. Release builds leave it off.
+evaluation = []

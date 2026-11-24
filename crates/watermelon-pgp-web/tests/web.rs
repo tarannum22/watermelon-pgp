@@ -159,7 +159,14 @@ async fn health_and_assets_are_public() {
     assert_eq!(health.status, StatusCode::OK);
     assert_eq!(health.body, r#"{"status":"ok"}"#);
 
-    for asset in ["htmx.min.js", "app.css", "logo.svg"] {
+    for asset in [
+        "htmx.min.js",
+        "app.js",
+        "app.css",
+        "logo.svg",
+        "geist-1.9.0.woff2",
+        "jetbrains-mono-5.3.0.woff2",
+    ] {
         let reply = app.get(&format!("/static/{asset}"), None).await;
         assert_eq!(reply.status, StatusCode::OK, "{asset}");
         assert!(
@@ -558,7 +565,7 @@ async fn jobs_are_created_edited_and_controlled_from_forms() {
     let live = app
         .get(&format!("/jobs/{}/live", job.id), Some(&session))
         .await;
-    assert!(live.body.contains("Failed files"));
+    assert!(live.body.contains("No failed files."));
 
     // A failed file can be retried from the page.
     std::fs::create_dir_all(&job.spec.failed_dir).unwrap();
@@ -687,6 +694,103 @@ async fn admin_password_can_be_changed() {
 }
 
 #[tokio::test]
+async fn the_stylesheet_points_at_served_fonts() {
+    let app = App::new();
+    let css = app.get("/static/app.css", None).await.body;
+    for font in ["geist-1.9.0.woff2", "jetbrains-mono-5.3.0.woff2"] {
+        assert!(css.contains(&format!(r#"url("{font}")"#)), "{font}");
+    }
+    // All five layers are in it, tokens first.
+    assert!(css.starts_with("/* Design tokens"));
+    assert!(css.contains(".shell {") && css.contains(".btn {") && css.contains(".job-form"));
+}
+
+#[tokio::test]
+async fn the_theme_choice_is_a_cookie_and_returns_to_the_page() {
+    let app = App::new();
+    let session = app.login().await;
+    let page = app.get("/settings", Some(&session)).await;
+    assert!(
+        page.body.contains("<html lang=\"en\">"),
+        "no theme until one is picked"
+    );
+
+    let request = Request::post("/theme")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header(header::HOST, "localhost:8080")
+        .header(header::ORIGIN, "http://localhost:8080")
+        .header(header::REFERER, "http://localhost:8080/jobs?x=1")
+        .header(header::COOKIE, &session.cookie);
+    let reply = app
+        .send(
+            request
+                .body(Body::from(format!("_csrf={}&theme=dark", session.csrf)))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER);
+    assert_eq!(reply.location(), "/jobs?x=1");
+    let cookie = reply.headers[header::SET_COOKIE].to_str().unwrap();
+    assert!(cookie.starts_with("watermelon_theme=dark;") && cookie.contains("SameSite=Strict"));
+
+    let themed = Session {
+        cookie: format!("{}; watermelon_theme=dark", session.cookie),
+        csrf: session.csrf.clone(),
+    };
+    let page = app.get("/settings", Some(&themed)).await;
+    assert!(page.body.contains(r#"<html lang="en" data-theme="dark">"#));
+    assert!(page.body.contains(r#"value="dark" aria-pressed="true""#));
+    let login = app
+        .get(
+            "/login",
+            Some(&Session {
+                cookie: "watermelon_theme=dark".into(),
+                csrf: String::new(),
+            }),
+        )
+        .await;
+    assert!(login.body.contains(r#"data-theme="dark""#));
+
+    // "system" forgets the choice; anything unknown counts as "system".
+    let reply = app.submit("/theme", &session, "theme=system").await;
+    assert_eq!(reply.location(), "/", "no Referer: back to the dashboard");
+    assert!(
+        reply.headers[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=0")
+    );
+    let reply = app.submit("/theme", &session, "theme=%3Cscript%3E").await;
+    assert!(
+        reply.headers[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=0")
+    );
+
+    // Like every form, it needs the CSRF token.
+    let reply = app.post("/theme", Some(&session), "theme=dark").await;
+    assert_eq!(reply.status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn the_style_guide_is_only_in_evaluation_builds() {
+    let app = App::new();
+    let session = app.login().await;
+    let design = app.get("/design", Some(&session)).await;
+    let dashboard = app.get("/", Some(&session)).await;
+    if cfg!(feature = "evaluation") {
+        assert_eq!(design.status, StatusCode::OK);
+        assert!(dashboard.body.contains("Evaluation build"));
+    } else {
+        assert_eq!(design.status, StatusCode::NOT_FOUND);
+        assert!(
+            !dashboard.body.contains("Evaluation build") && !dashboard.body.contains("/design")
+        );
+    }
+}
+
+#[tokio::test]
 async fn unknown_things_are_404() {
     let app = App::new();
     let session = app.login().await;
@@ -729,15 +833,20 @@ async fn audit_log_search_time_actor_chips_and_csv() {
     let found = app.get("/audit?q=exports%40acme", Some(&session)).await;
     assert!(found.body.contains("1 event"), "{}", found.body);
     assert!(found.body.contains("key.generate"));
-    assert!(found.body.contains("“exports@acme” ×"), "chip shown");
+    assert!(
+        found
+            .body
+            .contains(r#"title="Remove this filter">“exports@acme”"#),
+        "chip shown"
+    );
     assert!(found.body.contains(r#"href="/audit">Clear all"#));
     let none = app.get("/audit?q=nothing+like+this", Some(&session)).await;
-    assert!(none.body.contains("0 events") && none.body.contains("No events."));
+    assert!(none.body.contains("0 events") && none.body.contains("No events"));
 
     // Who did it.
     let web = app.get("/audit?actor=admin", Some(&session)).await;
     assert!(web.body.contains("admin.login") && !web.body.contains("customer.create"));
-    assert!(web.body.contains("Web UI (admin) ×"));
+    assert!(web.body.contains(">Web UI (admin)<"));
 
     // Time: a period, a custom range, a bad date.
     let recent = app.get("/audit?period=1h", Some(&session)).await;
@@ -746,7 +855,7 @@ async fn audit_log_search_time_actor_chips_and_csv() {
         .get("/audit?from=2001-01-01&to=2001-12-31", Some(&session))
         .await;
     assert!(past.body.contains("0 events"));
-    assert!(past.body.contains("2001-01-01 – 2001-12-31 ×"));
+    assert!(past.body.contains(">2001-01-01 – 2001-12-31<"));
     let bad = app.get("/audit?from=yesterday", Some(&session)).await;
     assert_eq!(bad.status, StatusCode::OK);
     assert!(bad.body.contains("Ignored the from date"));

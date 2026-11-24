@@ -1,6 +1,8 @@
 mod audit;
 mod customers;
 mod dashboard;
+#[cfg(feature = "evaluation")]
+mod design;
 mod jobs;
 mod keys;
 mod session;
@@ -26,7 +28,7 @@ use crate::{
 };
 
 pub fn router() -> Router<AppState> {
-    Router::new()
+    let router = Router::new()
         .route("/", get(dashboard::show))
         .route("/dashboard/live", get(dashboard::live))
         .route("/login", get(session::login_form).post(session::login))
@@ -56,7 +58,10 @@ pub fn router() -> Router<AppState> {
         .route("/audit.csv", get(audit::export))
         .route("/settings", get(settings::show))
         .route("/settings/password", post(settings::change_password))
-        .fallback(|| async { AppError::not_found("no such page") })
+        .route("/theme", post(settings::set_theme));
+    #[cfg(feature = "evaluation")]
+    let router = router.route("/design", get(design::show));
+    router.fallback(|| async { AppError::not_found("no such page") })
 }
 
 impl AppState {
@@ -65,6 +70,7 @@ impl AppState {
             title,
             nav,
             csrf: &auth.csrf,
+            theme: auth.theme,
             flash: self.sessions().take_flash(auth.key),
         }
     }
@@ -143,18 +149,37 @@ async fn health(state: axum::extract::State<AppState>) -> Response {
     }
 }
 
-/// Assets are embedded in the binary. URLs carry the version, so they can be cached forever.
+/// The stylesheet, assembled at compile time from the design system's layers.
+const APP_CSS: &str = concat!(
+    include_str!("../../assets/css/tokens.css"),
+    include_str!("../../assets/css/base.css"),
+    include_str!("../../assets/css/layout.css"),
+    include_str!("../../assets/css/components.css"),
+    include_str!("../../assets/css/pages.css"),
+);
+
+/// Assets are embedded in the binary. URLs carry the version (fonts: in the file name), so
+/// they can be cached forever.
 async fn static_file(Path(file): Path<String>) -> Response {
     let (content_type, body): (&str, &'static [u8]) = match file.as_str() {
         "htmx.min.js" => (
             "text/javascript; charset=utf-8",
             include_bytes!("../../assets/htmx.min.js"),
         ),
-        "app.css" => (
-            "text/css; charset=utf-8",
-            include_bytes!("../../assets/app.css"),
+        "app.js" => (
+            "text/javascript; charset=utf-8",
+            include_bytes!("../../assets/app.js"),
         ),
+        "app.css" => ("text/css; charset=utf-8", APP_CSS.as_bytes()),
         "logo.svg" => ("image/svg+xml", include_bytes!("../../assets/logo.svg")),
+        "geist-1.9.0.woff2" => (
+            "font/woff2",
+            include_bytes!("../../assets/fonts/geist-1.9.0.woff2"),
+        ),
+        "jetbrains-mono-5.3.0.woff2" => (
+            "font/woff2",
+            include_bytes!("../../assets/fonts/jetbrains-mono-5.3.0.woff2"),
+        ),
         _ => return AppError::not_found("no such file").into_response(),
     };
     (

@@ -1,9 +1,9 @@
 use axum::{
-    extract::{Multipart, Path, State},
+    extract::{Multipart, Path, Query, State},
     http::header,
     response::{IntoResponse, Redirect, Response},
 };
-use maud::{Markup, html};
+use maud::{Markup, Render, html};
 use serde::Deserialize;
 use watermelon_pgp_core::{
     audit::{Actor, Filter},
@@ -17,105 +17,210 @@ use crate::{
     AppState,
     auth::{Authed, CSRF_FIELD, Posted},
     error::AppError,
+    ui::{self, Tone, icons},
     views::{self, Nav},
 };
 
 /// Minimum passphrase length for exported secret keys.
 const MIN_EXPORT_PASSPHRASE_LEN: usize = 8;
 
-pub fn key_table(keys: &[KeyRecord], with_customer: bool) -> Markup {
+/// Keys as rich rows: who, status, fingerprint, what they can do, expiry.
+pub fn key_list(keys: &[&KeyRecord], with_customer: bool) -> Markup {
     html! {
         @if keys.is_empty() {
-            p.muted { "No keys yet." }
+            (ui::empty(icons::KEY, "No keys", "Generate a key pair or import the public key a partner sent you.", None))
         } @else {
-            table {
-                thead {
-                    tr {
-                        th { "Key" }
-                        @if with_customer { th { "Customer" } }
-                        th { "Algorithm" }
-                        th { "Can" }
-                        th { "Created" }
-                        th { "Expires" }
-                        th { "Status" }
+            div.key-list {
+                @for key in keys {
+                    (key_row(key, with_customer))
+                }
+            }
+        }
+    }
+}
+
+fn key_row(key: &KeyRecord, with_customer: bool) -> Markup {
+    let (tone, state) = views::key_state(key);
+    let avatar_tone = match tone {
+        Tone::Good if key.has_secret => Tone::Good,
+        Tone::Good => Tone::Neutral,
+        other => other,
+    };
+    let other_ids = key.user_ids.len().saturating_sub(1);
+    let (name, email) = views::uid_parts(key.label());
+    html! {
+        div.key-row.revoked[key.revoked] {
+            (ui::avatar(name, avatar_tone))
+            div.key-main {
+                div.key-title {
+                    a.key-name href={ "/keys/" (key.fingerprint) } { (name) }
+                    (ui::pill(tone, &state))
+                    @if key.has_secret { (ui::tag("key pair", "we hold the secret key", true)) } @else { (ui::tag("public", "public key only", false)) }
+                }
+                @if email.is_some() || other_ids > 0 {
+                    span.key-sub {
+                        @if let Some(email) = email { (email) }
+                        @if other_ids > 0 { " " span.subtle { "+" (other_ids) " more user IDs" } }
                     }
                 }
-                tbody {
-                    @for key in keys {
-                        tr {
-                            td { (views::key_link(key)) }
-                            @if with_customer {
-                                td { a href={ "/customers/" (key.customer_id) } { (key.customer_name) } }
-                            }
-                            td { (key.algorithm) }
-                            td { (views::key_capabilities(key)) }
-                            td { (views::date(key.created_at)) }
-                            td { @match key.expires_at { Some(at) => (views::date(at)), None => span.muted { "never" } } }
-                            td { (views::key_status(key)) }
-                        }
+                div.key-meta {
+                    (ui::fingerprint(&key.fingerprint, true))
+                    (ui::tag(&key.algorithm, "algorithm", false))
+                    (views::key_capabilities(key))
+                    @if with_customer {
+                        span { (ui::icon_with(icons::CUSTOMERS, "icon sm")) }
+                        a href={ "/customers/" (key.customer_id) } { (key.customer_name) }
                     }
                 }
+            }
+            div.key-side {
+                span { "Expires " @match key.expires_at { Some(at) => (views::date(at)), None => "never" } }
+                span.subtle { "Created " (views::date(key.created_at)) }
             }
         }
     }
 }
 
 pub fn generate_form(csrf: &str, customer: &Customer) -> Markup {
-    html! {
-        section.card {
-            h2 { "Generate a key" }
-            form.stack method="post" action={ "/customers/" (customer.id) "/keys/generate" } {
-                (views::csrf_field(csrf))
-                label {
-                    "User ID"
-                    input type="text" name="user_id" required maxlength="500"
-                        placeholder={ (customer.name) " <pgp@example.com>" };
+    let placeholder = format!("{} <pgp@example.com>", customer.name);
+    ui::panel(html! {
+        form.form method="post" action={ "/customers/" (customer.id) "/keys/generate" } {
+            (views::csrf_field(csrf))
+            (ui::field("User ID", Some("Name and email address partners will see on the key."), html! {
+                input type="text" name="user_id" required maxlength="500" placeholder=(placeholder);
+            }))
+            (ui::field("Algorithm", None, html! {
+                select name="algorithm" {
+                    option value="curve25519" selected { "Ed25519 + Cv25519 (recommended)" }
+                    option value="rsa4096" { "RSA 4096 (for older partners; slow to generate)" }
                 }
-                label {
-                    "Algorithm"
-                    select name="algorithm" {
-                        option value="curve25519" selected { "Ed25519 + Cv25519 (recommended)" }
-                        option value="rsa4096" { "RSA 4096 (for older partners; slow to generate)" }
-                    }
-                }
-                button.primary type="submit" { "Generate" }
-            }
+            }))
+            div.actions { (ui::button("Generate key pair").primary().icon(icons::KEY)) }
         }
-    }
+    })
+    .title("Generate a key pair")
+    .icon(icons::KEY)
+    .render()
 }
 
 pub fn import_form(csrf: &str, customer: &Customer) -> Markup {
-    html! {
-        section.card {
-            h2 { "Import keys" }
-            form.stack method="post" action={ "/customers/" (customer.id) "/keys/import" }
-                enctype="multipart/form-data" {
-                (views::csrf_field(csrf))
-                label { "Key file (armored or binary)" input type="file" name="file"; }
-                label {
-                    "…or paste an armored key"
-                    textarea name="armored" rows="4" placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----" {}
-                }
-                label {
-                    "Passphrase (only for protected secret keys)"
-                    input type="password" name="passphrase" autocomplete="off";
-                }
-                p.hint { "Secret keys are re-encrypted under the master key; their passphrase is not kept." }
-                button.primary type="submit" { "Import" }
-            }
+    ui::panel(html! {
+        form.form method="post" action={ "/customers/" (customer.id) "/keys/import" }
+            enctype="multipart/form-data" {
+            (views::csrf_field(csrf))
+            (ui::field("Key file", Some("Armored (.asc) or binary (.gpg, .pgp)."), html! { input type="file" name="file"; }))
+            (ui::field("…or paste an armored key", None, html! {
+                textarea name="armored" rows="4" placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----" {}
+            }))
+            (ui::optional_field("Passphrase", Some("Only for protected secret keys. Secret keys are re-encrypted under the master key; the passphrase is not kept."), html! {
+                input type="password" name="passphrase" autocomplete="off";
+            }))
+            div.actions { (ui::button("Import").primary().icon(icons::UPLOAD)) }
+        }
+    })
+    .title("Import keys")
+    .icon(icons::UPLOAD)
+    .render()
+}
+
+/// Which keys the list shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Show {
+    All,
+    KeyPairs,
+    Public,
+    Attention,
+    Revoked,
+}
+
+const SHOW: &[(Show, &str, &str)] = &[
+    (Show::All, "", "All keys"),
+    (Show::KeyPairs, "pairs", "Key pairs"),
+    (Show::Public, "public", "Public only"),
+    (Show::Attention, "attention", "Needs attention"),
+    (Show::Revoked, "revoked", "Revoked"),
+];
+
+impl Show {
+    fn matches(self, key: &KeyRecord) -> bool {
+        match self {
+            Show::All => true,
+            Show::KeyPairs => key.has_secret,
+            Show::Public => !key.has_secret,
+            Show::Attention => views::key_needs_attention(key),
+            Show::Revoked => key.revoked,
         }
     }
 }
 
-pub async fn list(State(state): State<AppState>, auth: Authed) -> Result<Markup, AppError> {
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ListQuery {
+    show: String,
+    q: String,
+}
+
+fn key_matches_text(key: &KeyRecord, text: &str) -> bool {
+    let text = text.to_lowercase();
+    let hex = text.replace(' ', "").to_uppercase();
+    key.user_ids
+        .iter()
+        .any(|uid| uid.to_lowercase().contains(&text))
+        || key.customer_name.to_lowercase().contains(&text)
+        || (!hex.is_empty() && key.fingerprint.contains(&hex))
+}
+
+pub async fn list(
+    State(state): State<AppState>,
+    auth: Authed,
+    Query(query): Query<ListQuery>,
+) -> Result<Markup, AppError> {
     let keys = state.vault(|vault| vault.keys(None)).await?;
+    let show = SHOW
+        .iter()
+        .find(|(_, value, _)| *value == query.show)
+        .map_or(Show::All, |(show, _, _)| *show);
+    let text = query.q.trim();
+    let shown: Vec<&KeyRecord> = keys
+        .iter()
+        .filter(|k| show.matches(k) && (text.is_empty() || key_matches_text(k, text)))
+        .collect();
+    let url = |value: &str| {
+        let params: Vec<(&str, &str)> = [("show", value), ("q", text)]
+            .into_iter()
+            .filter(|(_, v)| !v.is_empty())
+            .collect();
+        match serde_html_form::to_string(&params).unwrap_or_default() {
+            query if query.is_empty() => "/keys".to_owned(),
+            query => format!("/keys?{query}"),
+        }
+    };
     let page = state.page(&auth, "Keys", Nav::Keys);
     Ok(views::layout(
         page,
         html! {
-            h1 { "Keys" }
-            (key_table(&keys, true))
-            p.hint { "To add keys, open a " a href="/customers" { "customer" } "." }
+            (ui::page_header("Keys")
+                .subtitle(html! { "All keys of all customers. To add keys, open a " a href="/customers" { "customer" } "." }))
+            (ui::panel(key_list(&shown, true))
+                .actions(html! {
+                    form.inline-search method="get" action="/keys" role="search" {
+                        @if show != Show::All { input type="hidden" name="show" value=(query.show); }
+                        (ui::search_input("q", text, "Name, email, customer or fingerprint", "Search keys"))
+                        (ui::button("Search").small())
+                    }
+                })
+                .description(html! {
+                    span.chips {
+                        @for (option, value, label) in SHOW {
+                            (ui::chip(&url(value), label, Some(keys.iter().filter(|k| option.matches(k)).count()), *option == show))
+                        }
+                    }
+                })
+                .flush()
+                .footer(html! {
+                    span { "Showing " (shown.len()) " of " (keys.len()) " keys" }
+                    @if !text.is_empty() || show != Show::All { a href="/keys" { "Clear filters" } }
+                }))
         },
     ))
 }
@@ -139,97 +244,106 @@ pub async fn show(
         .await?;
     let names = Names::new(&customers, &jobs);
     let page = state.page(&auth, key.label(), Nav::Keys);
+    let (name, _) = views::uid_parts(key.label());
     let base = format!("/keys/{}", key.fingerprint);
+    let customer_url = format!("/customers/{}", key.customer_id);
+    let (tone, state_text) = views::key_state(&key);
+    let min_passphrase = MIN_EXPORT_PASSPHRASE_LEN.to_string();
     Ok(views::layout(
         page,
         html! {
-            p.crumbs {
-                a href={ "/customers/" (key.customer_id) } { (key.customer_name) } " / keys /"
-            }
-            h1 { (key.label()) " " (views::key_status(&key)) }
-            dl.details {
-                dt { "Fingerprint" } dd { (views::fingerprint(&key.fingerprint)) }
-                dt { "User IDs" } dd { @for uid in &key.user_ids { div { (uid) } } }
-                dt { "Algorithm" } dd { (key.algorithm) }
-                dt { "Capabilities" } dd { (views::key_capabilities(&key)) }
-                dt { "Created" } dd { (views::timestamp(key.created_at)) }
-                dt { "Expires" } dd { @match key.expires_at { Some(at) => (views::timestamp(at)), None => "never" } }
-                dt { "Added" } dd { (views::timestamp(key.added_at)) }
-                dt { "Used by jobs" } dd {
-                    @if used_by.is_empty() { span.muted { "none" } } @else { (used_by.join(", ")) }
-                }
-            }
+            (ui::page_header(name)
+                .crumb("Customers", "/customers")
+                .crumb(&key.customer_name, customer_url.clone())
+                .status(ui::pill(tone, &state_text))
+                .subtitle(html! {
+                    @if key.has_secret { "Key pair: we hold the secret key." } @else { "Public key of a partner." }
+                }))
 
-            div.columns {
-                section.card {
-                    h2 { "Public key" }
-                    p { "Share this with partners so they can encrypt to us or check our signatures." }
-                    // A download, not a page: keep htmx out of it.
-                    form method="post" action={ (base) "/public" } hx-boost="false" {
-                        (views::csrf_field(&auth.csrf))
-                        button type="submit" { "Download public key (.asc)" }
+            div.grid-2 {
+                (ui::panel(html! {
+                    (ui::fingerprint_box(&key.fingerprint))
+                    dl.kv {
+                        dt { "User IDs" } dd { @for uid in &key.user_ids { div { (uid) } } }
+                        dt { "Customer" } dd { a href=(customer_url) { (key.customer_name) } }
+                        dt { "Algorithm" } dd { (key.algorithm) }
+                        dt { "Can" } dd { (views::key_capabilities(&key)) }
+                        dt { "Created" } dd { (views::timestamp(key.created_at)) }
+                        dt { "Expires" } dd { @match key.expires_at { Some(at) => (views::timestamp(at)), None => "never" } }
+                        dt { "Added" } dd { (views::timestamp(key.added_at)) }
+                        dt { "Used by jobs" } dd {
+                            @if used_by.is_empty() { span.muted { "none" } } @else { (used_by.join(", ")) }
+                        }
                     }
-                }
-                @if key.has_secret {
-                    section.card {
-                        h2 { "Export secret key" }
-                        p { "The export is protected with a new passphrase. Exports are audited." }
-                        form.stack method="post" action={ (base) "/secret" } hx-boost="false" {
+                }).title("Key").icon(icons::FINGERPRINT))
+
+                div.stack {
+                    (ui::panel(html! {
+                        p { "Share this with partners so they can encrypt to us or check our signatures." }
+                        // A download, not a page: keep htmx out of it.
+                        form method="post" action={ (base) "/public" } hx-boost="false" {
                             (views::csrf_field(&auth.csrf))
-                            label { "New passphrase" input type="password" name="passphrase" required minlength=(MIN_EXPORT_PASSPHRASE_LEN) autocomplete="new-password"; }
-                            label { "Repeat passphrase" input type="password" name="repeat" required minlength=(MIN_EXPORT_PASSPHRASE_LEN) autocomplete="new-password"; }
-                            button type="submit" { "Download secret key (.asc)" }
+                            (ui::button("Download public key (.asc)").icon(icons::DOWNLOAD))
                         }
-                    }
-                }
-            }
-
-            @if key.has_secret && !key.revoked {
-                section.card.danger {
-                    h2 { "Revoke key" }
-                    p {
-                        "Revoking tells everyone who has the public key to stop using it. It cannot be undone. "
-                        "Jobs encrypting to or signing with this key pause; it can still decrypt older files. "
-                        "Afterwards, send partners the public key again so they learn about the revocation."
-                    }
-                    form.stack method="post" action={ (base) "/revoke" } {
-                        (views::csrf_field(&auth.csrf))
-                        label {
-                            "Reason"
-                            select name="reason" {
-                                option value="superseded" { "Replaced by a new key" }
-                                option value="retired" { "No longer used" }
-                                option value="compromised" { "Compromised (secret key leaked)" }
-                                option value="unspecified" { "No reason given" }
+                    }).title("Public key").icon(icons::DOWNLOAD))
+                    @if key.has_secret {
+                        (ui::panel(html! {
+                            form.form method="post" action={ (base) "/secret" } hx-boost="false" {
+                                (views::csrf_field(&auth.csrf))
+                                p.hint { "The export is protected with a new passphrase. Exports are audited." }
+                                div.form-row {
+                                    (ui::field("New passphrase", None, html! { input type="password" name="passphrase" required minlength=(min_passphrase) autocomplete="new-password"; }))
+                                    (ui::field("Repeat passphrase", None, html! { input type="password" name="repeat" required minlength=(min_passphrase) autocomplete="new-password"; }))
+                                }
+                                div.actions { (ui::button("Download secret key (.asc)").icon(icons::LOCK)) }
                             }
+                        }).title("Export secret key").icon(icons::LOCK))
+                    }
+                }
+            }
+
+            (ui::panel(views::audit_table(&events, &names))
+                .title("Recent activity")
+                .icon(icons::ACTIVITY)
+                .actions(views::activity_search(Some(("key", key.fingerprint.clone()))))
+                .flush())
+
+            div.grid-2 {
+                @if key.has_secret && !key.revoked {
+                    (ui::panel(html! {
+                        p {
+                            "Revoking tells everyone who has the public key to stop using it. It cannot be undone. "
+                            "Jobs encrypting to or signing with this key pause; it can still decrypt older files. "
+                            "Afterwards, send partners the public key again so they learn about the revocation."
                         }
-                        label { "Comment (optional)" input type="text" name="comment" maxlength="500"; }
-                        (views::confirm_box("Revoke this key permanently"))
-                        button.danger type="submit" { "Revoke" }
+                        form.form method="post" action={ (base) "/revoke" } {
+                            (views::csrf_field(&auth.csrf))
+                            (ui::field("Reason", None, html! {
+                                select name="reason" {
+                                    option value="superseded" { "Replaced by a new key" }
+                                    option value="retired" { "No longer used" }
+                                    option value="compromised" { "Compromised (secret key leaked)" }
+                                    option value="unspecified" { "No reason given" }
+                                }
+                            }))
+                            (ui::optional_field("Comment", None, html! { input type="text" name="comment" maxlength="500"; }))
+                            (ui::confirm("Revoke this key permanently"))
+                            div.actions { (ui::button("Revoke key").danger().icon(icons::BAN)) }
+                        }
+                    }).title("Revoke key").icon(icons::BAN).tone(Tone::Bad))
+                }
+                (ui::panel(html! {
+                    @if used_by.is_empty() {
+                        p { "Deleted keys stay in the database so the audit log keeps resolving, but can no longer be used." }
+                        form.form method="post" action={ (base) "/delete" } {
+                            (views::csrf_field(&auth.csrf))
+                            (ui::confirm("Delete this key"))
+                            div.actions { (ui::button("Delete key").danger().icon(icons::TRASH)) }
+                        }
+                    } @else {
+                        p { "This key is used by " (used_by.join(", ")) ". Change or delete those jobs first." }
                     }
-                }
-            }
-
-            section {
-                div.title-row {
-                    h2 { "Recent activity" }
-                    (views::activity_search(Some(("key", key.fingerprint.clone()))))
-                }
-                (views::audit_table(&events, &names))
-            }
-
-            section.card.danger {
-                h2 { "Delete key" }
-                @if used_by.is_empty() {
-                    p { "Deleted keys stay in the database so the audit log keeps resolving, but can no longer be used." }
-                    form.inline method="post" action={ (base) "/delete" } {
-                        (views::csrf_field(&auth.csrf))
-                        (views::confirm_box("Delete this key"))
-                        button.danger type="submit" { "Delete" }
-                    }
-                } @else {
-                    p { "This key is used by " (used_by.join(", ")) ". Change or delete those jobs first." }
-                }
+                }).title("Delete key").icon(icons::TRASH).tone(Tone::Bad))
             }
         },
     ))

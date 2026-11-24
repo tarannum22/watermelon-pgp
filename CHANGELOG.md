@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Web UI
+- New look, built on a design system: design tokens (colour roles, type, spacing) in one file,
+  reusable components in `src/ui`, and a living style guide at `/design` in evaluation builds
+  (`--features evaluation`; release builds don't include it). See `docs/design-system.md`.
+- Sidebar navigation, a search box for the audit log on every page, and a dashboard with stat
+  cards, a "Needs attention" list and recent activity.
+- Keys as rich rows with the fingerprint, status and capabilities, filters (key pairs, public
+  only, needs attention, revoked) and search. A key's page shows the full fingerprint.
+- Copy buttons for fingerprints (where the browser allows clipboard access).
+- Light and dark themes: follows the system, or pick one in the sidebar or in Settings
+  (remembered per browser in a cookie).
+- Geist and JetBrains Mono fonts and Lucide icons, served from the binary.
+- Form hints are no longer read out as part of a field's name by screen readers.
+
+### Tests
+- End-to-end tests of the core flows in a real browser (Playwright): logging in and out,
+  customers, generating, importing and revoking keys, an encrypt and decrypt round trip with a
+  failed file and its retry, the audit log's filters and CSV export, and the theme switch.
+
 ## [0.1.0] - 2026-11-24
 
 The first release: key management and folder encryption/decryption jobs with a web UI, as a
