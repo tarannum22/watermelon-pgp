@@ -31,7 +31,6 @@ cat <<RUBY
 class WatermelonPgp < Formula
   desc "Self-hosted OpenPGP key management and folder encryption jobs, with a web UI"
   homepage "https://tarannum22.github.io/watermelon-pgp/"
-  version "${version}"
   license any_of: ["MIT", "Apache-2.0"]
 
   on_macos do
@@ -60,11 +59,6 @@ class WatermelonPgp < Formula
     bin.install "watermelon"
     doc.install "README.md", "CHANGELOG.md", "docs"
     pkgshare.install "contrib"
-  end
-
-  def post_install
-    (var/"watermelon").mkpath
-    chmod 0700, var/"watermelon"
   end
 
   service do
