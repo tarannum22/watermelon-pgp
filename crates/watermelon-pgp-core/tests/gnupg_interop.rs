@@ -297,3 +297,22 @@ fn gnupg_accepts_our_exported_secret_key() {
         }
     }
 }
+
+#[test]
+fn gnupg_sees_our_revocation() {
+    let Some(gpg) = Gpg::new() else { return };
+    let mut key = crypto::generate("Revoked <revoked@example.com>", Algorithm::Curve25519).unwrap();
+    crypto::revoke(&mut key, crypto::RevocationReason::Retired, "test").unwrap();
+    let armored = crypto::armor_public(&key.to_public_key()).unwrap();
+    gpg.run(&["--import"], armored.as_bytes());
+    let listing = String::from_utf8(gpg.run(&["--with-colons", "--list-keys"], b"")).unwrap();
+    let primary = listing
+        .lines()
+        .find(|line| line.starts_with("pub:"))
+        .expect("key listed");
+    assert_eq!(
+        primary.split(':').nth(1),
+        Some("r"),
+        "gpg marks the key revoked: {primary}"
+    );
+}

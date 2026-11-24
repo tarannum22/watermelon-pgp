@@ -17,6 +17,8 @@ zeroize.workspace = true
 hex.workspace = true
 thiserror.workspace = true
 smallvec.workspace = true
+bytes.workspace = true
+time.workspace = true
 rsa.workspace = true
 
 [dev-dependencies]

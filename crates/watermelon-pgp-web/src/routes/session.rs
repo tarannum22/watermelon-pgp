@@ -95,7 +95,7 @@ pub async fn logout(State(state): State<AppState>, posted: Posted<Empty>) -> Res
     let client = auth.client.clone();
     // Logging out must work even if auditing it fails.
     if let Err(e) = state.vault(move |vault| vault.record_logout(&client)).await {
-        eprintln!("auditing logout: {}", e.message());
+        tracing::error!(error = e.message(), "auditing logout failed");
     }
     state.sessions().remove(auth.key);
     (

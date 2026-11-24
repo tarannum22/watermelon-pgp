@@ -8,59 +8,66 @@ A self-hosted, single-binary tool to manage OpenPGP keys and run folder jobs tha
 decrypt files: the glue between your customers' keys and the folders your SFTP transfers read
 from and write to.
 
-> **Status: early development.** Milestones 1 (key store + CLI), 2 (job engine) and 3 (web UI)
-> are done. Hardening and the first release are next. See [DESIGN.md](DESIGN.md) for the full plan.
+> **Status: 0.1, the first release.** Everything planned for v1 works and is tested, including
+> against GnuPG 2.2–2.5; expect rough edges. See [DESIGN.md](DESIGN.md) for the decisions behind
+> it and [CHANGELOG.md](CHANGELOG.md) for what's in each release.
 
-## What works today
+## Features
 
-- `watermelon serve`: the web UI plus the job engine in one process.
-  - Dashboard with running/paused jobs, files processed and failed in the last 24 hours, keys
-    that are expired or expire within 30 days, and recent activity; it refreshes itself.
-  - Customers, keys (generate, import by upload or paste, download public, export secret with a
-    new passphrase, delete), jobs (create, edit, enable/disable, delete, retry failed files),
-    and a filterable, paged audit log.
-  - Every page works without JavaScript; htmx (vendored, no CDN) only makes it smoother.
-- `watermelon init`: creates the database, a master keyfile (`0600`) and the admin password.
-- Customers: `watermelon customer add|list`.
-- Keys: `watermelon key gen|import|list|export|delete`.
-  - Generated keys are v4 Ed25519/Cv25519 (or RSA-4096), readable by GnuPG 2.2 and later.
-  - Imported passphrase-protected secret keys are unlocked once and re-encrypted under the
-    master key, so jobs can use them unattended.
-  - Secret-key exports always require a new passphrase.
-- Every change is recorded in an append-only audit log: `watermelon audit`.
-- `watermelon backup <file>` writes a consistent database snapshot. The master key is
-  deliberately **not** included, so back it up separately.
-- Folder jobs: `watermelon job add encrypt|decrypt`, `job list|show|enable|disable|delete`,
-  `job run-once`, and `watermelon run` to run all enabled jobs until Ctrl-C.
-  - A file is picked up once it is unchanged across two scans; `*.part`, `*.filepart`, `*.tmp`
-    and dotfiles are ignored.
-  - Output is streamed into a hidden temp file, synced, and published under its final name
-    without ever overwriting an existing file. Tampered input or a missing required signature
-    never produces output.
-  - Sources move to `processed/` (or are deleted) on success and to `failed/` on failure; every
-    file is audited with its SHA-256.
-  - A job whose recipient key expires or is revoked pauses itself; keys used by jobs can't be
-    deleted.
+- **Keys per customer.** Generate (Ed25519/Cv25519 or RSA-4096, readable by GnuPG 2.2+),
+  import the keys customers send you (public or secret, armored or binary), export public keys,
+  export secret keys under a new passphrase, revoke, delete. Expired, expiring and revoked keys
+  are flagged.
+- **Folder jobs.** Watch a folder and encrypt every file dropped into it for one or more
+  recipients (optionally signed), or decrypt incoming files (optionally requiring a valid
+  signature). Files are picked up only once fully uploaded, streamed with bounded memory,
+  published atomically without overwriting anything, then archived to `processed/` or moved to
+  `failed/` with the reason recorded.
+- **Web UI.** Dashboard, customers, keys, jobs and a filterable audit log, in one binary with no
+  external assets. Every page works without JavaScript.
+- **Audit log.** Every change, login, export and processed file (with its SHA-256), append-only.
+- **Secure by default.** Secret keys encrypted at rest under a master key kept outside the
+  database; loopback-only until you configure HTTPS; hardened sessions, CSRF protection, login
+  rate limiting, strict CSP.
+- **Easy to run.** One process (`watermelon serve`), SQLite, a systemd unit and a Docker image.
+
+## Install
+
+- **Release binaries** for Linux (x86_64, arm64) and macOS (arm64):
+  [GitHub releases](https://github.com/tarannum22/watermelon-pgp/releases), with `SHA256SUMS`.
+- **Docker:** `docker pull ghcr.io/tarannum22/watermelon-pgp`, or `docker build -t watermelon-pgp .`
+- **From source:** Rust 1.89 or later, then `cargo build --release`; the binary is
+  `target/release/watermelon`.
+
+To run it as a service, see [docs/deployment.md](docs/deployment.md): systemd, Docker, HTTPS,
+the master key, logs, backups and upgrades.
 
 ## Quick start
 
 ```sh
-cargo build --release
-./target/release/watermelon init                 # prompts for the admin password
-./target/release/watermelon customer add ACME
-./target/release/watermelon key gen --customer ACME --uid "ACME Exports <exports@acme.example>"
-./target/release/watermelon key list
-
-# Encrypt everything dropped into ./outbox for ACME, archive the originals
-./target/release/watermelon job add encrypt --customer ACME --name outbound \
-    --input outbox --output to-sftp --recipient <ACME key ID>
-
-# Web UI on http://127.0.0.1:8080, with all enabled jobs running
-./target/release/watermelon serve
+watermelon init      # creates ./data: database, master key, admin password (prompted)
+watermelon serve     # web UI on http://127.0.0.1:8080, all enabled jobs running
 ```
 
-Everything after `init` can also be done in the web UI. `watermelon run` runs the jobs without
-the UI.
+Log in, create a customer, generate or import its keys and create a job. Everything can also be
+scripted on the command line:
+
+```sh
+watermelon customer add ACME
+watermelon key gen --customer ACME --uid "ACME Exports <exports@acme.example>"
+watermelon key import --customer ACME partner-key.asc
+watermelon key list
+
+# Encrypt everything dropped into /srv/sftp/acme/outbox for ACME's key, archive the originals
+watermelon job add encrypt --customer ACME --name outbound \
+    --input /srv/sftp/acme/outbox --output /srv/sftp/acme/out --recipient <ACME key ID>
+
+watermelon audit
+watermelon backup /backups/watermelon.db    # the master key is NOT included: back it up separately
+```
+
+`watermelon --help` and `watermelon <command> --help` list everything. `watermelon run` runs the
+jobs without the web UI.
 
 For scripted setups, `--passphrase-stdin` reads passwords from stdin instead of prompting, and
 `WATERMELON_MASTER_KEY` (hex) can supply the master key instead of the keyfile.
@@ -71,8 +78,8 @@ For scripted setups, `--passphrase-stdin` reads passwords from stdin instead of 
   outside the database. A stolen database alone reveals nothing.
 - The master key is checked against the database at startup; a wrong key is refused.
 - A keyfile readable by other users is refused.
-- The web UI listens on `127.0.0.1` by default. It speaks plain HTTP: to expose it, put a
-  TLS-terminating reverse proxy in front and pass `--secure-cookies`.
+- The web UI listens on `127.0.0.1` by default. To expose it, serve HTTPS with `--tls-cert` /
+  `--tls-key`, or put a TLS-terminating reverse proxy in front and pass `--secure-cookies`.
 - One admin password (Argon2id), set on the CLI; there is no web setup page an attacker could
   reach first. Sessions are `HttpOnly`, `SameSite=Strict` cookies that end after 30 minutes idle
   or 12 hours; changing the password ends all other sessions.
@@ -82,6 +89,16 @@ For scripted setups, `--passphrase-stdin` reads passwords from stdin instead of 
 
 ## Known issues
 
+- **Two dependency advisories without a fix yet**, both timing side channels inside rPGP's
+  dependencies: [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071) (`rsa`,
+  "Marvin attack", RSA keys) and [RUSTSEC-2026-0387](https://rustsec.org/advisories/RUSTSEC-2026-0387)
+  (`crypto-bigint`, NIST/brainpool/secp256k1/X448 keys). The newest rPGP release still uses the
+  affected versions. Exploiting them needs an attacker who can trigger many private-key
+  operations and time each one precisely; folder jobs run on a polling schedule and give no such
+  feedback, so we consider the risk low. Prefer Curve25519 keys (the default) where partners
+  support them. The reasoning is in [`.cargo/audit.toml`](.cargo/audit.toml); the exceptions
+  go away as soon as rPGP updates.
+
 - **Ubuntu 26.04 (GnuPG 2.4.8 with libgcrypt 1.12.0) cannot import most passphrase-protected
   Curve25519 secret keys exported by watermelon** ("Bad passphrase" when the key is used). The
   same exports work with libgcrypt 1.11 and 1.12.4, and on 1.12.0 RSA exports, public keys and
@@ -90,11 +107,18 @@ For scripted setups, `--passphrase-stdin` reads passwords from stdin instead of 
   partners who need a secret key on that platform. CI reports this case as a known issue
   instead of a failure.
 
+## Security
+
+Please report vulnerabilities privately; see [SECURITY.md](SECURITY.md).
+
 ## Development
 
 ```sh
 cargo test --release   # includes GnuPG interop tests when `gpg` is installed
 ```
+
+CI runs the tests on Linux and macOS against several GnuPG versions, checks formatting, clippy,
+the minimum Rust version and known-vulnerable dependencies, and smoke-tests the Docker image.
 
 ## License
 

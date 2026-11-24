@@ -274,9 +274,23 @@ async fn forms_need_the_csrf_token_and_same_origin() {
     assert_eq!(cross_origin.status, StatusCode::FORBIDDEN);
     assert!(app.vault().customers().unwrap().is_empty());
 
+    // HTTP/2 has no Host header: the authority is part of the request URI.
+    let http2 = app
+        .send(
+            Request::post("https://localhost:8443/customers")
+                .version(axum::http::Version::HTTP_2)
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(header::ORIGIN, "https://localhost:8443")
+                .header(header::COOKIE, &session.cookie)
+                .body(Body::from(format!("_csrf={}&name=Globex", session.csrf)))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(http2.status, StatusCode::SEE_OTHER, "{}", http2.body);
+
     let ok = app.submit("/customers", &session, "name=ACME").await;
     assert_eq!(ok.status, StatusCode::SEE_OTHER);
-    assert_eq!(app.vault().customers().unwrap().len(), 1);
+    assert_eq!(app.vault().customers().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -387,6 +401,29 @@ async fn customer_and_key_lifecycle() {
     assert!(certs[0].is_locked());
     certs[0].unlock("export-passphrase").unwrap();
 
+    // Revoke, with confirmation.
+    let revoke = format!("/keys/{}/revoke", key.fingerprint);
+    let refused = app
+        .follow(
+            app.submit(&revoke, &session, "reason=retired").await,
+            &session,
+        )
+        .await;
+    assert!(refused.body.contains("tick the confirmation box"));
+    let revoked = app
+        .follow(
+            app.submit(&revoke, &session, "reason=retired&comment=test&confirm=yes")
+                .await,
+            &session,
+        )
+        .await;
+    assert!(revoked.body.contains("Revoked key"), "{}", revoked.body);
+    assert!(app.vault().find_key(&key.fingerprint).unwrap().revoked);
+    assert!(
+        !revoked.body.contains("Revoke this key permanently"),
+        "form gone"
+    );
+
     // Delete needs the confirmation box.
     let delete = format!("/keys/{}/delete", key.fingerprint);
     let refused = app
@@ -436,7 +473,11 @@ async fn keys_can_be_imported_by_upload() {
     let ok = app
         .follow(app.send(multipart("partner-pass")).await, &session)
         .await;
-    assert!(ok.body.contains("Imported Partner"), "{}", ok.body);
+    assert!(
+        ok.body.contains("Imported or updated Partner"),
+        "{}",
+        ok.body
+    );
     let keys = app.vault().keys(Some(customer)).unwrap();
     assert_eq!(keys.len(), 1);
     assert!(keys[0].has_secret);

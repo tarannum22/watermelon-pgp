@@ -1,0 +1,66 @@
+# watermelon-pgp as a systemd service. See docs/deployment.md for the full walkthrough.
+#
+#   sudo useradd --system --home-dir /var/lib/watermelon --shell /usr/sbin/nologin watermelon
+#   sudo install -m 0755 watermelon /usr/local/bin/watermelon
+#   sudo install -d -o watermelon -g watermelon -m 0700 /var/lib/watermelon /etc/watermelon/key
+#   sudo install -m 0640 watermelon.env /etc/watermelon/
+#   sudo -u watermelon env WATERMELON_DATA_DIR=/var/lib/watermelon \
+#       WATERMELON_MASTER_KEY_FILE=/etc/watermelon/key/master.key watermelon init
+#   sudo install -m 0644 watermelon.service /etc/systemd/system/
+#   sudo systemctl edit watermelon    # add ReadWritePaths= for your job folders
+#   sudo systemctl enable --now watermelon
+
+[Unit]
+Description=watermelon-pgp: OpenPGP keys and folder encryption jobs
+Documentation=https://github.com/tarannum22/watermelon-pgp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=watermelon
+Group=watermelon
+Environment=WATERMELON_DATA_DIR=/var/lib/watermelon
+EnvironmentFile=-/etc/watermelon/watermelon.env
+ExecStart=/usr/local/bin/watermelon serve
+# Reloads the TLS certificate (e.g. after renewal); everything else needs a restart.
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+# Running jobs finish their current file before the process exits.
+TimeoutStopSec=5min
+
+StateDirectory=watermelon
+StateDirectoryMode=0700
+# Output files readable by the group (e.g. the SFTP users' group), not by everyone.
+UMask=0027
+
+# Sandboxing. The service may only write to its state directory and the job folders you add
+# with ReadWritePaths= (systemctl edit watermelon), e.g.:
+#   [Service]
+#   ReadWritePaths=/srv/sftp
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+
+[Install]
+WantedBy=multi-user.target

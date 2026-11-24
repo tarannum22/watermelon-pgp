@@ -12,7 +12,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use watermelon_pgp_core::{
     audit::Actor,
-    crypto::{self, Algorithm, Container},
+    crypto::{self, Algorithm, Container, RevocationReason},
     envelope::MasterKey,
     jobs::{Job, JobKind, JobSpec, VerifyPolicy},
     store::KeyRecord,
@@ -38,8 +38,18 @@ struct Cli {
     /// Read the password or passphrase from the first line of stdin instead of prompting.
     #[arg(long, global = true)]
     passphrase_stdin: bool,
+    /// Log format for `serve` and `run`. Levels are set with WATERMELON_LOG (default: info).
+    #[arg(long, global = true, env = "WATERMELON_LOG_FORMAT", value_enum, default_value_t = LogFormat::Text)]
+    log_format: LogFormat,
     #[command(subcommand)]
     command: Command,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum LogFormat {
+    Text,
+    /// One JSON object per line, for log collectors.
+    Json,
 }
 
 #[derive(Subcommand)]
@@ -72,11 +82,18 @@ enum Command {
         /// Jobs processed in parallel [default: number of CPUs].
         #[arg(long)]
         workers: Option<usize>,
-        /// Mark the session cookie Secure. Set this when users reach the UI over HTTPS.
+        /// Mark the session cookie Secure. Set this when a reverse proxy terminates HTTPS;
+        /// implied by --tls-cert.
         #[arg(long, env = "WATERMELON_SECURE_COOKIES")]
         secure_cookies: bool,
+        /// Serve HTTPS with this PEM certificate chain. Reloaded on SIGHUP.
+        #[arg(long, env = "WATERMELON_TLS_CERT", requires = "tls_key")]
+        tls_cert: Option<PathBuf>,
+        /// PEM private key for --tls-cert.
+        #[arg(long, env = "WATERMELON_TLS_KEY", requires = "tls_cert")]
+        tls_key: Option<PathBuf>,
     },
-    /// Run all enabled jobs until interrupted (Ctrl-C), without the web UI.
+    /// Run all enabled jobs until stopped (Ctrl-C or SIGTERM), without the web UI.
     Run {
         /// Jobs processed in parallel [default: number of CPUs].
         #[arg(long)]
@@ -224,6 +241,23 @@ enum KeyCommand {
     },
     /// Delete a key (it stays in the database for the audit trail).
     Delete { key: String },
+    /// Revoke one of our keys. Give partners the new public key (`key export`) afterwards.
+    Revoke {
+        key: String,
+        #[arg(long, value_enum, default_value_t = ReasonArg::Unspecified)]
+        reason: ReasonArg,
+        /// Free-text explanation stored in the revocation.
+        #[arg(long, default_value = "")]
+        comment: String,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ReasonArg {
+    Unspecified,
+    Superseded,
+    Compromised,
+    Retired,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -245,6 +279,9 @@ fn main() -> Result<()> {
     if let Command::Init = cli.command {
         return init(&cli.data_dir, &master_key_path, prompt);
     }
+    if matches!(cli.command, Command::Serve { .. } | Command::Run { .. }) {
+        init_logging(cli.log_format);
+    }
     let vault = Vault::open(
         &cli.data_dir.join(vault::DB_FILE),
         MasterKey::load(&master_key_path)?,
@@ -254,10 +291,56 @@ fn main() -> Result<()> {
             bind,
             workers,
             secure_cookies,
-        } => serve(vault, bind, workers, secure_cookies),
+            tls_cert,
+            tls_key,
+        } => {
+            let tls = tls_cert.zip(tls_key);
+            serve(vault, bind, workers, secure_cookies, tls)
+        }
         Command::Run { workers } => run_engine(vault, workers),
         Command::Job(JobCommand::RunOnce { job, settle }) => run_once(vault, &job, settle),
         command => run(&vault, command, prompt),
+    }
+}
+
+fn init_logging(format: LogFormat) {
+    let filter = tracing_subscriber::EnvFilter::try_from_env("WATERMELON_LOG")
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let builder = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
+        .with_target(false);
+    match format {
+        LogFormat::Text => builder.init(),
+        LogFormat::Json => builder.json().flatten_event(true).init(),
+    }
+}
+
+/// Log a job pass that did something or went wrong; quiet passes stay quiet.
+fn log_pass(job: &str, report: &PassReport) {
+    let PassReport {
+        processed,
+        failed,
+        error,
+        paused,
+        removed_temp_files,
+    } = report;
+    if *removed_temp_files > 0 {
+        tracing::warn!(
+            job,
+            removed_temp_files,
+            "removed temp files left behind by an earlier crash"
+        );
+    }
+    if let Some(reason) = paused {
+        tracing::warn!(job, reason, "job paused");
+    } else if let Some(error) = error {
+        tracing::error!(job, processed, failed, error, "job pass failed");
+    } else if *failed > 0 {
+        tracing::warn!(job, processed, failed, "files failed");
+    } else if *processed > 0 {
+        tracing::info!(job, processed, "files processed");
     }
 }
 
@@ -270,11 +353,9 @@ fn run_engine(vault: Vault, workers: Option<usize>) -> Result<()> {
         ctrlc::set_handler(move || stop.store(true, Ordering::Relaxed))
             .context("installing Ctrl-C handler")?;
     }
-    eprintln!("Running {active} active job(s) with {workers} worker(s). Ctrl-C to stop.");
-    Engine::new(Arc::new(Mutex::new(vault)), workers).run(&stop, |job, report| {
-        eprintln!("{}  {job}: {}", format_time(now()), describe_pass(report));
-    });
-    eprintln!("Stopped.");
+    tracing::info!(active, workers, "running jobs; Ctrl-C to stop");
+    Engine::new(Arc::new(Mutex::new(vault)), workers).run(&stop, log_pass);
+    tracing::info!("stopped");
     Ok(())
 }
 
@@ -283,52 +364,94 @@ fn serve(
     bind: std::net::SocketAddr,
     workers: Option<usize>,
     secure_cookies: bool,
+    tls_files: Option<(PathBuf, PathBuf)>,
 ) -> Result<()> {
     let workers = workers.unwrap_or_else(Engine::default_workers);
     let vault = Arc::new(Mutex::new(vault));
     let stop = Arc::new(AtomicBool::new(false));
     let runtime = tokio::runtime::Runtime::new().context("starting the async runtime")?;
-    let listener = runtime
-        .block_on(tokio::net::TcpListener::bind(bind))
-        .with_context(|| format!("listening on {bind}"))?;
+    let tls = match &tls_files {
+        Some((cert, key)) => Some(
+            runtime
+                .block_on(watermelon_pgp_web::Tls::load(cert, key))
+                .with_context(|| {
+                    format!(
+                        "loading TLS certificate {} and key {}",
+                        cert.display(),
+                        key.display()
+                    )
+                })?,
+        ),
+        None => None,
+    };
+    let listener =
+        std::net::TcpListener::bind(bind).with_context(|| format!("listening on {bind}"))?;
 
     let engine = {
         let engine = Engine::new(Arc::clone(&vault), workers);
         let stop = Arc::clone(&stop);
         std::thread::Builder::new()
             .name("jobs".into())
-            .spawn(move || {
-                engine.run(&stop, |job, report| {
-                    eprintln!("{}  {job}: {}", format_time(now()), describe_pass(report));
-                });
-            })
+            .spawn(move || engine.run(&stop, log_pass))
             .context("starting the job engine")?
     };
 
-    eprintln!("Serving http://{bind} with {workers} job worker(s). Ctrl-C to stop.");
-    if !bind.ip().is_loopback() {
-        eprintln!(
-            "WARNING: listening on a non-loopback address. Put a TLS-terminating reverse proxy \
-             in front and pass --secure-cookies; the UI itself speaks plain HTTP."
+    let scheme = if tls.is_some() { "https" } else { "http" };
+    tracing::info!(
+        url = format!("{scheme}://{bind}"),
+        workers,
+        "serving; Ctrl-C to stop"
+    );
+    if tls.is_none() && !bind.ip().is_loopback() && !secure_cookies {
+        tracing::warn!(
+            "listening on a non-loopback address over plain HTTP: use --tls-cert/--tls-key, or \
+             put a TLS-terminating reverse proxy in front and pass --secure-cookies"
         );
     }
+    // Always handle SIGHUP (systemctl reload): its default action would end the process.
+    #[cfg(unix)]
+    runtime.spawn(reload_tls_on_sighup(tls.clone().zip(tls_files)));
     let state = watermelon_pgp_web::AppState::new(
         Arc::clone(&vault),
-        watermelon_pgp_web::Config { secure_cookies },
+        watermelon_pgp_web::Config {
+            secure_cookies: secure_cookies || tls.is_some(),
+            hsts: tls.is_some(),
+        },
     );
     let served = runtime.block_on(watermelon_pgp_web::serve(
         state,
         listener,
+        tls,
         shutdown_signal(),
     ));
 
-    eprintln!("Stopping; waiting for running jobs to finish their current file…");
+    tracing::info!("stopping; running jobs finish their current file first");
     stop.store(true, Ordering::Relaxed);
     if engine.join().is_err() {
         bail!("the job engine panicked");
     }
-    eprintln!("Stopped.");
+    tracing::info!("stopped");
     Ok(served?)
+}
+
+#[cfg(unix)]
+async fn reload_tls_on_sighup(tls: Option<(watermelon_pgp_web::Tls, (PathBuf, PathBuf))>) {
+    use tokio::signal::unix::{SignalKind, signal};
+    let Ok(mut hangups) = signal(SignalKind::hangup()) else {
+        return;
+    };
+    while hangups.recv().await.is_some() {
+        let Some((tls, (cert, key))) = &tls else {
+            tracing::info!("SIGHUP: no TLS certificate to reload");
+            continue;
+        };
+        match tls.reload(cert, key).await {
+            Ok(()) => tracing::info!("TLS certificate reloaded"),
+            Err(e) => {
+                tracing::error!(error = %e, "TLS certificate reload failed; keeping the old one")
+            }
+        }
+    }
 }
 
 /// Resolves on Ctrl-C, or SIGTERM (systemd, Docker).
@@ -441,7 +564,7 @@ fn run(vault: &Vault, command: Command, prompt: Prompt) -> Result<()> {
             };
             for key in vault.import_keys(Actor::Cli, customer.id, &data, passphrase.as_deref())? {
                 println!(
-                    "Imported {} {} ({})",
+                    "Imported or updated {} {} ({})",
                     key.fingerprint,
                     key.label(),
                     if key.has_secret { "secret" } else { "public" }
@@ -467,6 +590,24 @@ fn run(vault: &Vault, command: Command, prompt: Prompt) -> Result<()> {
                 Some(path) => write_new_file(&path, armored.as_bytes(), secret)?,
                 None => std::io::stdout().write_all(armored.as_bytes())?,
             }
+        }
+        Command::Key(KeyCommand::Revoke {
+            key,
+            reason,
+            comment,
+        }) => {
+            let reason = match reason {
+                ReasonArg::Unspecified => RevocationReason::Unspecified,
+                ReasonArg::Superseded => RevocationReason::Superseded,
+                ReasonArg::Compromised => RevocationReason::Compromised,
+                ReasonArg::Retired => RevocationReason::Retired,
+            };
+            let key = vault.revoke_key(Actor::Cli, &key, reason, &comment)?;
+            println!("Revoked {} {}", key.fingerprint, key.label());
+            eprintln!(
+                "Send partners the updated public key: watermelon key export {}",
+                key.fingerprint
+            );
         }
         Command::Key(KeyCommand::Delete { key }) => {
             let key = vault.delete_key(Actor::Cli, &key)?;
@@ -651,12 +792,6 @@ fn job_state(job: &Job) -> String {
         (None, true) => "enabled".into(),
         (None, false) => "disabled".into(),
     }
-}
-
-fn now() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs() as i64)
 }
 
 fn print_keys(keys: &[KeyRecord]) {

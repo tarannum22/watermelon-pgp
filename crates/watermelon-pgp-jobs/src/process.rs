@@ -9,6 +9,7 @@ use std::{
     io::{self, BufReader, BufWriter, Read, Write},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, SystemTime},
 };
 
 use sha2::{Digest, Sha256};
@@ -20,6 +21,9 @@ use watermelon_pgp_core::{
 /// Extensions a decrypt job strips from the input name.
 const ENCRYPTED_EXTENSIONS: &[&str] = &[".pgp", ".gpg", ".asc"];
 const TEMP_SUFFIX: &str = ".watermelon-tmp";
+/// A temp file nobody has written to for this long was left behind by a crash. Files being
+/// written are touched continuously, so this never catches one in use.
+pub const STALE_TEMP_AFTER: Duration = Duration::from_secs(15 * 60);
 
 /// Key material a job needs, loaded once per polling pass.
 #[derive(Default)]
@@ -107,6 +111,31 @@ pub fn sha256_of(path: &Path) -> io::Result<String> {
 }
 
 /// Move `file` into `dir` (created if needed), keeping its name unless that is taken.
+/// Remove our temp files in `dir` that haven't been modified for `older_than`: leftovers of a
+/// crash or power loss. They are hidden, but an SFTP pickup might still copy them.
+pub fn remove_stale_temp_files(dir: &Path, older_than: Duration) -> io::Result<Vec<PathBuf>> {
+    let now = SystemTime::now();
+    let mut removed = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !(name.starts_with('.') && name.ends_with(TEMP_SUFFIX)) {
+            continue;
+        }
+        let meta = entry.metadata()?;
+        let idle = meta
+            .modified()
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok());
+        if meta.file_type().is_file() && idle.is_some_and(|idle| idle >= older_than) {
+            fs::remove_file(entry.path())?;
+            removed.push(entry.path());
+        }
+    }
+    Ok(removed)
+}
+
 pub fn move_into(file: &Path, dir: &Path) -> io::Result<PathBuf> {
     fs::create_dir_all(dir)?;
     let name = file
@@ -307,6 +336,37 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn stale_temp_files_from_a_crash_are_removed() {
+        let d = dirs();
+        let hour_ago = SystemTime::now() - Duration::from_secs(3600);
+        let make = |name: &str, modified: SystemTime| {
+            let file = File::create(d.output.join(name)).unwrap();
+            file.set_modified(modified).unwrap();
+        };
+        make(".a.csv.4242-0.watermelon-tmp", hour_ago);
+        make(".b.csv.4242-1.watermelon-tmp", SystemTime::now());
+        make(".profile", hour_ago);
+        make("report.watermelon-tmp", hour_ago);
+
+        let removed = remove_stale_temp_files(&d.output, STALE_TEMP_AFTER).unwrap();
+        assert_eq!(removed, vec![d.output.join(".a.csv.4242-0.watermelon-tmp")]);
+        let mut left: Vec<_> = fs::read_dir(&d.output)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            [
+                ".b.csv.4242-1.watermelon-tmp",
+                ".profile",
+                "report.watermelon-tmp"
+            ],
+            "files in use and other people's files are left alone"
+        );
     }
 
     #[test]

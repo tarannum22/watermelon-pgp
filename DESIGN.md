@@ -24,11 +24,17 @@ config export/import, Windows as a first-class platform.
   - `watermelon-pgp` — the `watermelon` binary: CLI, and `serve` for web UI + job engine.
 - Single binary, embedded assets. Linux primary, macOS for development; Windows later, so
   Unix-specific code stays behind a small `platform` module.
-- Storage: SQLite in the data dir. A small TOML config / CLI flags hold only process-level
-  settings (bind address, data dir, master key path, TLS cert/key). Everything else lives in the
-  DB and is managed through the GUI.
+- Storage: SQLite in the data dir. Process-level settings (bind address, data dir, master key
+  path, TLS cert/key, log format) are CLI flags, each with a `WATERMELON_*` environment variable.
+  Everything else lives in the DB and is managed through the GUI.
+  - *Changed from the original plan of a TOML config file:* every deployment target already has
+    a natural way to set environment variables (systemd `EnvironmentFile=`, Docker `-e`/`--env-file`),
+    and one mechanism is easier to document and reason about than two with precedence rules.
 - Web: axum + server-rendered templates + htmx. No JS build step.
-- Runs in the foreground (`watermelon serve`); systemd and Docker examples are documented.
+- Runs in the foreground (`watermelon serve`); a sandboxed systemd unit
+  (`contrib/systemd/`) and a Docker image (non-root, uid 10001) are provided, see
+  `docs/deployment.md`. SIGTERM lets running jobs finish their current file; SIGHUP reloads
+  the TLS certificate.
 - License: MIT OR Apache-2.0.
 
 ## Domain
@@ -79,6 +85,11 @@ config export/import, Windows as a first-class platform.
   - Encryption: **SEIPD v1** by default; SEIPD v2 (AEAD) is a per-job opt-in.
 - Key operations in v1: generate, import (public and secret), export, details (fingerprint, user
   IDs, expiry, subkeys), revoke, expiry warnings (30 days).
+- **Revocation:** our own keys are revoked with a self-signed key revocation signature carrying a
+  reason; partners learn about it from the re-exported public key. A revoked key still decrypts
+  old files. Re-importing a partner's key updates the stored copy (new expiry, revocation), but
+  revocations already known are always kept, so a stale copy can never un-revoke a key. Keys we
+  hold the secret for are only changed here, never by import.
 - A key referenced by any job cannot be deleted. Deletion is soft, so audit entries keep resolving.
 - An expired or revoked recipient key pauses the job with a visible error.
 
@@ -100,6 +111,10 @@ config export/import, Windows as a first-class platform.
 - **After success:** source moves to the job's `processed/` folder (default) or is deleted.
 - **After failure:** source moves to the job's `failed/` folder; the error is in the audit log and on
   the job page. No automatic retries; retry is a button or moving the file back.
+- **Crash recovery:** a crash mid-file leaves at most a hidden `.<name>.<pid>-<n>.watermelon-tmp`
+  file in the output folder; the source stays in the input folder and is processed again.
+  Temp files untouched for 15 minutes are removed on the next pass (by age, not PID: in a
+  container the PID is the same after every restart).
 - Existing output files are never overwritten — a name collision is a failure. Publishing uses a
   hard link (atomic, fails if the name exists), falling back to a checked rename on filesystems
   without hard links. Archived sources whose name is taken get a `.1`, `.2`, … suffix.
@@ -115,14 +130,20 @@ Hash-chaining for tamper evidence comes later.
 
 ## Operations
 
-- `/healthz` endpoint and structured JSON logs.
-- CLI: `watermelon init`, `watermelon serve`, `watermelon backup`, plus key commands.
+- `/healthz` endpoint (no login; checks the database).
+- Logs to stderr, text or JSON (`--log-format`), level via `WATERMELON_LOG`: page requests,
+  job passes that did something, pauses and errors. The audit log remains the record of who did
+  what.
+- TLS: rustls with the `ring` provider (no C/C++ build dependencies beyond a C compiler).
+- CLI: `watermelon init`, `watermelon serve`, `watermelon backup`, plus key and job commands.
 
 ## Quality gates (CI)
 
 - GnuPG interop both directions: Ed25519/Cv25519 and RSA-4096, binary and armored, signed and unsigned.
 - Large-file streaming tests, crash-during-write tests, tampered-file tests (a tampered SEIPD v1
   file must produce no output and land in `failed/`).
+- Minimum supported Rust version (1.89) builds; `cargo audit` finds no known-vulnerable
+  dependencies; the Docker image builds and passes a smoke test.
 
 ## Milestones
 
@@ -130,4 +151,4 @@ Hash-chaining for tamper evidence comes later.
    CLI key commands (`gen` / `import` / `export` / `list`).
 2. ✅ **Job engine** — polling, stability check, encrypt/decrypt pipeline, processed/failed handling.
 3. ✅ **Web UI** — auth, customers, keys, jobs, audit view, dashboard.
-4. **Hardening & release** — TLS, security headers, interop CI, Docker image, docs, first release.
+4. ✅ **Hardening & release** — TLS, security headers, interop CI, Docker image, docs, first release.

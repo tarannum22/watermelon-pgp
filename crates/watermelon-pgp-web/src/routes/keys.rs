@@ -7,7 +7,7 @@ use maud::{Markup, html};
 use serde::Deserialize;
 use watermelon_pgp_core::{
     audit::{Actor, Filter},
-    crypto::{self, Algorithm},
+    crypto::{self, Algorithm, RevocationReason},
     store::{Customer, KeyRecord},
 };
 use zeroize::Zeroizing;
@@ -184,6 +184,32 @@ pub async fn show(
                 }
             }
 
+            @if key.has_secret && !key.revoked {
+                section.card.danger {
+                    h2 { "Revoke key" }
+                    p {
+                        "Revoking tells everyone who has the public key to stop using it. It cannot be undone. "
+                        "Jobs encrypting to or signing with this key pause; it can still decrypt older files. "
+                        "Afterwards, send partners the public key again so they learn about the revocation."
+                    }
+                    form.stack method="post" action={ (base) "/revoke" } {
+                        (views::csrf_field(&auth.csrf))
+                        label {
+                            "Reason"
+                            select name="reason" {
+                                option value="superseded" { "Replaced by a new key" }
+                                option value="retired" { "No longer used" }
+                                option value="compromised" { "Compromised (secret key leaked)" }
+                                option value="unspecified" { "No reason given" }
+                            }
+                        }
+                        label { "Comment (optional)" input type="text" name="comment" maxlength="500"; }
+                        (views::confirm_box("Revoke this key permanently"))
+                        button.danger type="submit" { "Revoke" }
+                    }
+                }
+            }
+
             section {
                 h2 { "Recent activity" }
                 (views::audit_table(&events, &names))
@@ -204,6 +230,46 @@ pub async fn show(
             }
         },
     ))
+}
+
+#[derive(Deserialize)]
+pub struct RevokeForm {
+    #[serde(default)]
+    confirm: String,
+    reason: String,
+    #[serde(default)]
+    comment: String,
+}
+
+pub async fn revoke(
+    State(state): State<AppState>,
+    Path(fpr): Path<String>,
+    posted: Posted<RevokeForm>,
+) -> Redirect {
+    let back = key_url(&fpr);
+    let form = posted.form;
+    let outcome = async {
+        Confirmed {
+            confirm: form.confirm,
+        }
+        .check()?;
+        let reason = match form.reason.as_str() {
+            "superseded" => RevocationReason::Superseded,
+            "retired" => RevocationReason::Retired,
+            "compromised" => RevocationReason::Compromised,
+            "unspecified" => RevocationReason::Unspecified,
+            other => return Err(AppError::bad_request(format!("unknown reason {other:?}"))),
+        };
+        let key = state
+            .vault(move |vault| vault.revoke_key(Actor::Admin, &fpr, reason, &form.comment))
+            .await?;
+        Ok(format!(
+            "Revoked key {}. Download its public key again and send it to partners.",
+            key.label()
+        ))
+    }
+    .await;
+    state.done(&posted.auth, &back, outcome)
 }
 
 #[derive(Deserialize)]
@@ -321,7 +387,7 @@ async fn import_upload(
             )
         })
         .collect();
-    Ok(format!("Imported {}.", summary.join(", ")))
+    Ok(format!("Imported or updated {}.", summary.join(", ")))
 }
 
 pub async fn export_public(

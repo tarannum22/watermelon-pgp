@@ -319,7 +319,7 @@ pub fn audit_table(events: &[AuditEvent], names: &impl AuditNames) -> Markup {
 fn action_class(action: &str) -> &'static str {
     match action {
         "file.failed" | "admin.login_failed" | "job.pause" => "row-bad",
-        "key.export_secret" | "key.delete" | "job.delete" => "row-warn",
+        "key.export_secret" | "key.delete" | "key.revoke" | "job.delete" => "row-warn",
         _ => "",
     }
 }

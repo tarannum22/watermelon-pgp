@@ -1,0 +1,17 @@
+# cargo audit configuration. Every ignored advisory needs a reason here and an entry in the
+# README's "Known issues"; remove it as soon as a fixed version can be used.
+
+[advisories]
+ignore = [
+    # rsa 0.9: Marvin attack, timing side channel in RSA private-key operations.
+    # Pulled in by pgp (rPGP) 0.21.1, the latest release; no fixed rsa version is usable yet.
+    # Exploiting it needs many precisely timed decryptions or signatures on attacker-chosen
+    # input. Jobs decrypt on a polling schedule (>= 5 s) and only move files around, which is
+    # not a usable timing oracle. Affects only RSA keys; the default keys are Curve25519.
+    "RUSTSEC-2023-0071",
+    # crypto-bigint 0.5: timing variability in "constant-time" operations.
+    # Pulled in by pgp 0.21.1 through elliptic-curve, used only for NIST P-curves, brainpool,
+    # secp256k1 and X448 keys, which watermelon never generates (only imports, if a partner
+    # sends one). Same timing-oracle argument as above.
+    "RUSTSEC-2026-0387",
+]

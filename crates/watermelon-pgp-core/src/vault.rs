@@ -12,7 +12,7 @@ use argon2::{
 use crate::{
     Error, Result,
     audit::{self, Action, Actor, Entry},
-    crypto::{self, Algorithm, Cert, SignedPublicKey, SignedSecretKey},
+    crypto::{self, Algorithm, Cert, RevocationReason, SignedPublicKey, SignedSecretKey},
     envelope::MasterKey,
     platform,
     store::{self, Customer, KeyRecord, KeyRow, Store},
@@ -236,37 +236,36 @@ impl Vault {
             let mut imported = Vec::new();
             for cert in &certs {
                 let info = cert.info();
-                if let Some(existing) = store::key_by_fingerprint(tx, &info.fingerprint)? {
-                    let adds_secret = info.has_secret && !existing.has_secret;
-                    if existing.deleted_at.is_none() && existing.customer_id != customer_id {
+                let existing = store::key_by_fingerprint(tx, &info.fingerprint)?
+                    .filter(|existing| existing.deleted_at.is_none());
+                let (record, action, detail) = match existing {
+                    Some(existing) if existing.customer_id != customer_id => {
                         return Err(Error::Conflict(format!(
                             "key {} already belongs to customer {:?}",
                             info.fingerprint, existing.customer_name
                         )));
                     }
-                    if existing.deleted_at.is_none() && !adds_secret {
-                        return Err(Error::Conflict(format!(
-                            "key {} is already imported",
-                            info.fingerprint
-                        )));
+                    Some(existing) if !(info.has_secret && !existing.has_secret) => {
+                        let (record, detail) = self.refresh_public(tx, &existing, cert)?;
+                        (record, Action::KeyUpdate, detail)
                     }
-                }
-                let record = self.save(tx, customer_id, cert)?;
+                    _ => {
+                        let record = self.save(tx, customer_id, cert)?;
+                        let kind = if record.has_secret {
+                            "secret"
+                        } else {
+                            "public"
+                        };
+                        let detail = format!("{} {} ({kind})", record.algorithm, record.label());
+                        (record, Action::KeyImport, detail)
+                    }
+                };
                 audit::record(
                     tx,
-                    &Entry::new(actor, Action::KeyImport)
+                    &Entry::new(actor, action)
                         .customer(customer_id)
                         .key(&record.fingerprint)
-                        .detail(format!(
-                            "{} {} ({})",
-                            record.algorithm,
-                            record.label(),
-                            if record.has_secret {
-                                "secret"
-                            } else {
-                                "public"
-                            }
-                        )),
+                        .detail(detail),
                     now(),
                 )?;
                 imported.push(record);
@@ -307,6 +306,92 @@ impl Vault {
             now(),
         )?;
         Ok(armored)
+    }
+
+    /// Revoke one of our keys. Jobs encrypting to or signing with it pause; it can still decrypt
+    /// files that were encrypted to it before. Partners learn about it from its public key.
+    pub fn revoke_key(
+        &self,
+        actor: Actor,
+        fingerprint: &str,
+        reason: RevocationReason,
+        comment: &str,
+    ) -> Result<KeyRecord> {
+        let record = self.find_key(fingerprint)?;
+        if !record.has_secret {
+            return Err(Error::Invalid(format!(
+                "key {} is not ours (no secret key): import the revoked public key its owner \
+                 publishes instead",
+                record.fingerprint
+            )));
+        }
+        if record.revoked {
+            return Err(Error::Conflict(format!(
+                "key {} is already revoked",
+                record.fingerprint
+            )));
+        }
+        let mut key = self.secret_key(&record.fingerprint)?;
+        crypto::revoke(&mut key, reason, comment.trim())?;
+        self.store.transaction(|tx| {
+            let updated = self.save(tx, record.customer_id, &Cert::Secret(key))?;
+            let mut detail = format!("{reason:?}");
+            if !comment.trim().is_empty() {
+                detail = format!("{detail}: {}", comment.trim());
+            }
+            audit::record(
+                tx,
+                &Entry::new(actor, Action::KeyRevoke)
+                    .customer(record.customer_id)
+                    .key(&record.fingerprint)
+                    .detail(detail),
+                now(),
+            )?;
+            Ok(updated)
+        })
+    }
+
+    /// Update a stored key from a newer copy of it, e.g. one with a later expiry date or a
+    /// revocation. Only for keys we hold no secret for; our own keys are managed here.
+    fn refresh_public(
+        &self,
+        conn: &rusqlite::Connection,
+        existing: &KeyRecord,
+        cert: &Cert,
+    ) -> Result<(KeyRecord, String)> {
+        if existing.has_secret {
+            return Err(Error::Conflict(format!(
+                "key {} is already imported",
+                existing.fingerprint
+            )));
+        }
+        let stored = crypto::public_from_bytes(&store::public_cert(conn, &existing.fingerprint)?)?;
+        let merged = Cert::Public(crypto::merge_public(&stored, cert.public())?);
+        if merged.to_bytes()? == Cert::Public(stored).to_bytes()? {
+            return Err(Error::Conflict(format!(
+                "key {} is already imported and unchanged",
+                existing.fingerprint
+            )));
+        }
+        let record = self.save(conn, existing.customer_id, &merged)?;
+        let mut changes = Vec::new();
+        if record.revoked && !existing.revoked {
+            changes.push("now revoked".to_owned());
+        }
+        if record.expires_at != existing.expires_at {
+            changes.push(format!(
+                "expiry {} -> {}",
+                date(existing.expires_at),
+                date(record.expires_at)
+            ));
+        }
+        if record.user_ids != existing.user_ids {
+            changes.push(format!("user IDs: {}", record.user_ids.join(", ")));
+        }
+        if changes.is_empty() {
+            changes.push("signatures updated".into());
+        }
+        Ok((record, changes.join("; ")))
     }
 
     pub fn delete_key(&self, actor: Actor, fingerprint: &str) -> Result<KeyRecord> {
@@ -453,6 +538,12 @@ impl Vault {
         store::key_by_fingerprint(conn, &info.fingerprint)?
             .ok_or_else(|| Error::NotFound(info.fingerprint))
     }
+}
+
+/// `2026-11-24`, or `never`.
+fn date(unix: Option<i64>) -> String {
+    unix.and_then(|t| time::OffsetDateTime::from_unix_timestamp(t).ok())
+        .map_or_else(|| "never".into(), |t| t.date().to_string())
 }
 
 fn secret_context(fingerprint: &str) -> String {
@@ -608,6 +699,75 @@ mod tests {
             .unwrap();
         assert!(second[0].has_secret);
         assert_eq!(first[0].id, second[0].id);
+    }
+
+    #[test]
+    fn revoking_our_key_and_learning_about_a_partners_revocation() {
+        let (_dir, ours) = vault();
+        let acme = ours.create_customer(Actor::Cli, "ACME").unwrap().id;
+        let key = ours
+            .generate_key(Actor::Cli, acme, "ACME", Algorithm::Curve25519)
+            .unwrap();
+        let stale_public = ours.export_public(Actor::Cli, &key.fingerprint).unwrap();
+
+        let revoked = ours
+            .revoke_key(
+                Actor::Admin,
+                &key.fingerprint,
+                RevocationReason::Retired,
+                "end of contract",
+            )
+            .unwrap();
+        assert!(revoked.revoked && revoked.has_secret);
+        assert!(crate::jobs::usable(&revoked).is_err());
+        assert!(matches!(
+            ours.revoke_key(
+                Actor::Admin,
+                &key.fingerprint,
+                RevocationReason::Retired,
+                ""
+            ),
+            Err(Error::Conflict(_))
+        ));
+        let event = ours.audit_events(1).unwrap().remove(0);
+        assert_eq!(event.action, "key.revoke");
+        assert_eq!(event.detail, "Retired: end of contract");
+        // The secret key still works for old files.
+        ours.secret_key(&key.fingerprint).unwrap();
+
+        // A partner who has our old public key imports the revoked one.
+        let (_dir2, partner) = vault();
+        let them = partner.create_customer(Actor::Cli, "Supplier").unwrap().id;
+        partner
+            .import_keys(Actor::Cli, them, stale_public.as_bytes(), None)
+            .unwrap();
+        assert!(matches!(
+            partner.revoke_key(
+                Actor::Admin,
+                &key.fingerprint,
+                RevocationReason::Retired,
+                ""
+            ),
+            Err(Error::Invalid(_))
+        ));
+        let fresh = ours.export_public(Actor::Cli, &key.fingerprint).unwrap();
+        let updated = partner
+            .import_keys(Actor::Cli, them, fresh.as_bytes(), None)
+            .unwrap()
+            .remove(0);
+        assert!(updated.revoked);
+        let event = partner.audit_events(1).unwrap().remove(0);
+        assert_eq!(
+            (event.action.as_str(), event.detail.as_str()),
+            ("key.update", "now revoked")
+        );
+
+        // Importing the stale copy again changes nothing: revocations are never dropped.
+        assert!(matches!(
+            partner.import_keys(Actor::Cli, them, stale_public.as_bytes(), None),
+            Err(Error::Conflict(_))
+        ));
+        assert!(partner.find_key(&key.fingerprint).unwrap().revoked);
     }
 
     #[test]

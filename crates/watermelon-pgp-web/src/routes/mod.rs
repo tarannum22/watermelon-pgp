@@ -42,6 +42,7 @@ pub fn router() -> Router<AppState> {
         .route("/keys/{fpr}/public", post(keys::export_public))
         .route("/keys/{fpr}/secret", post(keys::export_secret))
         .route("/keys/{fpr}/delete", post(keys::delete))
+        .route("/keys/{fpr}/revoke", post(keys::revoke))
         .route("/jobs", get(jobs::list).post(jobs::create))
         .route("/jobs/new", get(jobs::new_form))
         .route("/jobs/{id}", get(jobs::show).post(jobs::update))
@@ -86,7 +87,7 @@ pub struct Empty {}
 #[derive(Deserialize)]
 pub struct Confirmed {
     #[serde(default)]
-    confirm: String,
+    pub confirm: String,
 }
 
 impl Confirmed {

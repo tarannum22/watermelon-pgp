@@ -33,6 +33,8 @@ pub struct PassReport {
     pub error: Option<String>,
     /// Set when the pass paused the job.
     pub paused: Option<String>,
+    /// Temp files left in the output folder by an earlier crash, now removed.
+    pub removed_temp_files: usize,
 }
 
 /// Run one polling pass of a job: scan its input folder and process every settled file.
@@ -58,6 +60,19 @@ pub fn run_pass(vault: &Mutex<Vault>, job_id: i64, scanner: &mut Scanner) -> Pas
             return report;
         }
     };
+
+    match process::remove_stale_temp_files(&job.spec.output_dir, process::STALE_TEMP_AFTER) {
+        Ok(removed) => report.removed_temp_files = removed.len(),
+        Err(e) => {
+            let error = format!(
+                "cleaning up temp files in {}: {e}",
+                job.spec.output_dir.display()
+            );
+            let _ = vault.lock().unwrap().record_job_run(job.id, Some(&error));
+            report.error = Some(error);
+            return report;
+        }
+    }
 
     let ready = match scanner.scan(&job.spec.input_dir) {
         Ok(ready) => ready,

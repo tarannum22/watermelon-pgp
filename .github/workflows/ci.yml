@@ -55,3 +55,38 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: gpg --version
       - run: cargo test --release
+
+  # The oldest Rust the workspace claims to support (rust-version in Cargo.toml).
+  msrv:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.89
+      - run: cargo check --workspace --all-targets --locked
+
+  # Known vulnerabilities in dependencies (RustSec advisory database).
+  audit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit
+
+  docker:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t watermelon-pgp:ci .
+      - name: Smoke test the image
+        run: |
+          echo "ci smoke test password" \
+            | docker run --rm -i -v wm-data:/data watermelon-pgp:ci --passphrase-stdin init
+          docker run -d --name wm -p 127.0.0.1:8080:8080 -v wm-data:/data watermelon-pgp:ci
+          for _ in $(seq 1 30); do curl -fsS localhost:8080/healthz && break; sleep 1; done
+          curl -fsS localhost:8080/healthz | grep -q '"ok"'
+          test "$(docker exec wm id -u)" = 10001
+          docker stop wm
+          docker logs wm
+          test "$(docker inspect wm --format '{{.State.ExitCode}}')" = 0

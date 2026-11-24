@@ -18,11 +18,11 @@ use pgp::{
         hash::HashAlgorithm,
         sym::SymmetricKeyAlgorithm,
     },
-    packet::{Signature, SignatureType},
+    packet::{RevocationCode, Signature, SignatureConfig, SignatureType, Subpacket, SubpacketData},
     ser::Serialize,
     types::{
         CompressionAlgorithm, KeyDetails, Password, PlainSecretParams, SecretParams,
-        Seipdv1ReadMode, SigningKey, VerifyingKey,
+        Seipdv1ReadMode, SigningKey, Timestamp, VerifyingKey,
     },
 };
 use rand::rngs::OsRng;
@@ -316,6 +316,57 @@ pub fn armor_secret(key: &SignedSecretKey, passphrase: &str) -> Result<String> {
 
 pub fn fingerprint(cert: &SignedPublicKey) -> String {
     format!("{:X}", cert.fingerprint())
+}
+
+/// Why a key was revoked, as recorded in the revocation signature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RevocationReason {
+    Unspecified,
+    Superseded,
+    Compromised,
+    Retired,
+}
+
+/// Revoke a key with a signature made by the key itself. The revocation travels with the
+/// public key: partners who import the new public key stop using it.
+pub fn revoke(key: &mut SignedSecretKey, reason: RevocationReason, comment: &str) -> Result<()> {
+    let code = match reason {
+        RevocationReason::Unspecified => RevocationCode::NoReason,
+        RevocationReason::Superseded => RevocationCode::KeySuperseded,
+        RevocationReason::Compromised => RevocationCode::KeyCompromised,
+        RevocationReason::Retired => RevocationCode::KeyRetired,
+    };
+    let primary = &key.primary_key;
+    let mut config = SignatureConfig::from_key(OsRng, primary, SignatureType::KeyRevocation)?;
+    config.hashed_subpackets = vec![
+        Subpacket::regular(SubpacketData::SignatureCreationTime(Timestamp::now()))?,
+        Subpacket::regular(SubpacketData::IssuerFingerprint(primary.fingerprint()))?,
+        Subpacket::regular(SubpacketData::RevocationReason(
+            code,
+            bytes::Bytes::copy_from_slice(comment.as_bytes()),
+        ))?,
+    ];
+    config.unhashed_subpackets = vec![Subpacket::regular(SubpacketData::IssuerKeyId(
+        primary.legacy_key_id(),
+    ))?];
+    let signature = config.sign_key(primary, &Password::empty(), primary.public_key())?;
+    key.details.revocation_signatures.push(signature);
+    Ok(())
+}
+
+/// Combine a newer copy of a certificate (e.g. with a later expiry, or revoked) with the stored
+/// one. Revocations we already know about are never dropped, whatever the newer copy says.
+pub fn merge_public(stored: &SignedPublicKey, newer: SignedPublicKey) -> Result<SignedPublicKey> {
+    if stored.fingerprint() != newer.fingerprint() {
+        return Err(Error::Invalid("not the same key".into()));
+    }
+    let mut merged = newer;
+    for signature in &stored.details.revocation_signatures {
+        if !merged.details.revocation_signatures.contains(signature) {
+            merged.details.revocation_signatures.push(signature.clone());
+        }
+    }
+    Ok(merged)
 }
 
 /// Options for [`encrypt`].
@@ -615,6 +666,41 @@ mod tests {
                 .get_or_init(|| generate("Recipient <r@example.com>", algorithm).unwrap())
                 .clone(),
         }
+    }
+
+    #[test]
+    fn revocation_is_signed_kept_and_never_merged_away() {
+        let mut key = generate("Old <old@example.com>", Algorithm::Curve25519).unwrap();
+        let unrevoked = key.to_public_key();
+        revoke(
+            &mut key,
+            RevocationReason::Superseded,
+            "replaced by a new key",
+        )
+        .unwrap();
+
+        let public = key.to_public_key();
+        public
+            .verify_bindings()
+            .expect("revocation signature verifies");
+        let info = Cert::Public(public.clone()).info();
+        assert!(info.revoked);
+
+        // Survives export and re-import.
+        let armored = armor_public(&public).unwrap();
+        let reparsed = parse_certs(armored.as_bytes()).unwrap().remove(0);
+        assert!(reparsed.info().revoked);
+        let sig = &reparsed.public().details.revocation_signatures[0];
+        assert_eq!(
+            sig.revocation_reason_code(),
+            Some(&RevocationCode::KeySuperseded)
+        );
+
+        // A stale copy without the revocation can't un-revoke it.
+        let merged = merge_public(&public, unrevoked.clone()).unwrap();
+        assert!(Cert::Public(merged).info().revoked);
+        let other = generate("Other", Algorithm::Curve25519).unwrap();
+        assert!(merge_public(&unrevoked, other.to_public_key()).is_err());
     }
 
     #[test]

@@ -30,7 +30,7 @@ impl AppError {
     }
 
     pub fn internal(detail: impl std::fmt::Display) -> Self {
-        eprintln!("internal error: {detail}");
+        tracing::error!(%detail, "internal error");
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal error, see the server log",

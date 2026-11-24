@@ -25,6 +25,7 @@ const ACTIONS: &[(&str, &str)] = &[
     ("file.processed", "Files processed"),
     ("file.failed", "Files failed"),
     ("key.export_secret", "Secret key exports"),
+    ("key.revoke", "Key revocations"),
     ("admin.login_failed", "Failed logins"),
 ];
 
