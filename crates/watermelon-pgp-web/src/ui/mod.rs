@@ -109,6 +109,7 @@ pub struct Button<'a> {
     small: bool,
     block: bool,
     href: Option<&'a str>,
+    opens: Option<&'a str>,
     download: bool,
 }
 
@@ -120,6 +121,7 @@ pub fn button(label: &str) -> Button<'_> {
         small: false,
         block: false,
         href: None,
+        opens: None,
         download: false,
     }
 }
@@ -154,6 +156,11 @@ impl<'a> Button<'a> {
         self.href = Some(href);
         self
     }
+    /// Open the [`modal`] with this id instead of submitting.
+    pub fn opens(mut self, modal_id: &'a str) -> Self {
+        self.opens = Some(modal_id);
+        self
+    }
     /// A file download: a normal request, not an htmx swap.
     pub fn download(mut self) -> Self {
         self.download = true;
@@ -185,11 +192,14 @@ impl Render for Button<'_> {
             span { (self.label) }
         };
         let boost = self.download.then_some("false");
-        match self.href {
-            Some(href) => html! {
+        match (self.href, self.opens) {
+            (Some(href), _) => html! {
                 a class=(self.class()) href=(href) hx-boost=[boost] download[self.download] { (inner) }
             },
-            None => html! { button class=(self.class()) type="submit" { (inner) } },
+            (None, Some(id)) => html! {
+                button class=(self.class()) type="button" popovertarget=(id) { (inner) }
+            },
+            (None, None) => html! { button class=(self.class()) type="submit" { (inner) } },
         }
     }
 }
@@ -624,6 +634,25 @@ pub fn avatar(name: &str, tone: Tone) -> Markup {
     html! { span class={ "avatar " (tone.class()) } aria-hidden="true" { (initials(name)) } }
 }
 
+// Modal
+
+/// A dialog over the page, opened by a [`Button::opens`] with the same id. Built on the
+/// browser's popover feature: no JavaScript, closes with Esc or a click outside, and focuses
+/// the first `autofocus` control. Browsers without popovers show it in place instead.
+pub fn modal(id: &str, title: &str, body: Markup) -> Markup {
+    html! {
+        div.modal id=(id) popover role="dialog" aria-labelledby={ (id) "-title" } {
+            div.modal-head {
+                h2.panel-title id={ (id) "-title" } { (title) }
+                button.btn.ghost.sm type="button" popovertarget=(id) popovertargetaction="hide" aria-label="Close" {
+                    (icon_with(icons::CLOSE, "icon sm"))
+                }
+            }
+            div.modal-body { (body) }
+        }
+    }
+}
+
 // Theme switch
 
 /// System / light / dark, as three submit buttons: works without JavaScript.
@@ -694,5 +723,7 @@ mod tests {
         assert!(download.contains(r#"hx-boost="false" download"#));
         let submit = button("Delete").danger().small().render().into_string();
         assert!(submit.starts_with(r#"<button class="btn danger sm" type="submit">"#));
+        let opener = button("New").opens("new-thing").render().into_string();
+        assert!(opener.contains(r#"type="button" popovertarget="new-thing""#));
     }
 }

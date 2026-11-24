@@ -480,6 +480,35 @@ input:focus, select:focus, textarea:focus {
 .search input { padding-left: 36px; background: var(--color-surface-sunken); }
 .search input:focus { background: var(--color-surface); }
 
+/* Modal: a popover styled as a dialog. */
+
+.modal {
+  width: min(480px, calc(100vw - 2 * var(--space-4)));
+  max-height: calc(100vh - 2 * var(--space-8));
+  margin: auto;
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 24px 60px rgb(0 0 0 / 0.25);
+}
+.modal::backdrop { background: rgb(13 18 24 / 0.45); backdrop-filter: blur(2px); }
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+}
+.modal-body { padding: var(--space-5); }
+/* Without popover support the modal shows in place, like a panel. */
+@supports not selector(:popover-open) {
+  .modal { margin: 0; width: auto; box-shadow: var(--shadow-sm); }
+}
+
 /* Theme switch: three submit buttons, works without JavaScript. */
 
 .theme-switch {

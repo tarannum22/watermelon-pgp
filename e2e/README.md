@@ -34,4 +34,4 @@ npm run report                      # the HTML report of the last run
 | `jobs.spec.ts` | Encrypt a dropped file and decrypt it again; a failed file shows up and can be retried; disable and enable; a rejected job form keeps its input |
 | `audit.spec.ts` | Search from the top bar, live filters, removable filter chips, CSV export |
 | `theme.spec.ts` | The theme switch is remembered, also on the login page |
-| `design.spec.ts` | The style guide renders; no page triggers a Content-Security-Policy violation |
+| `design.spec.ts` | The style guide renders; no page triggers a Content-Security-Policy violation; the new-customer dialog opens and closes |

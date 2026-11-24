@@ -68,6 +68,7 @@ failures and danger, amber for things that need attention.
 | Empty state | `ui::empty(icon, title, text, action)` | Instead of an empty list: what to do next |
 | Alert | `ui::alert(tone, title, text)` | Flash messages and notices |
 | Form fields | `ui::field`, `ui::optional_field`, `ui::checkbox`, `ui::confirm`, `ui::choice_card`, `ui::search_input` | Labelled controls; hints sit outside the label so screen readers don't read them as the name |
+| Modal | `ui::modal(id, title, body)` with `ui::button(..).opens(id)` | Short forms that create something, opened from the page's main action. Built on the browser's popover feature: no JavaScript, closes with Esc or a click outside |
 | Avatar | `ui::avatar(name, tone)` | Initials for keys and customers |
 | Theme switch | `ui::theme_switch(csrf, theme)` | System / light / dark |
 | Terminal | `ui::terminal(text)` | Commands and armored text |

@@ -24,41 +24,43 @@ pub async fn list(State(state): State<AppState>, auth: Authed) -> Result<Markup,
         page,
         html! {
             (ui::page_header("Customers")
-                .subtitle(html! { "Every partner you exchange files with. Keys and jobs always belong to a customer." }))
-            div.dashboard-grid {
-                (ui::panel(html! {
-                    @if customers.is_empty() {
-                        (ui::empty(icons::CUSTOMERS, "No customers yet", "Create the first one to add its keys and jobs.", None))
-                    } @else {
-                        div.table-wrap {
-                            table.table {
-                                thead { tr { th { "Name" } th.num { "Keys" } th.num { "Jobs" } th { "Created" } } }
-                                tbody {
-                                    @for customer in &customers {
-                                        tr {
-                                            td {
-                                                a.strong href={ "/customers/" (customer.id) } { (customer.name) }
-                                            }
-                                            td.num { (keys.iter().filter(|k| k.customer_id == customer.id).count()) }
-                                            td.num { (jobs.iter().filter(|j| j.customer_id == customer.id).count()) }
-                                            td { (views::date(customer.created_at)) }
+                .subtitle(html! { "Every partner you exchange files with. Keys and jobs always belong to a customer." })
+                .actions(ui::button("New customer").primary().icon(icons::PLUS).opens("new-customer").render()))
+            (ui::panel(html! {
+                @if customers.is_empty() {
+                    (ui::empty(icons::CUSTOMERS, "No customers yet", "Create the first one to add its keys and jobs.",
+                        Some(ui::button("New customer").primary().icon(icons::PLUS).opens("new-customer").render())))
+                } @else {
+                    div.table-wrap {
+                        table.table {
+                            thead { tr { th { "Name" } th.num { "Keys" } th.num { "Jobs" } th { "Created" } } }
+                            tbody {
+                                @for customer in &customers {
+                                    tr {
+                                        td {
+                                            a.strong href={ "/customers/" (customer.id) } { (customer.name) }
                                         }
+                                        td.num { (keys.iter().filter(|k| k.customer_id == customer.id).count()) }
+                                        td.num { (jobs.iter().filter(|j| j.customer_id == customer.id).count()) }
+                                        td { (views::date(customer.created_at)) }
                                     }
                                 }
                             }
                         }
                     }
-                }).flush())
-                (ui::panel(html! {
-                    form.form method="post" action="/customers" {
-                        (views::csrf_field(&auth.csrf))
-                        (ui::field("Name", Some("Usually the company, as you'd look for it later."), html! {
-                            input type="text" name="name" required maxlength="200" placeholder="Alpine Outdoor GmbH";
-                        }))
-                        div.actions { (ui::button("Create customer").primary().icon(icons::PLUS)) }
+                }
+            }).flush())
+            (ui::modal("new-customer", "New customer", html! {
+                form.form method="post" action="/customers" {
+                    (views::csrf_field(&auth.csrf))
+                    (ui::field("Name", Some("Usually the company, as you'd look for it later."), html! {
+                        input type="text" name="name" required maxlength="200" placeholder="Alpine Outdoor GmbH" autofocus;
+                    }))
+                    div.actions {
+                        (ui::button("Create customer").primary().icon(icons::PLUS))
                     }
-                }).title("New customer").icon(icons::PLUS))
-            }
+                }
+            }))
         },
     ))
 }

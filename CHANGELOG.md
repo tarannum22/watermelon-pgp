@@ -14,6 +14,7 @@ All notable changes to this project are documented here. The format follows
   cards, a "Needs attention" list and recent activity.
 - Keys as rich rows with the fingerprint, status and capabilities, filters (key pairs, public
   only, needs attention, revoked) and search. A key's page shows the full fingerprint.
+- New customers are created in a dialog opened from the page header.
 - Copy buttons for fingerprints (where the browser allows clipboard access).
 - Light and dark themes: follows the system, or pick one in the sidebar or in Settings
   (remembered per browser in a cookie).

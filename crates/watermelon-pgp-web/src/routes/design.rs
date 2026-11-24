@@ -161,6 +161,16 @@ pub async fn show(State(state): State<AppState>, auth: Authed) -> Markup {
                     }
                 }).title("Forms").icon(icons::EDIT))
                 div.stack {
+                    (ui::panel(html! {
+                        p { "For short forms that create something, opened from the page's main action." }
+                        (ui::button("Open the modal").icon(icons::PLUS).opens("design-modal"))
+                        (ui::modal("design-modal", "New customer", html! {
+                            div.form {
+                                (ui::field("Name", Some("A hint under the control."), html! { input type="text" autofocus; }))
+                                div.actions { (ui::button("Create customer").primary().icon(icons::PLUS)) }
+                            }
+                        }))
+                    }).title("Modal").icon(icons::PLUS))
                     (ui::panel(html! { p { "Panels with a danger tone hold irreversible actions." } })
                         .title("Danger zone").icon(icons::TRASH).tone(Tone::Bad))
                     (ui::panel(html! { p { "Panels with a warning tone hold things that need attention." } })

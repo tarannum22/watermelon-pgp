@@ -20,3 +20,16 @@ test("no page breaks the Content-Security-Policy", async ({ page }) => {
   }
   expect(violations).toEqual([]);
 });
+
+test("the new-customer modal opens from the header and closes with Escape", async ({ page }) => {
+  await page.goto("/customers");
+  const dialog = page.getByRole("dialog", { name: "New customer" });
+  await expect(dialog).toBeHidden();
+  await page.getByRole("button", { name: "New customer" }).first().click();
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await page.getByRole("button", { name: "New customer" }).first().click();
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(dialog).toBeHidden();
+});

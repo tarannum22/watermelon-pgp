@@ -15,8 +15,11 @@ export function unique(prefix: string): string {
 /** Create a customer and return the URL of its page. */
 export async function createCustomer(page: Page, name: string): Promise<string> {
   await page.goto("/customers");
-  await page.getByLabel("Name").fill(name);
-  await page.getByRole("button", { name: "Create customer" }).click();
+  await page.getByRole("button", { name: "New customer" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "New customer" });
+  await expect(dialog.getByLabel("Name")).toBeFocused();
+  await dialog.getByLabel("Name").fill(name);
+  await dialog.getByRole("button", { name: "Create customer" }).click();
   await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
   await expect(page.getByRole("status")).toContainText(`Created customer ${name}.`);
   return new URL(page.url()).pathname;
