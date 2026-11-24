@@ -30,6 +30,9 @@ impl Actor {
 pub enum Action {
     Init,
     AdminPasswordSet,
+    AdminLogin,
+    AdminLoginFailed,
+    AdminLogout,
     CustomerCreate,
     KeyGenerate,
     KeyImport,
@@ -38,12 +41,14 @@ pub enum Action {
     KeyDelete,
     Backup,
     JobCreate,
+    JobUpdate,
     JobEnable,
     JobDisable,
     JobDelete,
     JobPause,
     FileProcessed,
     FileFailed,
+    FileRetry,
 }
 
 impl Action {
@@ -51,6 +56,9 @@ impl Action {
         match self {
             Action::Init => "system.init",
             Action::AdminPasswordSet => "admin.password_set",
+            Action::AdminLogin => "admin.login",
+            Action::AdminLoginFailed => "admin.login_failed",
+            Action::AdminLogout => "admin.logout",
             Action::CustomerCreate => "customer.create",
             Action::KeyGenerate => "key.generate",
             Action::KeyImport => "key.import",
@@ -59,12 +67,14 @@ impl Action {
             Action::KeyDelete => "key.delete",
             Action::Backup => "system.backup",
             Action::JobCreate => "job.create",
+            Action::JobUpdate => "job.update",
             Action::JobEnable => "job.enable",
             Action::JobDisable => "job.disable",
             Action::JobDelete => "job.delete",
             Action::JobPause => "job.pause",
             Action::FileProcessed => "file.processed",
             Action::FileFailed => "file.failed",
+            Action::FileRetry => "file.retry",
         }
     }
 }
@@ -143,12 +153,69 @@ pub fn record(conn: &Connection, entry: &Entry<'_>, now: i64) -> Result<()> {
 
 /// The most recent events, newest first.
 pub fn recent(conn: &Connection, limit: u32) -> Result<Vec<AuditEvent>> {
+    query(
+        conn,
+        &Filter {
+            limit,
+            ..Filter::default()
+        },
+    )
+}
+
+/// Which events to list. Empty fields match everything.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Filter {
+    /// An exact action (`job.create`) or a category prefix ending in a dot (`job.`).
+    pub action: Option<String>,
+    pub customer_id: Option<i64>,
+    pub job_id: Option<i64>,
+    pub key_fingerprint: Option<String>,
+    /// Only events older than this ID, for paging backwards.
+    pub before_id: Option<i64>,
+    pub limit: u32,
+}
+
+/// Matching events, newest first.
+pub fn query(conn: &Connection, filter: &Filter) -> Result<Vec<AuditEvent>> {
+    let action_pattern = filter.action.as_ref().map(|action| {
+        if action.ends_with('.') {
+            format!("{}%", action.replace(['%', '_'], ""))
+        } else {
+            action.clone()
+        }
+    });
     let mut stmt = conn.prepare(
         "SELECT id, at, actor, action, customer_id, key_fingerprint, job_id, detail
-         FROM audit_events ORDER BY id DESC LIMIT ?1",
+         FROM audit_events
+         WHERE (?1 IS NULL OR action LIKE ?1)
+           AND (?2 IS NULL OR customer_id = ?2)
+           AND (?3 IS NULL OR job_id = ?3)
+           AND (?4 IS NULL OR key_fingerprint = ?4)
+           AND (?5 IS NULL OR id < ?5)
+         ORDER BY id DESC LIMIT ?6",
     )?;
-    let rows = stmt.query_map([limit], event_from_row)?;
+    let rows = stmt.query_map(
+        params![
+            action_pattern,
+            filter.customer_id,
+            filter.job_id,
+            filter.key_fingerprint,
+            filter.before_id,
+            filter.limit,
+        ],
+        event_from_row,
+    )?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// How many events with this action happened at or after `since`.
+pub fn count_since(conn: &Connection, action: Action, since: i64) -> Result<u64> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM audit_events WHERE action = ?1 AND at >= ?2",
+        params![action.as_str(), since],
+        |row| row.get(0),
+    )?;
+    Ok(count.unsigned_abs())
 }
 
 fn event_from_row(row: &Row<'_>) -> rusqlite::Result<AuditEvent> {

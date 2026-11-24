@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Watermelon PGP 2D Angled Icon">
+  
+  <circle cx="128" cy="128" r="128" fill="#121417" />
+  <circle cx="128" cy="128" r="122" fill="none" stroke="#1B7A43" stroke-width="5" />
+  <circle cx="128" cy="128" r="117" fill="none" stroke="#F4F6F8" stroke-width="1.5" opacity="0.25" />
+
+  
+  <g transform="translate(128, 134) rotate(-24) translate(-128, -128)">
+    
+    <path d="M 36 122 A 92 92 0 0 0 220 122 Z" fill="#1B7A43" />
+
+    
+    <path d="M 48 122 A 80 80 0 0 0 208 122 Z" fill="#F4F6F8" />
+
+    
+    <path d="M 56 122 A 72 72 0 0 0 200 122 Z" fill="#E02D3C" />
+
+    
+    <ellipse cx="82" cy="142" rx="3.5" ry="6" transform="rotate(-25 82 142)" fill="#121417" />
+    <ellipse cx="174" cy="142" rx="3.5" ry="6" transform="rotate(25 174 142)" fill="#121417" />
+    <ellipse cx="96" cy="166" rx="3.5" ry="6" transform="rotate(-12 96 166)" fill="#121417" />
+    <ellipse cx="160" cy="166" rx="3.5" ry="6" transform="rotate(12 160 166)" fill="#121417" />
+
+    
+    <path d="M 106 110 V 84 A 22 22 0 0 1 150 84 V 110" fill="none" stroke="#F4F6F8" stroke-width="12" stroke-linecap="round" />
+
+    
+    <rect x="96" y="106" width="64" height="50" rx="10" fill="#121417" stroke="#F4F6F8" stroke-width="4" />
+
+    
+    <circle cx="128" cy="126" r="5.5" fill="#1B7A43" />
+    <path d="M 125.5 129 L 124.5 142 H 131.5 L 130.5 129 Z" fill="#1B7A43" />
+  </g>
+</svg>

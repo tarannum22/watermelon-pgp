@@ -14,6 +14,8 @@ path = "src/main.rs"
 [dependencies]
 watermelon-pgp-core.workspace = true
 watermelon-pgp-jobs.workspace = true
+watermelon-pgp-web.workspace = true
+tokio.workspace = true
 ctrlc.workspace = true
 anyhow.workspace = true
 clap.workspace = true

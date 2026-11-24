@@ -269,6 +269,16 @@ pub fn customer_by_name(conn: &Connection, name: &str) -> Result<Customer> {
     .ok_or_else(|| Error::NotFound(format!("customer {name:?}")))
 }
 
+pub fn customer_by_id(conn: &Connection, id: i64) -> Result<Customer> {
+    conn.query_row(
+        "SELECT id, name, created_at FROM customers WHERE id = ?1",
+        [id],
+        customer_from_row,
+    )
+    .optional()?
+    .ok_or_else(|| Error::NotFound(format!("customer {id}")))
+}
+
 fn customer_from_row(row: &Row<'_>) -> rusqlite::Result<Customer> {
     Ok(Customer {
         id: row.get(0)?,

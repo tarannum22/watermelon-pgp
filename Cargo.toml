@@ -12,6 +12,7 @@ rust-version = "1.88"
 [workspace.dependencies]
 watermelon-pgp-core = { path = "crates/watermelon-pgp-core" }
 watermelon-pgp-jobs = { path = "crates/watermelon-pgp-jobs" }
+watermelon-pgp-web = { path = "crates/watermelon-pgp-web" }
 pgp = "0.21.1"
 rand = "0.8.6"
 rsa = "0.9"
@@ -29,3 +30,10 @@ clap = { version = "4.6", features = ["derive", "env"] }
 rpassword = "7.5"
 time = { version = "0.3", features = ["formatting"] }
 tempfile = "3"
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "form", "query", "multipart"] }
+tokio = { version = "1.54", features = ["rt-multi-thread", "net", "signal", "macros", "sync"] }
+maud = { version = "0.27", features = ["axum"] }
+serde = { version = "1", features = ["derive"] }
+serde_html_form = "0.4.1"
+tower = { version = "0.5.3", features = ["util"] }
+http-body-util = "0.1.5"

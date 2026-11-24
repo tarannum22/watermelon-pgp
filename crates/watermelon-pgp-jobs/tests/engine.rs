@@ -18,7 +18,7 @@ use watermelon_pgp_core::{
     jobs::{JobKind, JobSpec},
     vault::{self, Vault},
 };
-use watermelon_pgp_jobs::{Engine, PassReport, run_pass, scan::Scanner};
+use watermelon_pgp_jobs::{Engine, PassReport, failed, run_pass, scan::Scanner};
 
 struct Setup {
     root: tempfile::TempDir,
@@ -171,6 +171,24 @@ fn failures_go_to_the_failed_folder() {
     assert!(names(&s.dir("out")).is_empty());
     assert_eq!(names(&s.dir("in").join("failed")), ["garbage.pgp"]);
     assert_eq!(s.actions().last().unwrap(), "file.failed");
+
+    let stored = s.vault.lock().unwrap().job(job).unwrap();
+    let listed = failed::list(&stored).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].name, "garbage.pgp");
+    {
+        let vault = s.vault.lock().unwrap();
+        for bad in ["../garbage.pgp", "", "missing.pgp"] {
+            assert!(
+                failed::retry(&vault, Actor::Admin, &stored, bad).is_err(),
+                "{bad:?}"
+            );
+        }
+        failed::retry(&vault, Actor::Admin, &stored, "garbage.pgp").unwrap();
+    }
+    assert!(names(&s.dir("in").join("failed")).is_empty());
+    assert!(names(&s.dir("in")).contains(&"garbage.pgp".to_owned()));
+    assert_eq!(s.actions().last().unwrap(), "file.retry");
 }
 
 #[test]

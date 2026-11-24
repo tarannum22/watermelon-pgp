@@ -64,7 +64,19 @@ enum Command {
     /// Manage folder jobs.
     #[command(subcommand)]
     Job(JobCommand),
-    /// Run all enabled jobs until interrupted (Ctrl-C).
+    /// Serve the web UI and run all enabled jobs until stopped (Ctrl-C or SIGTERM).
+    Serve {
+        /// Address to listen on. Anything but loopback should sit behind a TLS reverse proxy.
+        #[arg(long, env = "WATERMELON_BIND", default_value = "127.0.0.1:8080")]
+        bind: std::net::SocketAddr,
+        /// Jobs processed in parallel [default: number of CPUs].
+        #[arg(long)]
+        workers: Option<usize>,
+        /// Mark the session cookie Secure. Set this when users reach the UI over HTTPS.
+        #[arg(long, env = "WATERMELON_SECURE_COOKIES")]
+        secure_cookies: bool,
+    },
+    /// Run all enabled jobs until interrupted (Ctrl-C), without the web UI.
     Run {
         /// Jobs processed in parallel [default: number of CPUs].
         #[arg(long)]
@@ -238,6 +250,11 @@ fn main() -> Result<()> {
         MasterKey::load(&master_key_path)?,
     )?;
     match cli.command {
+        Command::Serve {
+            bind,
+            workers,
+            secure_cookies,
+        } => serve(vault, bind, workers, secure_cookies),
         Command::Run { workers } => run_engine(vault, workers),
         Command::Job(JobCommand::RunOnce { job, settle }) => run_once(vault, &job, settle),
         command => run(&vault, command, prompt),
@@ -259,6 +276,81 @@ fn run_engine(vault: Vault, workers: Option<usize>) -> Result<()> {
     });
     eprintln!("Stopped.");
     Ok(())
+}
+
+fn serve(
+    vault: Vault,
+    bind: std::net::SocketAddr,
+    workers: Option<usize>,
+    secure_cookies: bool,
+) -> Result<()> {
+    let workers = workers.unwrap_or_else(Engine::default_workers);
+    let vault = Arc::new(Mutex::new(vault));
+    let stop = Arc::new(AtomicBool::new(false));
+    let runtime = tokio::runtime::Runtime::new().context("starting the async runtime")?;
+    let listener = runtime
+        .block_on(tokio::net::TcpListener::bind(bind))
+        .with_context(|| format!("listening on {bind}"))?;
+
+    let engine = {
+        let engine = Engine::new(Arc::clone(&vault), workers);
+        let stop = Arc::clone(&stop);
+        std::thread::Builder::new()
+            .name("jobs".into())
+            .spawn(move || {
+                engine.run(&stop, |job, report| {
+                    eprintln!("{}  {job}: {}", format_time(now()), describe_pass(report));
+                });
+            })
+            .context("starting the job engine")?
+    };
+
+    eprintln!("Serving http://{bind} with {workers} job worker(s). Ctrl-C to stop.");
+    if !bind.ip().is_loopback() {
+        eprintln!(
+            "WARNING: listening on a non-loopback address. Put a TLS-terminating reverse proxy \
+             in front and pass --secure-cookies; the UI itself speaks plain HTTP."
+        );
+    }
+    let state = watermelon_pgp_web::AppState::new(
+        Arc::clone(&vault),
+        watermelon_pgp_web::Config { secure_cookies },
+    );
+    let served = runtime.block_on(watermelon_pgp_web::serve(
+        state,
+        listener,
+        shutdown_signal(),
+    ));
+
+    eprintln!("Stopping; waiting for running jobs to finish their current file…");
+    stop.store(true, Ordering::Relaxed);
+    if engine.join().is_err() {
+        bail!("the job engine panicked");
+    }
+    eprintln!("Stopped.");
+    Ok(served?)
+}
+
+/// Resolves on Ctrl-C, or SIGTERM (systemd, Docker).
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let term = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            Err(_) => std::future::pending().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let term = std::future::pending::<()>();
+    tokio::select! {
+        () = ctrl_c => {}
+        () = term => {}
+    }
 }
 
 fn run_once(vault: Vault, query: &str, settle: u64) -> Result<()> {
@@ -397,7 +489,7 @@ fn run(vault: &Vault, command: Command, prompt: Prompt) -> Result<()> {
             println!("Wrote {}", dest.display());
             eprintln!("Reminder: the master key is not part of the backup.");
         }
-        Command::Run { .. } | Command::Job(JobCommand::RunOnce { .. }) => {
+        Command::Serve { .. } | Command::Run { .. } | Command::Job(JobCommand::RunOnce { .. }) => {
             unreachable!("handled before")
         }
         Command::Job(JobCommand::Add(add)) => {

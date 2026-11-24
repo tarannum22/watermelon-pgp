@@ -143,35 +143,56 @@ impl Vault {
                     now,
                 ],
             )
-            .map_err(|e| match e {
-                rusqlite::Error::SqliteFailure(err, _)
-                    if err.code == rusqlite::ErrorCode::ConstraintViolation =>
-                {
-                    Error::Conflict(format!(
-                        "this customer already has a job named {:?}",
-                        spec.name
-                    ))
-                }
-                e => e.into(),
-            })?;
+            .map_err(|e| name_conflict(e, &spec.name))?;
             let id = tx.last_insert_rowid();
-            let roles = [
-                ("recipient", &spec.recipients),
-                ("decrypt", &spec.decrypt_keys),
-                ("verify", &spec.verifiers),
-            ];
-            for (role, fingerprints) in roles {
-                for fingerprint in fingerprints {
-                    insert_job_key(tx, id, fingerprint, role)?;
-                }
-            }
-            if let Some(signer) = &spec.signer {
-                insert_job_key(tx, id, signer, "sign")?;
-            }
+            insert_job_keys(tx, id, &spec)?;
             audit::record(
                 tx,
                 &Entry::new(actor, Action::JobCreate)
                     .customer(customer_id)
+                    .job(id)
+                    .detail(describe(&spec)),
+                now,
+            )?;
+            job_by_id(tx, id)
+        })
+    }
+
+    /// Replace a job's definition. Its customer and enabled/paused state stay as they are, and
+    /// the engine starts the job afresh with the new settings.
+    pub fn update_job(&self, actor: Actor, id: i64, spec: &JobSpec) -> Result<Job> {
+        let job = self.job(id)?;
+        let spec = self.validate_job(spec)?;
+        self.store().transaction(|tx| {
+            let now = now();
+            tx.execute(
+                "UPDATE jobs SET name = ?2, kind = ?3, input_dir = ?4, output_dir = ?5,
+                    processed_dir = ?6, failed_dir = ?7, poll_interval_secs = ?8, armor = ?9,
+                    extension = ?10, container = ?11, verify_policy = ?12, updated_at = ?13
+                 WHERE id = ?1",
+                params![
+                    id,
+                    spec.name,
+                    kind_str(spec.kind),
+                    path_str(&spec.input_dir)?,
+                    path_str(&spec.output_dir)?,
+                    spec.processed_dir.as_deref().map(path_str).transpose()?,
+                    path_str(&spec.failed_dir)?,
+                    spec.poll_interval_secs,
+                    spec.armor,
+                    spec.extension,
+                    container_str(spec.container),
+                    policy_str(spec.verify_policy),
+                    now,
+                ],
+            )
+            .map_err(|e| name_conflict(e, &spec.name))?;
+            tx.execute("DELETE FROM job_keys WHERE job_id = ?1", [id])?;
+            insert_job_keys(tx, id, &spec)?;
+            audit::record(
+                tx,
+                &Entry::new(actor, Action::JobUpdate)
+                    .customer(job.customer_id)
                     .job(id)
                     .detail(describe(&spec)),
                 now,
@@ -284,6 +305,18 @@ impl Vault {
                 .customer(job.customer_id)
                 .job(job.id)
                 .detail(detail),
+            now(),
+        )
+    }
+
+    /// Audit that a failed file was moved back into the input folder for another attempt.
+    pub fn record_retry(&self, actor: Actor, job: &Job, file_name: &str) -> Result<()> {
+        audit::record(
+            self.store().conn(),
+            &Entry::new(actor, Action::FileRetry)
+                .customer(job.customer_id)
+                .job(job.id)
+                .detail(file_name),
             now(),
         )
     }
@@ -585,6 +618,34 @@ fn job_from_row(row: &Row<'_>) -> rusqlite::Result<Job> {
     })
 }
 
+fn insert_job_keys(conn: &Connection, job_id: i64, spec: &JobSpec) -> Result<()> {
+    let roles = [
+        ("recipient", &spec.recipients),
+        ("decrypt", &spec.decrypt_keys),
+        ("verify", &spec.verifiers),
+    ];
+    for (role, fingerprints) in roles {
+        for fingerprint in fingerprints {
+            insert_job_key(conn, job_id, fingerprint, role)?;
+        }
+    }
+    if let Some(signer) = &spec.signer {
+        insert_job_key(conn, job_id, signer, "sign")?;
+    }
+    Ok(())
+}
+
+fn name_conflict(e: rusqlite::Error, name: &str) -> Error {
+    match e {
+        rusqlite::Error::SqliteFailure(err, _)
+            if err.code == rusqlite::ErrorCode::ConstraintViolation =>
+        {
+            Error::Conflict(format!("this customer already has a job named {name:?}"))
+        }
+        e => e.into(),
+    }
+}
+
 fn insert_job_key(conn: &Connection, job_id: i64, fingerprint: &str, role: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO job_keys (job_id, fingerprint, role) VALUES (?1, ?2, ?3)",
@@ -694,6 +755,40 @@ mod tests {
             f.vault.create_job(Actor::Cli, f.customer, &spec).is_err(),
             "duplicate name"
         );
+    }
+
+    #[test]
+    fn update_replaces_definition_and_keys() {
+        let f = fixture();
+        let job = f
+            .vault
+            .create_job(Actor::Cli, f.customer, &encrypt_spec(&f))
+            .unwrap();
+        let mut spec = job.spec.clone();
+        spec.name = "renamed".into();
+        spec.recipients = vec![f.key.clone(), f.public_only.clone()];
+        spec.poll_interval_secs = 60;
+        let updated = f.vault.update_job(Actor::Admin, job.id, &spec).unwrap();
+        assert_eq!(updated.spec, spec);
+        assert!(updated.updated_at >= job.updated_at);
+
+        spec.recipients.clear();
+        assert!(
+            f.vault.update_job(Actor::Admin, job.id, &spec).is_err(),
+            "still validated"
+        );
+        let other = f
+            .vault
+            .create_job(Actor::Cli, f.customer, &encrypt_spec(&f))
+            .unwrap();
+        let mut clash = other.spec.clone();
+        clash.name = "renamed".into();
+        assert!(matches!(
+            f.vault.update_job(Actor::Admin, other.id, &clash),
+            Err(Error::Conflict(_))
+        ));
+        let audit = f.vault.audit_events(10).unwrap();
+        assert!(audit.iter().any(|e| e.action == "job.update"));
     }
 
     #[test]

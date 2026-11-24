@@ -161,6 +161,10 @@ impl Vault {
         store::customer_by_name(self.store.conn(), name)
     }
 
+    pub fn customer_by_id(&self, id: i64) -> Result<Customer> {
+        store::customer_by_id(self.store.conn(), id)
+    }
+
     pub fn keys(&self, customer_id: Option<i64>) -> Result<Vec<KeyRecord>> {
         store::keys(self.store.conn(), customer_id)
     }
@@ -175,7 +179,19 @@ impl Vault {
         if user_id.trim().is_empty() {
             return Err(Error::Invalid("user ID must not be empty".into()));
         }
-        let cert = Cert::Secret(crypto::generate(user_id.trim(), algorithm)?);
+        let key = crypto::generate(user_id.trim(), algorithm)?;
+        self.add_generated_key(actor, customer_id, key)
+    }
+
+    /// Store a key made with [`crypto::generate`]. Lets callers generate (slow for RSA) without
+    /// holding whatever lock guards the vault.
+    pub fn add_generated_key(
+        &self,
+        actor: Actor,
+        customer_id: i64,
+        key: SignedSecretKey,
+    ) -> Result<KeyRecord> {
+        let cert = Cert::Secret(key);
         self.store.transaction(|tx| {
             let record = self.save(tx, customer_id, &cert)?;
             audit::record(
@@ -358,6 +374,38 @@ impl Vault {
 
     pub fn audit_events(&self, limit: u32) -> Result<Vec<audit::AuditEvent>> {
         audit::recent(self.store.conn(), limit)
+    }
+
+    pub fn query_audit(&self, filter: &audit::Filter) -> Result<Vec<audit::AuditEvent>> {
+        audit::query(self.store.conn(), filter)
+    }
+
+    pub fn count_audit_since(&self, action: Action, since: i64) -> Result<u64> {
+        audit::count_since(self.store.conn(), action, since)
+    }
+
+    /// Check the admin password and audit the attempt. `client` identifies where it came from.
+    pub fn login(&self, password: &str, client: &str) -> Result<bool> {
+        let ok = self.verify_admin_password(password)?;
+        let action = if ok {
+            Action::AdminLogin
+        } else {
+            Action::AdminLoginFailed
+        };
+        audit::record(
+            self.store.conn(),
+            &Entry::new(Actor::Admin, action).detail(client),
+            now(),
+        )?;
+        Ok(ok)
+    }
+
+    pub fn record_logout(&self, client: &str) -> Result<()> {
+        audit::record(
+            self.store.conn(),
+            &Entry::new(Actor::Admin, Action::AdminLogout).detail(client),
+            now(),
+        )
     }
 
     /// Snapshot the database to `dest`. The master key is deliberately not included.
@@ -560,6 +608,57 @@ mod tests {
             .unwrap();
         assert!(second[0].has_secret);
         assert_eq!(first[0].id, second[0].id);
+    }
+
+    #[test]
+    fn audit_can_be_filtered_and_paged() {
+        let (_dir, vault) = vault();
+        let acme = vault.create_customer(Actor::Cli, "ACME").unwrap().id;
+        vault.create_customer(Actor::Cli, "Globex").unwrap();
+        assert!(!vault.login("wrong password", "10.0.0.1").unwrap());
+        assert!(vault.login("a long admin password", "10.0.0.1").unwrap());
+
+        let query = |filter: audit::Filter| {
+            vault
+                .query_audit(&audit::Filter {
+                    limit: 100,
+                    ..filter
+                })
+                .unwrap()
+                .into_iter()
+                .map(|e| e.action)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            query(audit::Filter {
+                action: Some("admin.".into()),
+                ..Default::default()
+            }),
+            ["admin.login", "admin.login_failed"]
+        );
+        assert_eq!(
+            query(audit::Filter {
+                customer_id: Some(acme),
+                ..Default::default()
+            }),
+            ["customer.create"]
+        );
+        let newest = vault.audit_events(1).unwrap().remove(0);
+        let older = query(audit::Filter {
+            before_id: Some(newest.id),
+            ..Default::default()
+        });
+        assert_eq!(
+            older.first().map(String::as_str),
+            Some("admin.login_failed")
+        );
+        assert_eq!(
+            vault
+                .count_audit_since(Action::AdminLoginFailed, 0)
+                .unwrap(),
+            1
+        );
+        assert_eq!(vault.customer_by_id(acme).unwrap().name, "ACME");
     }
 
     #[test]

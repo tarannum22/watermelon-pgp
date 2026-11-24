@@ -20,7 +20,8 @@ config export/import, Windows as a first-class platform.
 - Rust, Cargo workspace:
   - `watermelon-pgp-core` — crypto wrapper (rPGP), key store, master-key envelope, SQLite schema, audit log.
   - `watermelon-pgp-jobs` — polling job engine.
-  - `watermelon-pgp` — the `watermelon` binary: CLI + web UI.
+  - `watermelon-pgp-web` — the web UI (axum, maud templates, vendored htmx).
+  - `watermelon-pgp` — the `watermelon` binary: CLI, and `serve` for web UI + job engine.
 - Single binary, embedded assets. Linux primary, macOS for development; Windows later, so
   Unix-specific code stays behind a small `platform` module.
 - Storage: SQLite in the data dir. A small TOML config / CLI flags hold only process-level
@@ -45,6 +46,19 @@ config export/import, Windows as a first-class platform.
 - **Network:** binds `127.0.0.1` by default; exposing it is explicit config. Optional built-in TLS
   (rustls) when a cert/key is configured, otherwise run behind a reverse proxy. Secure cookie
   sessions, CSRF protection, login rate limiting, security headers (CSP etc.).
+- **Web sessions:** random 256-bit tokens in an `HttpOnly`, `SameSite=Strict` cookie (`Secure`
+  with `--secure-cookies`); the server keeps only their SHA-256, in memory, so a restart logs
+  everyone out. 30 minutes idle timeout, 12 hours absolute; auto-refreshing panels don't count
+  as activity. A password change ends all other sessions.
+- **CSRF:** a per-session token in every form, plus refusing state-changing requests whose
+  `Origin` doesn't match `Host` or whose `Sec-Fetch-Site` is `cross-site`.
+- **Login rate limiting:** per client address, five free attempts, then a wait that doubles with
+  each failure up to 15 minutes. Behind a reverse proxy all clients share the proxy's address,
+  which makes the limit global; that is acceptable with a single admin account.
+- **Browser hardening:** strict CSP (`script-src 'self'`, no inline scripts or styles, no
+  framing), `nosniff`, `Referrer-Policy: same-origin`, `Cache-Control: no-store` on pages. htmx is
+  vendored and configured without `eval` and with its localStorage history cache disabled, so
+  pages showing key data are never persisted by the browser.
 - **Private keys at rest:** envelope encryption. Every secret key is stored encrypted
   (XChaCha20-Poly1305) under a 256-bit **master key** loaded at startup from a `0600` keyfile or
   an environment variable. Jobs therefore run unattended across restarts; stealing the DB alone
@@ -115,5 +129,5 @@ Hash-chaining for tamper evidence comes later.
 1. ✅ **Core + CLI** — crypto wrapper, key store with master-key envelope, SQLite schema, audit log;
    CLI key commands (`gen` / `import` / `export` / `list`).
 2. ✅ **Job engine** — polling, stability check, encrypt/decrypt pipeline, processed/failed handling.
-3. **Web UI** — auth, customers, keys, jobs, audit view, dashboard.
+3. ✅ **Web UI** — auth, customers, keys, jobs, audit view, dashboard.
 4. **Hardening & release** — TLS, security headers, interop CI, Docker image, docs, first release.

@@ -8,11 +8,18 @@ A self-hosted, single-binary tool to manage OpenPGP keys and run folder jobs tha
 decrypt files: the glue between your customers' keys and the folders your SFTP transfers read
 from and write to.
 
-> **Status: early development.** Milestones 1 (key store + CLI) and 2 (job engine) are done.
-> The web UI is next. See [DESIGN.md](DESIGN.md) for the full plan.
+> **Status: early development.** Milestones 1 (key store + CLI), 2 (job engine) and 3 (web UI)
+> are done. Hardening and the first release are next. See [DESIGN.md](DESIGN.md) for the full plan.
 
 ## What works today
 
+- `watermelon serve`: the web UI plus the job engine in one process.
+  - Dashboard with running/paused jobs, files processed and failed in the last 24 hours, keys
+    that are expired or expire within 30 days, and recent activity; it refreshes itself.
+  - Customers, keys (generate, import by upload or paste, download public, export secret with a
+    new passphrase, delete), jobs (create, edit, enable/disable, delete, retry failed files),
+    and a filterable, paged audit log.
+  - Every page works without JavaScript; htmx (vendored, no CDN) only makes it smoother.
 - `watermelon init`: creates the database, a master keyfile (`0600`) and the admin password.
 - Customers: `watermelon customer add|list`.
 - Keys: `watermelon key gen|import|list|export|delete`.
@@ -47,8 +54,13 @@ cargo build --release
 # Encrypt everything dropped into ./outbox for ACME, archive the originals
 ./target/release/watermelon job add encrypt --customer ACME --name outbound \
     --input outbox --output to-sftp --recipient <ACME key ID>
-./target/release/watermelon run
+
+# Web UI on http://127.0.0.1:8080, with all enabled jobs running
+./target/release/watermelon serve
 ```
+
+Everything after `init` can also be done in the web UI. `watermelon run` runs the jobs without
+the UI.
 
 For scripted setups, `--passphrase-stdin` reads passwords from stdin instead of prompting, and
 `WATERMELON_MASTER_KEY` (hex) can supply the master key instead of the keyfile.
@@ -59,6 +71,14 @@ For scripted setups, `--passphrase-stdin` reads passwords from stdin instead of 
   outside the database. A stolen database alone reveals nothing.
 - The master key is checked against the database at startup; a wrong key is refused.
 - A keyfile readable by other users is refused.
+- The web UI listens on `127.0.0.1` by default. It speaks plain HTTP: to expose it, put a
+  TLS-terminating reverse proxy in front and pass `--secure-cookies`.
+- One admin password (Argon2id), set on the CLI; there is no web setup page an attacker could
+  reach first. Sessions are `HttpOnly`, `SameSite=Strict` cookies that end after 30 minutes idle
+  or 12 hours; changing the password ends all other sessions.
+- Every form carries a CSRF token, cross-origin form posts are refused, failed logins are
+  audited and slowed down per client, and pages are served with a strict Content Security Policy
+  (no inline scripts, no framing) and `Cache-Control: no-store`.
 
 ## Known issues
 
