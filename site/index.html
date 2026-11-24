@@ -3,12 +3,51 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WatermelonPGP: OpenPGP for your file transfers</title>
-<meta name="description" content="Self-hosted, single-binary tool to manage your customers' OpenPGP keys and automatically encrypt or decrypt the files your SFTP transfers pick up and drop off. Web UI, audit log, open source.">
+<title>WatermelonPGP: self-hosted PGP encryption for SFTP file transfers</title>
+<meta name="description" content="WatermelonPGP is an open-source, self-hosted tool to manage your customers' OpenPGP keys and automatically encrypt or decrypt files for SFTP transfers. One binary, web UI, audit log, GnuPG compatible.">
+<link rel="canonical" href="https://tarannum22.github.io/watermelon-pgp/">
+<meta name="theme-color" content="#1b7a43">
 <link rel="icon" href="img/logo.svg" type="image/svg+xml">
-<meta property="og:title" content="WatermelonPGP">
-<meta property="og:description" content="OpenPGP keys and folder encryption jobs for file transfers, in one self-hosted binary with a web UI and an audit log.">
-<meta property="og:image" content="https://tarannum22.github.io/watermelon-pgp/img/dashboard.png">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WatermelonPGP">
+<meta property="og:url" content="https://tarannum22.github.io/watermelon-pgp/">
+<meta property="og:title" content="WatermelonPGP: self-hosted PGP encryption for SFTP file transfers">
+<meta property="og:description" content="OpenPGP key management and automatic folder encryption for file transfers, in one self-hosted binary with a web UI and an audit log. Open source.">
+<meta property="og:image" content="https://tarannum22.github.io/watermelon-pgp/img/social-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="WatermelonPGP logo and dashboard">
+<meta name="twitter:card" content="summary_large_image">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "name": "WatermelonPGP",
+      "alternateName": ["Watermelon PGP", "watermelon-pgp"],
+      "url": "https://tarannum22.github.io/watermelon-pgp/"
+    },
+    {
+      "@type": "SoftwareApplication",
+      "name": "WatermelonPGP",
+      "alternateName": ["Watermelon PGP", "watermelon-pgp"],
+      "description": "Self-hosted tool to manage customers' OpenPGP keys and automatically encrypt or decrypt files for SFTP transfers, with a web UI and an audit log.",
+      "url": "https://tarannum22.github.io/watermelon-pgp/",
+      "image": "https://tarannum22.github.io/watermelon-pgp/img/social-card.png",
+      "screenshot": "https://tarannum22.github.io/watermelon-pgp/img/dashboard.png",
+      "applicationCategory": "SecurityApplication",
+      "operatingSystem": "Linux, macOS",
+      "softwareVersion": "0.1.0",
+      "license": "https://github.com/tarannum22/watermelon-pgp#license",
+      "downloadUrl": "https://github.com/tarannum22/watermelon-pgp/releases/latest",
+      "sameAs": ["https://github.com/tarannum22/watermelon-pgp"],
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+    }
+  ]
+}
+</script>
 <style>
 :root {
   --bg: #f7f8fa; --surface: #ffffff; --text: #16191d; --muted: #5b6673; --border: #e1e5ea;
@@ -158,13 +197,19 @@ footer a { color: var(--muted); }
   header nav a.hide-sm { display: none; }
   section { padding: 64px 0; } .hero { padding-top: 56px; }
 }
+
+/* FAQ */
+.faq { display: grid; gap: 10px; max-width: 820px; }
+.faq details { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; }
+.faq summary { cursor: pointer; font-weight: 650; }
+.faq details p { margin: 10px 0 2px; color: var(--muted); }
 </style>
 </head>
 <body>
 
 <header class="top">
   <div class="wrap">
-    <a class="brand" href="#"><img src="img/logo.svg" alt="" width="32" height="32">WatermelonPGP</a>
+    <a class="brand" href="./"><img src="img/logo.svg" alt="" width="32" height="32">WatermelonPGP</a>
     <nav>
       <a class="hide-sm" href="#how">How it works</a>
       <a class="hide-sm" href="#features">Features</a>
@@ -394,7 +439,40 @@ watermelon --data-dir ~/watermelon serve   <span class="c"># open http://127.0.0
   </div>
 </section>
 
-<section id="docs">
+<section id="faq">
+  <div class="wrap">
+    <p class="eyebrow">FAQ</p>
+    <h2>Questions people ask</h2>
+    <div class="faq">
+      <details>
+        <summary>What is WatermelonPGP?</summary>
+        <p>An open-source, self-hosted tool for automated PGP file exchange. It keeps your customers' OpenPGP keys in one place and runs jobs that encrypt or decrypt every file dropped into a folder, so your SFTP transfers only ever pick up finished, encrypted files. It's a single Rust binary with a web UI and an audit log.</p>
+      </details>
+      <details>
+        <summary>How do I automatically PGP-encrypt files before an SFTP upload?</summary>
+        <p>Import your customer's public key, then create an encrypt job: the input folder your system writes to, the output folder your SFTP transfer reads from, and the customer's key as recipient. Each new file is encrypted once it's completely written, published to the output folder, and the original is archived.</p>
+      </details>
+      <details>
+        <summary>Can it decrypt incoming files from partners?</summary>
+        <p>Yes. A decrypt job uses your secret key to decrypt everything that arrives in its input folder and can require a valid signature from the sender's key. Files that can't be decrypted or verified go to a <code>failed/</code> folder with the reason.</p>
+      </details>
+      <details>
+        <summary>Is it compatible with GnuPG?</summary>
+        <p>Yes. Keys and files are standard OpenPGP, tested against GnuPG 2.2 to 2.5. You can import keys exported from <code>gpg</code>, and your partners can decrypt with <code>gpg</code>.</p>
+      </details>
+      <details>
+        <summary>Where are the secret keys stored?</summary>
+        <p>On your own server, in a local SQLite database, with secret keys encrypted under a master key. Nothing is sent to a cloud service.</p>
+      </details>
+      <details>
+        <summary>What does it cost, and where does it run?</summary>
+        <p>It's free and open source under MIT or Apache-2.0. It runs on Linux and macOS: install with Homebrew, run the Docker image, or download the binary. Windows Server support is planned.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="docs">
   <div class="wrap">
     <p class="eyebrow">Documentation</p>
     <h2>Everything you need to run it in production</h2>
