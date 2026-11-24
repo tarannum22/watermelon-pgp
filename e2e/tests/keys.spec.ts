@@ -32,8 +32,10 @@ test("import a partner's public key by pasting it", async ({ page }) => {
   const armored = partnerPublicKey("Brightwave SFTP <sftp@brightwave.example>");
 
   await page.goto(customerUrl);
-  await page.getByLabel("…or paste an armored key").fill(armored);
-  await page.getByRole("button", { name: "Import" }).click();
+  await page.getByRole("button", { name: "Import keys" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Import keys" });
+  await dialog.getByLabel("…or paste an armored key").fill(armored);
+  await dialog.getByRole("button", { name: "Import", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("Imported or updated Brightwave SFTP");
 
   const row = page.locator(".key-row", { hasText: "sftp@brightwave.example" });

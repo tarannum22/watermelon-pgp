@@ -3,7 +3,7 @@ use axum::{
     http::header,
     response::{IntoResponse, Redirect, Response},
 };
-use maud::{Markup, Render, html};
+use maud::{Markup, html};
 use serde::Deserialize;
 use watermelon_pgp_core::{
     audit::{Actor, Filter},
@@ -81,46 +81,50 @@ fn key_row(key: &KeyRecord, with_customer: bool) -> Markup {
     }
 }
 
-pub fn generate_form(csrf: &str, customer: &Customer) -> Markup {
+/// The "Generate a key pair" dialog, opened by `.opens("generate-key")`.
+pub fn generate_modal(csrf: &str, customer: &Customer) -> Markup {
     let placeholder = format!("{} <pgp@example.com>", customer.name);
-    ui::panel(html! {
-        form.form method="post" action={ "/customers/" (customer.id) "/keys/generate" } {
-            (views::csrf_field(csrf))
-            (ui::field("User ID", Some("Name and email address partners will see on the key."), html! {
-                input type="text" name="user_id" required maxlength="500" placeholder=(placeholder);
-            }))
-            (ui::field("Algorithm", None, html! {
-                select name="algorithm" {
-                    option value="curve25519" selected { "Ed25519 + Cv25519 (recommended)" }
-                    option value="rsa4096" { "RSA 4096 (for older partners; slow to generate)" }
-                }
-            }))
-            div.actions { (ui::button("Generate key pair").primary().icon(icons::KEY)) }
-        }
-    })
-    .title("Generate a key pair")
-    .icon(icons::KEY)
-    .render()
+    ui::modal(
+        "generate-key",
+        "Generate a key pair",
+        html! {
+            form.form method="post" action={ "/customers/" (customer.id) "/keys/generate" } {
+                (views::csrf_field(csrf))
+                (ui::field("User ID", Some("Name and email address partners will see on the key."), html! {
+                    input type="text" name="user_id" required maxlength="500" placeholder=(placeholder) autofocus;
+                }))
+                (ui::field("Algorithm", None, html! {
+                    select name="algorithm" {
+                        option value="curve25519" selected { "Ed25519 + Cv25519 (recommended)" }
+                        option value="rsa4096" { "RSA 4096 (for older partners; slow to generate)" }
+                    }
+                }))
+                div.actions { (ui::button("Generate key pair").primary().icon(icons::KEY)) }
+            }
+        },
+    )
 }
 
-pub fn import_form(csrf: &str, customer: &Customer) -> Markup {
-    ui::panel(html! {
-        form.form method="post" action={ "/customers/" (customer.id) "/keys/import" }
-            enctype="multipart/form-data" {
-            (views::csrf_field(csrf))
-            (ui::field("Key file", Some("Armored (.asc) or binary (.gpg, .pgp)."), html! { input type="file" name="file"; }))
-            (ui::field("…or paste an armored key", None, html! {
-                textarea name="armored" rows="4" placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----" {}
-            }))
-            (ui::optional_field("Passphrase", Some("Only for protected secret keys. Secret keys are re-encrypted under the master key; the passphrase is not kept."), html! {
-                input type="password" name="passphrase" autocomplete="off";
-            }))
-            div.actions { (ui::button("Import").primary().icon(icons::UPLOAD)) }
-        }
-    })
-    .title("Import keys")
-    .icon(icons::UPLOAD)
-    .render()
+/// The "Import keys" dialog, opened by `.opens("import-keys")`.
+pub fn import_modal(csrf: &str, customer: &Customer) -> Markup {
+    ui::modal(
+        "import-keys",
+        "Import keys",
+        html! {
+            form.form method="post" action={ "/customers/" (customer.id) "/keys/import" }
+                enctype="multipart/form-data" {
+                (views::csrf_field(csrf))
+                (ui::field("Key file", Some("Armored (.asc) or binary (.gpg, .pgp)."), html! { input type="file" name="file"; }))
+                (ui::field("…or paste an armored key", None, html! {
+                    textarea name="armored" rows="5" placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----" {}
+                }))
+                (ui::optional_field("Passphrase", Some("Only for protected secret keys. Secret keys are re-encrypted under the master key; the passphrase is not kept."), html! {
+                    input type="password" name="passphrase" autocomplete="off";
+                }))
+                div.actions { (ui::button("Import").primary().icon(icons::UPLOAD)) }
+            }
+        },
+    )
 }
 
 /// Which keys the list shows.
@@ -260,14 +264,16 @@ pub async fn show(
                     @if key.has_secret { "Key pair: we hold the secret key." } @else { "Public key of a partner." }
                 }))
 
-            div.grid-2 {
-                (ui::panel(html! {
+            (ui::panel(html! {
+                div.key-details {
                     (ui::fingerprint_box(&key.fingerprint))
                     dl.kv {
                         dt { "User IDs" } dd { @for uid in &key.user_ids { div { (uid) } } }
                         dt { "Customer" } dd { a href=(customer_url) { (key.customer_name) } }
                         dt { "Algorithm" } dd { (key.algorithm) }
                         dt { "Can" } dd { (views::key_capabilities(&key)) }
+                    }
+                    dl.kv {
                         dt { "Created" } dd { (views::timestamp(key.created_at)) }
                         dt { "Expires" } dd { @match key.expires_at { Some(at) => (views::timestamp(at)), None => "never" } }
                         dt { "Added" } dd { (views::timestamp(key.added_at)) }
@@ -275,30 +281,30 @@ pub async fn show(
                             @if used_by.is_empty() { span.muted { "none" } } @else { (used_by.join(", ")) }
                         }
                     }
-                }).title("Key").icon(icons::FINGERPRINT))
+                }
+            }).title("Key").icon(icons::FINGERPRINT))
 
-                div.stack {
-                    (ui::panel(html! {
+            div.grid-2 {
+                (ui::panel(html! {
+                    // A download, not a page: keep htmx out of it.
+                    form.form.fill method="post" action={ (base) "/public" } hx-boost="false" {
+                        (views::csrf_field(&auth.csrf))
                         p { "Share this with partners so they can encrypt to us or check our signatures." }
-                        // A download, not a page: keep htmx out of it.
-                        form method="post" action={ (base) "/public" } hx-boost="false" {
-                            (views::csrf_field(&auth.csrf))
-                            (ui::button("Download public key (.asc)").icon(icons::DOWNLOAD))
-                        }
-                    }).title("Public key").icon(icons::DOWNLOAD))
-                    @if key.has_secret {
-                        (ui::panel(html! {
-                            form.form method="post" action={ (base) "/secret" } hx-boost="false" {
-                                (views::csrf_field(&auth.csrf))
-                                p.hint { "The export is protected with a new passphrase. Exports are audited." }
-                                div.form-row {
-                                    (ui::field("New passphrase", None, html! { input type="password" name="passphrase" required minlength=(min_passphrase) autocomplete="new-password"; }))
-                                    (ui::field("Repeat passphrase", None, html! { input type="password" name="repeat" required minlength=(min_passphrase) autocomplete="new-password"; }))
-                                }
-                                div.actions { (ui::button("Download secret key (.asc)").icon(icons::LOCK)) }
-                            }
-                        }).title("Export secret key").icon(icons::LOCK))
+                        div.actions { (ui::button("Download public key (.asc)").icon(icons::DOWNLOAD)) }
                     }
+                }).title("Public key").icon(icons::DOWNLOAD))
+                @if key.has_secret {
+                    (ui::panel(html! {
+                        form.form.fill method="post" action={ (base) "/secret" } hx-boost="false" {
+                            (views::csrf_field(&auth.csrf))
+                            p { "The export is protected with a new passphrase. Exports are audited." }
+                            div.form-row {
+                                (ui::field("New passphrase", None, html! { input type="password" name="passphrase" required minlength=(min_passphrase) autocomplete="new-password"; }))
+                                (ui::field("Repeat passphrase", None, html! { input type="password" name="repeat" required minlength=(min_passphrase) autocomplete="new-password"; }))
+                            }
+                            div.actions { (ui::button("Download secret key (.asc)").icon(icons::LOCK)) }
+                        }
+                    }).title("Export secret key").icon(icons::LOCK))
                 }
             }
 
@@ -308,16 +314,16 @@ pub async fn show(
                 .actions(views::activity_search(Some(("key", key.fingerprint.clone()))))
                 .flush())
 
-            div.grid-2 {
-                @if key.has_secret && !key.revoked {
-                    (ui::panel(html! {
+            @if key.has_secret && !key.revoked {
+                (ui::panel(html! {
+                    form.form method="post" action={ (base) "/revoke" } {
+                        (views::csrf_field(&auth.csrf))
                         p {
                             "Revoking tells everyone who has the public key to stop using it. It cannot be undone. "
                             "Jobs encrypting to or signing with this key pause; it can still decrypt older files. "
                             "Afterwards, send partners the public key again so they learn about the revocation."
                         }
-                        form.form method="post" action={ (base) "/revoke" } {
-                            (views::csrf_field(&auth.csrf))
+                        div.form-row {
                             (ui::field("Reason", None, html! {
                                 select name="reason" {
                                     option value="superseded" { "Replaced by a new key" }
@@ -327,24 +333,24 @@ pub async fn show(
                                 }
                             }))
                             (ui::optional_field("Comment", None, html! { input type="text" name="comment" maxlength="500"; }))
-                            (ui::confirm("Revoke this key permanently"))
-                            div.actions { (ui::button("Revoke key").danger().icon(icons::BAN)) }
                         }
-                    }).title("Revoke key").icon(icons::BAN).tone(Tone::Bad))
-                }
-                (ui::panel(html! {
-                    @if used_by.is_empty() {
-                        p { "Deleted keys stay in the database so the audit log keeps resolving, but can no longer be used." }
-                        form.form method="post" action={ (base) "/delete" } {
-                            (views::csrf_field(&auth.csrf))
-                            (ui::confirm("Delete this key"))
-                            div.actions { (ui::button("Delete key").danger().icon(icons::TRASH)) }
-                        }
-                    } @else {
-                        p { "This key is used by " (used_by.join(", ")) ". Change or delete those jobs first." }
+                        (ui::confirm("Revoke this key permanently"))
+                        div.actions { (ui::button("Revoke key").danger().icon(icons::BAN)) }
                     }
-                }).title("Delete key").icon(icons::TRASH).tone(Tone::Bad))
+                }).title("Revoke key").icon(icons::BAN).tone(Tone::Bad))
             }
+            (ui::panel(html! {
+                @if used_by.is_empty() {
+                    form.form method="post" action={ (base) "/delete" } {
+                        (views::csrf_field(&auth.csrf))
+                        p { "Deleted keys stay in the database so the audit log keeps resolving, but can no longer be used." }
+                        (ui::confirm("Delete this key"))
+                        div.actions { (ui::button("Delete key").danger().icon(icons::TRASH)) }
+                    }
+                } @else {
+                    p { "This key is used by " (used_by.join(", ")) ". Change or delete those jobs first." }
+                }
+            }).title("Delete key").icon(icons::TRASH).tone(Tone::Bad))
         },
     ))
 }

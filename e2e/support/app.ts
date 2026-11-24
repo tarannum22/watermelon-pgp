@@ -28,8 +28,10 @@ export async function createCustomer(page: Page, name: string): Promise<string> 
 /** Generate a key pair on the customer's page and return its fingerprint. */
 export async function generateKey(page: Page, customerUrl: string, userId: string): Promise<string> {
   await page.goto(customerUrl);
-  await page.getByLabel("User ID").fill(userId);
-  await page.getByRole("button", { name: "Generate key pair" }).click();
+  await page.getByRole("button", { name: "Generate key pair" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Generate a key pair" });
+  await dialog.getByLabel("User ID").fill(userId);
+  await dialog.getByRole("button", { name: "Generate key pair" }).click();
   await expect(page.getByRole("status")).toContainText("Generated key");
   await page.getByRole("link", { name: userId.split(" <")[0], exact: true }).click();
   const fingerprint = await page.locator(".fpr-box button.copy").getAttribute("data-copy");

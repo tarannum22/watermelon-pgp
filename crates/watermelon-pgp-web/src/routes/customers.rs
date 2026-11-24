@@ -126,14 +126,28 @@ pub async fn show(
                     (ui::button("New job").primary().icon(icons::PLUS).href(&new_job))
                 }))
 
-            (ui::panel(keys::key_list(&keys.iter().collect::<Vec<_>>(), false))
-                .title("Keys")
-                .icon(icons::KEY)
-                .flush())
-            div.grid-2 {
-                (keys::generate_form(&auth.csrf, &customer))
-                (keys::import_form(&auth.csrf, &customer))
-            }
+            (ui::panel(html! {
+                @if keys.is_empty() {
+                    (ui::empty(icons::KEY, "No keys yet", "Generate a key pair, or import the public key the customer sent you.",
+                        Some(html! {
+                            div.btn-row {
+                                (ui::button("Generate key pair").primary().icon(icons::KEY).opens("generate-key"))
+                                (ui::button("Import keys").icon(icons::UPLOAD).opens("import-keys"))
+                            }
+                        })))
+                } @else {
+                    (keys::key_list(&keys.iter().collect::<Vec<_>>(), false))
+                }
+            })
+            .title("Keys")
+            .icon(icons::KEY)
+            .actions(html! {
+                (ui::button("Import keys").small().icon(icons::UPLOAD).opens("import-keys"))
+                (ui::button("Generate key pair").small().icon(icons::KEY).opens("generate-key"))
+            })
+            .flush())
+            (keys::generate_modal(&auth.csrf, &customer))
+            (keys::import_modal(&auth.csrf, &customer))
 
             (ui::panel(html! {
                 @if jobs.is_empty() {

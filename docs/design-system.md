@@ -73,7 +73,9 @@ failures and danger, amber for things that need attention.
 | Theme switch | `ui::theme_switch(csrf, theme)` | System / light / dark |
 | Terminal | `ui::terminal(text)` | Commands and armored text |
 
-Tables use `table.table` inside a flush panel; key-value details use `dl.kv`.
+Tables use `table.table` inside a flush panel; key-value details use `dl.kv`. Panels in a
+`div.grid-2` row get the same height; give the forms of a pair of panels `form.form.fill` to
+line their buttons up at the bottom.
 
 ## Rules
 
