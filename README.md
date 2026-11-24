@@ -40,7 +40,8 @@ from and write to.
   `target/release/watermelon`.
 
 To run it as a service, see [docs/deployment.md](docs/deployment.md): systemd, Docker, HTTPS,
-the master key, logs, backups and upgrades.
+the master key, logs, backups and upgrades. All commands and options are in
+[docs/cli.md](docs/cli.md).
 
 ## Quick start
 
@@ -82,8 +83,8 @@ watermelon audit
 watermelon backup /backups/watermelon.db    # the master key is NOT included: back it up separately
 ```
 
-`watermelon --help` and `watermelon <command> --help` list everything. `watermelon run` runs the
-jobs without the web UI.
+Every command and option is explained in the **[command-line reference](docs/cli.md)**;
+`watermelon --help` and `watermelon <command> --help` show the same on the terminal.
 
 For scripted setups, `--passphrase-stdin` reads passwords from stdin instead of prompting, and
 `WATERMELON_MASTER_KEY` (hex) can supply the master key instead of the keyfile.

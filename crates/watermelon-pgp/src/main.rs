@@ -62,13 +62,17 @@ enum Command {
     /// Manage keys.
     #[command(subcommand)]
     Key(KeyCommand),
-    /// Show the most recent audit log entries.
+    /// Show the most recent audit log entries, newest first.
     Audit {
+        /// How many entries to show.
         #[arg(long, default_value_t = 50)]
         limit: u32,
     },
     /// Write a consistent snapshot of the database. Does NOT include the master key.
-    Backup { dest: PathBuf },
+    Backup {
+        /// File to write; must not exist yet.
+        dest: PathBuf,
+    },
     /// Change the admin password.
     Passwd,
     /// Manage folder jobs.
@@ -76,7 +80,8 @@ enum Command {
     Job(JobCommand),
     /// Serve the web UI and run all enabled jobs until stopped (Ctrl-C or SIGTERM).
     Serve {
-        /// Address to listen on. Anything but loopback should sit behind a TLS reverse proxy.
+        /// Address and port to listen on. For anything but loopback, use --tls-cert/--tls-key or
+        /// a TLS-terminating reverse proxy.
         #[arg(long, env = "WATERMELON_BIND", default_value = "127.0.0.1:8080")]
         bind: std::net::SocketAddr,
         /// Jobs processed in parallel [default: number of CPUs].
@@ -106,24 +111,32 @@ enum JobCommand {
     /// Create a job.
     #[command(subcommand)]
     Add(AddJob),
-    /// List jobs.
+    /// List jobs with their state and folders.
     List,
-    /// Show one job (by ID or name).
+    /// Show one job's settings and state.
     Show {
+        /// Job ID or name.
         job: String,
     },
-    /// Enable a job, or resume a paused one.
+    /// Enable a job, or resume a paused one (its keys are checked again).
     Enable {
+        /// Job ID or name.
         job: String,
     },
+    /// Stop a job from running; it keeps its settings.
     Disable {
+        /// Job ID or name.
         job: String,
     },
+    /// Delete a job. Its folders and files are left alone; the audit log keeps its history.
     Delete {
+        /// Job ID or name.
         job: String,
     },
-    /// Run one polling pass now, waiting for files to settle first.
+    /// Run one polling pass now, waiting for files to settle first. Useful for testing a job
+    /// or running it from cron instead of `serve`/`run`.
     RunOnce {
+        /// Job ID or name.
         job: String,
         /// Seconds a file must stay unchanged before it is processed.
         #[arg(long, default_value_t = 2)]
@@ -171,12 +184,16 @@ enum AddJob {
 
 #[derive(clap::Args)]
 struct CommonJobArgs {
+    /// Customer the job belongs to.
     #[arg(long)]
     customer: String,
+    /// Job name, unique per customer.
     #[arg(long)]
     name: String,
+    /// Folder to watch. Must exist.
     #[arg(long)]
     input: PathBuf,
+    /// Folder the results are written to. Must exist.
     #[arg(long)]
     output: PathBuf,
     /// Where processed source files go [default: <input>/processed].
@@ -188,7 +205,8 @@ struct CommonJobArgs {
     /// Where failed source files go [default: <input>/failed].
     #[arg(long)]
     failed: Option<PathBuf>,
-    /// Seconds between scans of the input folder.
+    /// Seconds between scans of the input folder (at least 5). A file is processed once it is
+    /// unchanged across two scans.
     #[arg(long, default_value_t = 30)]
     interval: u32,
 }
@@ -202,7 +220,12 @@ enum PolicyArg {
 
 #[derive(Subcommand)]
 enum CustomerCommand {
-    Add { name: String },
+    /// Create a customer.
+    Add {
+        /// Unique name, e.g. "ACME".
+        name: String,
+    },
+    /// List customers with their number of keys.
     List,
 }
 
@@ -210,22 +233,28 @@ enum CustomerCommand {
 enum KeyCommand {
     /// Generate a new key pair.
     Gen {
+        /// Customer the key belongs to.
         #[arg(long)]
         customer: String,
         /// User ID, e.g. "ACME Exports <exports@acme.example>".
         #[arg(long)]
         uid: String,
+        /// curve25519 (Ed25519 + Cv25519) is recommended; rsa4096 for partners whose software
+        /// can't handle it. Both are readable by GnuPG 2.2 and later.
         #[arg(long, value_enum, default_value_t = AlgorithmArg::Curve25519)]
         algorithm: AlgorithmArg,
     },
     /// Import public and/or secret keys from a file (armored or binary).
     Import {
+        /// Customer the keys belong to.
         #[arg(long)]
         customer: String,
+        /// Key file. Protected secret keys prompt for their passphrase.
         file: PathBuf,
     },
     /// List keys.
     List {
+        /// Only this customer's keys.
         #[arg(long)]
         customer: Option<String>,
     },
@@ -233,17 +262,23 @@ enum KeyCommand {
     Export {
         /// Fingerprint or key ID.
         key: String,
+        /// Export the secret key; prompts for a new passphrase to protect it.
         #[arg(long)]
         secret: bool,
         /// Output file [default: stdout].
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Delete a key (it stays in the database for the audit trail).
-    Delete { key: String },
+    /// Delete a key (it stays in the database for the audit trail). Refused while jobs use it.
+    Delete {
+        /// Fingerprint or key ID.
+        key: String,
+    },
     /// Revoke one of our keys. Give partners the new public key (`key export`) afterwards.
     Revoke {
+        /// Fingerprint or key ID.
         key: String,
+        /// Why the key is revoked; recorded in the revocation.
         #[arg(long, value_enum, default_value_t = ReasonArg::Unspecified)]
         reason: ReasonArg,
         /// Free-text explanation stored in the revocation.
@@ -254,9 +289,13 @@ enum KeyCommand {
 
 #[derive(Clone, Copy, ValueEnum)]
 enum ReasonArg {
+    /// No reason given.
     Unspecified,
+    /// Replaced by a new key.
     Superseded,
+    /// The secret key may have leaked.
     Compromised,
+    /// No longer used.
     Retired,
 }
 
