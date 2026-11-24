@@ -204,6 +204,7 @@ footer a { color: var(--muted); }
 .faq details { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; }
 .faq summary { cursor: pointer; font-weight: 650; }
 .faq details p { margin: 10px 0 2px; color: var(--muted); }
+.soon { color: var(--muted); font-size: .9em; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -238,7 +239,7 @@ footer a { color: var(--muted); }
       <div class="chrome"><i></i><i></i><i></i></div>
       <picture>
         <source srcset="img/dashboard-dark.png" media="(prefers-color-scheme: dark)">
-        <img src="img/dashboard.png" alt="The watermelon-pgp dashboard: running jobs, files processed and failed in the last 24 hours, keys, and recent activity" width="1600" height="1012">
+        <img src="img/dashboard.png" alt="The WatermelonPGP dashboard: running jobs, files processed and failed in the last 24 hours, keys, and recent activity" width="1600" height="1012">
       </picture>
     </div>
   </div>
@@ -263,8 +264,8 @@ footer a { color: var(--muted); }
   <div class="wrap">
     <p class="eyebrow">How it works</p>
     <h2>Watched folders that encrypt or decrypt everything dropped into them</h2>
-    <p class="section-lead">A job connects an input folder to an output folder with the right keys. Your ERP, a report generator or a partner's upload writes a file; watermelon picks it up once it's complete and hands the result to your SFTP transfer.</p>
-    <div class="flow" aria-label="Files flow from the source system into a watched folder, through watermelon-pgp, into an output folder for SFTP">
+    <p class="section-lead">A job connects an input folder to an output folder with the right keys. Your ERP, a report generator or a partner's upload writes a file; WatermelonPGP picks it up once it's complete and hands the result to your SFTP transfer.</p>
+    <div class="flow" aria-label="Files flow from the source system into a watched folder, through WatermelonPGP, into an output folder for SFTP">
       <div class="node"><strong>Your system</strong><small>ERP, reports, exports</small></div>
       <div class="arrow">→</div>
       <div class="node main"><strong>WatermelonPGP</strong><small>encrypt to the customer's key,<br>sign with yours</small></div>
@@ -288,7 +289,7 @@ footer a { color: var(--muted); }
       <div class="feature">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>
         <h3>Keys per customer</h3>
-        <p>Every key belongs to a customer, so you always know whose it is.</p>
+        <p>Keys belong to a customer, so you always know whose they are. Keys of your own that serve several customers can stay anonymous <span class="soon">(coming in 0.2.0)</span>.</p>
         <ul>
           <li>Generate Ed25519/Cv25519 or RSA-4096 keys</li>
           <li>Import public and secret keys, armored or binary</li>
@@ -337,7 +338,7 @@ footer a { color: var(--muted); }
         <ul>
           <li>Dashboard with running and paused jobs, failures and expiring keys</li>
           <li>Works without JavaScript; light and dark mode</li>
-          <li>Everything also available as <code>watermelon</code> commands</li>
+          <li>Everything also available on the command line (<code>watermelon</code>)</li>
         </ul>
       </div>
       <div class="feature">
@@ -403,7 +404,7 @@ footer a { color: var(--muted); }
   <div class="wrap">
     <p class="eyebrow">Install</p>
     <h2>Up and running in two minutes</h2>
-    <p class="section-lead">Pick whatever fits your servers. All of them give you the same single <code>watermelon</code> binary.</p>
+    <p class="section-lead">Pick whatever fits your servers. All of them give you the same single WatermelonPGP binary, run as <code>watermelon</code>.</p>
     <div class="install">
       <div class="card">
         <h3>Homebrew</h3>
