@@ -21,7 +21,7 @@ use serde::Deserialize;
 use watermelon_pgp_core::{jobs::Job, store::Customer};
 
 use crate::{
-    AppState,
+    AppState, assets,
     auth::{Authed, Flash},
     error::AppError,
     views::{AuditNames, Nav, Page},
@@ -149,47 +149,19 @@ async fn health(state: axum::extract::State<AppState>) -> Response {
     }
 }
 
-/// The stylesheet, assembled at compile time from the design system's layers.
-const APP_CSS: &str = concat!(
-    include_str!("../../assets/css/tokens.css"),
-    include_str!("../../assets/css/base.css"),
-    include_str!("../../assets/css/layout.css"),
-    include_str!("../../assets/css/components.css"),
-    include_str!("../../assets/css/pages.css"),
-);
-
-/// Assets are embedded in the binary. URLs carry the version (fonts: in the file name), so
-/// they can be cached forever.
+/// Static files. URLs carry a hash of the content (see `assets`), so they can be cached forever.
 async fn static_file(Path(file): Path<String>) -> Response {
-    let (content_type, body): (&str, &'static [u8]) = match file.as_str() {
-        "htmx.min.js" => (
-            "text/javascript; charset=utf-8",
-            include_bytes!("../../assets/htmx.min.js"),
-        ),
-        "app.js" => (
-            "text/javascript; charset=utf-8",
-            include_bytes!("../../assets/app.js"),
-        ),
-        "app.css" => ("text/css; charset=utf-8", APP_CSS.as_bytes()),
-        "logo.svg" => ("image/svg+xml", include_bytes!("../../assets/logo.svg")),
-        "geist-1.9.0.woff2" => (
-            "font/woff2",
-            include_bytes!("../../assets/fonts/geist-1.9.0.woff2"),
-        ),
-        "jetbrains-mono-5.3.0.woff2" => (
-            "font/woff2",
-            include_bytes!("../../assets/fonts/jetbrains-mono-5.3.0.woff2"),
-        ),
-        _ => return AppError::not_found("no such file").into_response(),
-    };
-    (
-        [
-            (header::CONTENT_TYPE, content_type),
-            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
-        ],
-        body,
-    )
-        .into_response()
+    match assets::get(&file) {
+        Some((content_type, body)) => (
+            [
+                (header::CONTENT_TYPE, content_type),
+                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+            ],
+            body,
+        )
+            .into_response(),
+        None => AppError::not_found("no such file").into_response(),
+    }
 }
 
 /// `?customer=` style query values: blank means "not set".

@@ -694,6 +694,27 @@ async fn admin_password_can_be_changed() {
 }
 
 #[tokio::test]
+async fn asset_urls_carry_a_hash_of_the_content() {
+    // Browsers cache assets forever, so a changed file must get a new URL, even when the
+    // version number doesn't change (a browser that saw an older build of the same version).
+    let app = App::new();
+    let login = app.get("/login", None).await.body;
+    for asset in ["app.css", "app.js", "htmx.min.js"] {
+        let prefix = format!("/static/{asset}?v=");
+        let start = login
+            .find(&prefix)
+            .unwrap_or_else(|| panic!("{asset} linked"))
+            + prefix.len();
+        let linked = &login[start..start + 12];
+        let served = app.get(&format!("/static/{asset}"), None).await;
+        let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+        sha2::Digest::update(&mut hasher, served.body.as_bytes());
+        let hash = hex::encode(sha2::Digest::finalize(hasher));
+        assert_eq!(linked, &hash[..12], "{asset}");
+    }
+}
+
+#[tokio::test]
 async fn the_stylesheet_points_at_served_fonts() {
     let app = App::new();
     let css = app.get("/static/app.css", None).await.body;

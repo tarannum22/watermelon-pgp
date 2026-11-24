@@ -5,6 +5,7 @@ use maud::{DOCTYPE, Markup, Render, html};
 use watermelon_pgp_core::{audit::AuditEvent, jobs::Job, store::KeyRecord};
 
 use crate::{
+    assets,
     auth::{CSRF_FIELD, Flash},
     ui::{self, Theme, Tone, icons},
 };
@@ -40,7 +41,7 @@ pub struct Page<'a> {
 }
 
 pub fn asset(name: &str) -> String {
-    format!("/static/{name}?v={VERSION}")
+    assets::url(name)
 }
 
 fn head(title: &str) -> Markup {

@@ -3,6 +3,7 @@
 //! Every page works without JavaScript. All state lives in the vault; the only in-memory state
 //! is login sessions and the login rate limiter, so a restart logs everyone out.
 
+mod assets;
 mod auth;
 mod error;
 mod routes;
