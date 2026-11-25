@@ -20,8 +20,8 @@ use watermelon_pgp_core::{
 };
 
 use crate::{
-    process::{self, JobKeys},
-    scan::{self, Scanner},
+    process::{self, JobKeys, ProcessError},
+    scan::Scanner,
 };
 
 /// What one polling pass did.
@@ -186,15 +186,13 @@ enum Outcome {
     Processed(String),
     /// Failed, and moved to the failed folder if possible; the audit detail.
     Failed(String),
-    /// Opened by another process since the scan (Windows): left alone for a later pass.
+    /// Windows: another process has it open for writing. Left alone for a later pass, without
+    /// an audit entry.
     Busy,
 }
 
 /// Process one file and move the source away.
 fn handle_file(job: &Job, keys: &JobKeys, input: &Path) -> Outcome {
-    if scan::in_use(input) {
-        return Outcome::Busy;
-    }
     let name = input.file_name().unwrap_or_default().to_string_lossy();
     match process::process_file(&job.spec, keys, input) {
         Ok(done) => {
@@ -218,7 +216,8 @@ fn handle_file(job: &Job, keys: &JobKeys, input: &Path) -> Outcome {
             }
             Outcome::Processed(detail)
         }
-        Err(error) => {
+        Err(ProcessError::InUse) => Outcome::Busy,
+        Err(ProcessError::Failed(error)) => {
             let sha256 = process::sha256_of(input).unwrap_or_else(|e| format!("unreadable: {e}"));
             let mut detail = format!("{name}: {error} (sha256 {sha256})");
             match process::move_into(input, &job.spec.failed_dir) {

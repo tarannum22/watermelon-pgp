@@ -12,6 +12,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use crate::platform;
 use sha2::{Digest, Sha256};
 use watermelon_pgp_core::{
     crypto::{self, EncryptOptions, SignatureCheck, SignedPublicKey, SignedSecretKey},
@@ -45,20 +46,52 @@ pub struct Processed {
     pub signature: Option<String>,
 }
 
+/// Why a file wasn't processed.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ProcessError {
+    /// Windows: another process has the input open for writing, such as an SFTP server still
+    /// receiving it. Nothing was done; try again later.
+    InUse,
+    /// The file can't be processed; the message says why.
+    Failed(String),
+}
+
+impl From<String> for ProcessError {
+    fn from(message: String) -> Self {
+        Self::Failed(message)
+    }
+}
+
+impl fmt::Display for ProcessError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InUse => f.write_str("in use by another process"),
+            Self::Failed(message) => f.write_str(message),
+        }
+    }
+}
+
 /// Process `input` according to `spec`. On error nothing is left in the output folder.
-pub fn process_file(spec: &JobSpec, keys: &JobKeys, input: &Path) -> Result<Processed, String> {
+pub fn process_file(
+    spec: &JobSpec,
+    keys: &JobKeys,
+    input: &Path,
+) -> Result<Processed, ProcessError> {
     let name = input
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| format!("file name is not valid UTF-8: {}", input.display()))?;
     let output = spec.output_dir.join(output_name(spec, name));
     if output.exists() {
-        return Err(format!("output {} already exists", output.display()));
+        return Err(format!("output {} already exists", output.display()).into());
     }
 
-    let mut reader = HashingReader::new(
-        open_input(input).map_err(|e| format!("opening {}: {e}", input.display()))?,
-    );
+    let input_file = match platform::open_input(input) {
+        Ok(file) => file,
+        Err(e) if platform::is_in_use(&e) => return Err(ProcessError::InUse),
+        Err(e) => return Err(format!("opening {}: {e}", input.display()).into()),
+    };
+    let mut reader = HashingReader::new(input_file);
     let temp =
         TempFile::create(&spec.output_dir, name).map_err(|e| format!("creating temp file: {e}"))?;
     let mut writer = BufWriter::new(temp.file());
@@ -103,21 +136,6 @@ pub fn process_file(spec: &JobSpec, keys: &JobKeys, input: &Path) -> Result<Proc
     })
 }
 
-/// Open an input file for processing. On Windows, other processes can still read it while we
-/// do, but can't change or delete it.
-fn open_input(path: &Path) -> io::Result<File> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        /// FILE_SHARE_READ.
-        const SHARE_READ: u32 = 0x1;
-        options.share_mode(SHARE_READ);
-    }
-    options.open(path)
-}
-
 /// SHA-256 of a file, for auditing files that failed before they were fully read.
 pub fn sha256_of(path: &Path) -> io::Result<String> {
     let mut reader = HashingReader::new(File::open(path)?);
@@ -158,20 +176,17 @@ pub fn move_into(file: &Path, dir: &Path) -> io::Result<PathBuf> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
     let mut target = dir.join(name);
     let mut n = 1;
-    while target.exists() {
-        target = dir.join(format!("{}.{n}", name.to_string_lossy()));
-        n += 1;
-    }
-    match fs::rename(file, &target) {
-        Ok(()) => {}
-        Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {
-            fs::copy(file, &target)?;
-            File::open(&target)?.sync_all()?;
-            fs::remove_file(file)?;
+    loop {
+        match platform::move_no_replace(file, &target) {
+            Ok(()) => return Ok(target),
+            // Taken (also by a file that appeared since we looked): try the next name.
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                target = dir.join(format!("{}.{n}", name.to_string_lossy()));
+                n += 1;
+            }
+            Err(e) => return Err(e),
         }
-        Err(e) => return Err(e),
     }
-    Ok(target)
 }
 
 pub fn output_name(spec: &JobSpec, input_name: &str) -> String {
@@ -241,18 +256,23 @@ impl TempFile {
             .sync_all()
             .map_err(|e| format!("syncing output: {e}"))?;
         // A hard link fails if the target exists, which makes "never overwrite" atomic.
-        // Filesystems without hard links fall back to a checked rename.
+        // Filesystems without hard links fall back to a move that refuses an existing target
+        // (atomically on Windows).
         match fs::hard_link(&self.path, target) {
             Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                 return Err(format!("output {} already exists", target.display()));
             }
-            Err(_) if !target.exists() => {
-                fs::rename(&self.path, target)
-                    .map_err(|e| format!("publishing {}: {e}", target.display()))?;
+            Err(_) => {
+                platform::move_no_replace(&self.path, target).map_err(|e| {
+                    if e.kind() == io::ErrorKind::AlreadyExists {
+                        format!("output {} already exists", target.display())
+                    } else {
+                        format!("publishing {}: {e}", target.display())
+                    }
+                })?;
                 self.published = true;
             }
-            Err(e) => return Err(format!("publishing {}: {e}", target.display())),
         }
         sync_dir(target.parent().unwrap_or(Path::new(".")));
         Ok(())
@@ -492,7 +512,7 @@ mod tests {
             &d.input.join("data.bin.pgp"),
         )
         .unwrap_err();
-        assert!(!err.is_empty());
+        assert!(matches!(&err, ProcessError::Failed(message) if !message.is_empty()));
         assert!(
             output_entries(&d.output).is_empty(),
             "no partial plaintext published"

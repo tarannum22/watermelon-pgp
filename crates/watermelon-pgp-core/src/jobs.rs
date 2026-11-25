@@ -5,10 +5,12 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
+pub use crate::platform::{FOLDER_EXAMPLES, FolderExamples};
 use crate::{
     Error, Result,
     audit::{self, Action, Actor, Entry},
     crypto::Container,
+    platform,
     store::KeyRecord,
     vault::{Vault, now},
 };
@@ -480,29 +482,6 @@ fn needs_secret_signing(key: &KeyRecord) -> std::result::Result<(), String> {
     Ok(())
 }
 
-/// Shown with "must be an absolute path".
-#[cfg(windows)]
-const ABSOLUTE_PATH_EXAMPLES: &str = r" (like D:\sftp\acme\in or \\server\share\acme\in)";
-#[cfg(not(windows))]
-const ABSOLUTE_PATH_EXAMPLES: &str = "";
-
-/// Whether two folder paths name the same folder as written. Windows paths are
-/// case-insensitive; `/` and `\` are already the same separator there.
-fn same_folder(a: &Path, b: &Path) -> bool {
-    #[cfg(windows)]
-    {
-        a.components()
-            .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
-            .eq(b
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy().to_lowercase()))
-    }
-    #[cfg(not(windows))]
-    {
-        a == b
-    }
-}
-
 fn validate_dirs(spec: &JobSpec) -> Result<()> {
     // The labels are also the job form's field names.
     let mut dirs = vec![
@@ -519,7 +498,7 @@ fn validate_dirs(spec: &JobSpec) -> Result<()> {
                 label,
                 format!(
                     "{label} folder must be an absolute path{}: {}",
-                    ABSOLUTE_PATH_EXAMPLES,
+                    platform::FOLDER_EXAMPLES.absolute_path_hint,
                     dir.display()
                 ),
             ));
@@ -535,7 +514,7 @@ fn validate_dirs(spec: &JobSpec) -> Result<()> {
     }
     for (i, (a_label, a)) in dirs.iter().enumerate() {
         for (b_label, b) in &dirs[i + 1..] {
-            if same_folder(a, b) {
+            if platform::same_folder(a, b) {
                 return Err(Error::invalid_field(
                     b_label,
                     format!("the {a_label} and {b_label} folders must differ"),
@@ -860,7 +839,15 @@ mod tests {
             ..base
         };
         let job = f.vault.create_job(Actor::Cli, f.customer, &spec).unwrap();
-        assert!(job.spec.input_dir.starts_with(r"\\localhost\"));
+        assert_eq!(job.spec.input_dir, spec.input_dir);
+        assert!(
+            job.spec
+                .input_dir
+                .to_string_lossy()
+                .starts_with(r"\\localhost\"),
+            "{}",
+            job.spec.input_dir.display()
+        );
     }
 
     /// `C:\dir` as `\\localhost\C$\dir`.

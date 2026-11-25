@@ -271,20 +271,40 @@ fn files_open_elsewhere_wait_until_released() {
     assert_eq!(names(&s.dir("out")), ["a.csv.pgp"]);
 }
 
-/// Moving a source to a folder on another filesystem (on Windows CI: from C: to D:) falls back
-/// to copy and delete.
+/// Windows: a processed source moves to `processed/` on another drive (on CI: the temp
+/// folder is on C:, the build directory on D:).
+#[cfg(windows)]
 #[test]
-fn move_into_another_filesystem() {
-    let source_dir = tempfile::tempdir().unwrap();
-    let target_root = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
-    let file = source_dir.path().join("a.csv");
-    fs::write(&file, "id\n1\n").unwrap();
+fn processed_folder_on_another_drive() {
+    let s = Setup::new();
+    let elsewhere = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let drive = |path: &Path| path.components().next().map(|c| c.as_os_str().to_owned());
+    assert_ne!(
+        drive(s.root.path()),
+        drive(elsewhere.path()),
+        "the test needs the two folders on different drives"
+    );
+    let mut spec = JobSpec::new("cross", JobKind::Encrypt, &s.dir("in"), &s.dir("out"));
+    spec.processed_dir = Some(elsewhere.path().join("processed"));
+    spec.recipients = vec![s.partner_fpr.clone()];
+    let job = s
+        .vault
+        .lock()
+        .unwrap()
+        .create_job(Actor::Cli, s.customer, &spec)
+        .unwrap()
+        .id;
+    fs::write(s.dir("in").join("a.csv"), "id\n1\n").unwrap();
 
-    let moved =
-        watermelon_pgp_jobs::process::move_into(&file, &target_root.path().join("processed"))
-            .unwrap();
-    assert!(!file.exists());
-    assert_eq!(fs::read(&moved).unwrap(), b"id\n1\n");
+    let mut scanner = Scanner::default();
+    run_pass(&s.vault, job, &mut scanner);
+    assert_eq!(run_pass(&s.vault, job, &mut scanner).processed, 1);
+    assert_eq!(names(&elsewhere.path().join("processed")), ["a.csv"]);
+    assert_eq!(
+        fs::read(elsewhere.path().join("processed").join("a.csv")).unwrap(),
+        b"id\n1\n"
+    );
+    assert!(!s.dir("in").join("a.csv").exists());
 }
 
 /// Windows: a job whose folders are UNC paths on a network share runs like any other. The

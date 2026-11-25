@@ -24,22 +24,6 @@ use crate::{
     views::{self, Nav, Page},
 };
 
-/// Example folders for the job form, in the server's own path style.
-#[cfg(windows)]
-mod example_folder {
-    pub const INPUT: &str = r"D:\sftp\acme\outbound";
-    pub const OUTPUT: &str = r"D:\sftp\acme\upload";
-    pub const PROCESSED: &str = r"<input>\processed";
-    pub const FAILED: &str = r"<input>\failed";
-}
-#[cfg(not(windows))]
-mod example_folder {
-    pub const INPUT: &str = "/srv/sftp/acme/outbound";
-    pub const OUTPUT: &str = "/srv/sftp/acme/upload";
-    pub const PROCESSED: &str = "<input>/processed";
-    pub const FAILED: &str = "<input>/failed";
-}
-
 /// The job form's fields, as submitted. Kept as strings so a rejected form can be shown again
 /// exactly as the user filled it in.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -282,21 +266,21 @@ fn form_page(
                     div.form {
                         div.form-row {
                             (ui::form_field("Input folder (watched)", html! {
-                                input type="text" name="input" value=(form.input) required placeholder=(example_folder::INPUT)
+                                input type="text" name="input" value=(form.input) required placeholder=(jobs::FOLDER_EXAMPLES.input)
                                     aria-invalid=[invalid("input")] aria-describedby=[described("input")];
                             }).error("input", problem("input")))
                             (ui::form_field("Output folder", html! {
-                                input type="text" name="output" value=(form.output) required placeholder=(example_folder::OUTPUT)
+                                input type="text" name="output" value=(form.output) required placeholder=(jobs::FOLDER_EXAMPLES.output)
                                     aria-invalid=[invalid("output")] aria-describedby=[described("output")];
                             }).error("output", problem("output")))
                         }
                         div.form-row {
                             (ui::form_field("Processed files go to", html! {
-                                input type="text" name="processed" value=(form.processed) placeholder=(example_folder::PROCESSED)
+                                input type="text" name="processed" value=(form.processed) placeholder=(jobs::FOLDER_EXAMPLES.processed)
                                     aria-invalid=[invalid("processed")] aria-describedby=[described("processed")];
                             }).optional().error("processed", problem("processed")))
                             (ui::form_field("Failed files go to", html! {
-                                input type="text" name="failed" value=(form.failed) placeholder=(example_folder::FAILED)
+                                input type="text" name="failed" value=(form.failed) placeholder=(jobs::FOLDER_EXAMPLES.failed)
                                     aria-invalid=[invalid("failed")] aria-describedby=[described("failed")];
                             }).optional().error("failed", problem("failed")))
                         }

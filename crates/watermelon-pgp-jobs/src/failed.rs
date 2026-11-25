@@ -68,16 +68,12 @@ pub fn retry(vault: &Vault, actor: Actor, job: &Job, name: &str) -> Result<PathB
     Ok(target)
 }
 
-/// A bare file name that stays inside the folder it's joined to. On Windows that also rules
-/// out `:`: `C:name` is relative to drive C: and replaces the folder in `Path::join`, and
-/// `name:stream` is an alternate data stream.
+/// A bare file name that stays inside the folder it's joined to.
 fn is_plain_name(name: &str) -> bool {
-    let separators: &[char] = if cfg!(windows) {
-        &['/', '\\', ':']
-    } else {
-        &['/', '\\']
-    };
-    !(name.is_empty() || name == "." || name == ".." || name.contains(separators))
+    !(name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains(crate::platform::NOT_IN_A_FILE_NAME))
 }
 
 fn exists(path: &Path) -> bool {
