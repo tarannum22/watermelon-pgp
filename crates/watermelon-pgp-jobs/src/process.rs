@@ -324,8 +324,18 @@ impl<R: Read> Read for HashingReader<R> {
         let n = self.inner.read(buf)?;
         self.hasher.update(&buf[..n]);
         self.bytes += n as u64;
+        BYTES_READ.fetch_add(n as u64, std::sync::atomic::Ordering::Relaxed);
         Ok(n)
     }
+}
+
+/// Bytes read from input files by every job in this process so far.
+static BYTES_READ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many bytes of input files jobs have read so far, in this process. It keeps growing while
+/// a file is being processed, so a stopping service can tell progress from a hang.
+pub fn bytes_read() -> u64 {
+    BYTES_READ.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 impl<R> fmt::Debug for HashingReader<R> {
@@ -371,6 +381,18 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    /// Reading input counts as progress for a stopping service.
+    #[test]
+    fn reading_input_counts_bytes() {
+        let d = dirs();
+        let file = d.input.join("data.csv");
+        fs::write(&file, vec![b'x'; 10_000]).unwrap();
+        let before = bytes_read();
+        sha256_of(&file).unwrap();
+        // Other tests may read at the same time: at least this file's bytes.
+        assert!(bytes_read() - before >= 10_000);
     }
 
     #[test]

@@ -13,3 +13,6 @@ pub mod vault;
 pub use error::{Error, Result};
 /// For the CLI's secret-key exports.
 pub use platform::write_private_file;
+/// For installing the Windows service.
+#[cfg(windows)]
+pub use platform::{allow_account, set_owner_and_restrict_to};

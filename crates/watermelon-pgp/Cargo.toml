@@ -23,3 +23,6 @@ anyhow.workspace = true
 clap.workspace = true
 rpassword.workspace = true
 time.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-service.workspace = true
