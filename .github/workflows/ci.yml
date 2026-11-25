@@ -334,16 +334,30 @@ jobs:
           test "$(docker inspect wm --format '{{.State.ExitCode}}')" = 0
 
   # The one check to require in the ruleset: green when every job passed or was skipped
-  # because the change can't affect it, red when any job failed or was cancelled.
+  # because the change can't affect it, red when any job failed, was cancelled or timed out.
+  # It reads every job of this run attempt from the API rather than `needs.<job>.result`:
+  # that is one value per matrix job, and a cancelled leg (no macOS runner, say) didn't show
+  # there (#31). A re-run attempt lists the jobs it carried over too.
   ci-ok:
     needs: [changes, lint, test, test-gnupg, e2e, msrv, audit, docker]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      actions: read
     steps:
-      - name: Fail if a job failed or was cancelled
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+      - name: Fail unless every job passed or was skipped
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          echo "Some jobs failed or were cancelled."
-          exit 1
-      - run: echo "All needed jobs passed or were skipped."
+          jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
+            --paginate --jq '.jobs[] | select(.name != "ci-ok") | "\(.conclusion // .status)\t\(.name)"')
+          printf '%s\n' "$jobs"
+          test -n "$jobs" || { echo "No jobs listed for this run."; exit 1; }
+          bad=$(printf '%s\n' "$jobs" | awk -F'\t' '$1 != "success" && $1 != "skipped"')
+          if [ -n "$bad" ]; then
+            echo "Not every job passed:"
+            printf '%s\n' "$bad"
+            exit 1
+          fi
+          echo "All jobs passed or were skipped."
