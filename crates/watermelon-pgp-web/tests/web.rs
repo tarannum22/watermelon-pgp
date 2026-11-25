@@ -987,23 +987,14 @@ async fn the_theme_choice_is_a_cookie_and_returns_to_the_page() {
 async fn the_top_bar_is_search_only_and_the_dashboard_has_one_new_job() {
     let app = App::new();
     let session = app.login().await;
-    let dashboard = app.get("/", Some(&session)).await;
-    assert_eq!(
-        dashboard.body.matches("New job").count(),
-        1,
-        "one New job button on the dashboard"
-    );
-    for path in ["/", "/keys", "/audit", "/settings"] {
+    // Only the dashboard's header has New job; the top bar adds none on any page.
+    for (path, new_jobs) in [("/", 1), ("/keys", 0), ("/audit", 0), ("/settings", 0)] {
         let page = app.get(path, Some(&session)).await;
         assert!(
             page.body.contains("role=\"search\""),
             "{path} keeps the search"
         );
-    }
-    // These pages have no New job in their header, so none comes from the top bar either.
-    for path in ["/keys", "/audit", "/settings"] {
-        let page = app.get(path, Some(&session)).await;
-        assert!(!page.body.contains("New job"), "{path} has no New job");
+        assert_eq!(page.body.matches("New job").count(), new_jobs, "{path}");
     }
 }
 
