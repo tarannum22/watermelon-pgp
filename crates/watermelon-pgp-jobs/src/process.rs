@@ -56,11 +56,11 @@ pub fn process_file(spec: &JobSpec, keys: &JobKeys, input: &Path) -> Result<Proc
         return Err(format!("output {} already exists", output.display()));
     }
 
+    let mut reader = HashingReader::new(
+        open_input(input).map_err(|e| format!("opening {}: {e}", input.display()))?,
+    );
     let temp =
         TempFile::create(&spec.output_dir, name).map_err(|e| format!("creating temp file: {e}"))?;
-    let mut reader = HashingReader::new(
-        File::open(input).map_err(|e| format!("opening {}: {e}", input.display()))?,
-    );
     let mut writer = BufWriter::new(temp.file());
 
     let signature = match spec.kind {
@@ -101,6 +101,21 @@ pub fn process_file(spec: &JobSpec, keys: &JobKeys, input: &Path) -> Result<Proc
         bytes,
         signature,
     })
+}
+
+/// Open an input file for processing. On Windows, other processes can still read it while we
+/// do, but can't change or delete it.
+fn open_input(path: &Path) -> io::Result<File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        /// FILE_SHARE_READ.
+        const SHARE_READ: u32 = 0x1;
+        options.share_mode(SHARE_READ);
+    }
+    options.open(path)
 }
 
 /// SHA-256 of a file, for auditing files that failed before they were fully read.

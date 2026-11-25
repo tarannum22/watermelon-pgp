@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Windows (no Windows release yet)
+- Jobs leave a file alone while another process still has it open, such as an SFTP upload
+  that stalled, and pick it up once it's released, without logging it as failed. While a
+  file is processed, others can read it but not change or delete it.
+- Files marked hidden or system (`Thumbs.db`, `desktop.ini`) are ignored like dotfiles.
+- Job folders: drive-letter and UNC paths; folders that differ only in case count as the
+  same folder; the job form shows Windows examples.
+- Retrying a failed file refuses names with `:`, which on Windows could point outside the
+  failed folder (`C:name`) or at an alternate data stream.
+
 ## [0.2.0] - 2026-11-25
 
 ### Keys

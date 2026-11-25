@@ -480,6 +480,29 @@ fn needs_secret_signing(key: &KeyRecord) -> std::result::Result<(), String> {
     Ok(())
 }
 
+/// Shown with "must be an absolute path".
+#[cfg(windows)]
+const ABSOLUTE_PATH_EXAMPLES: &str = r" (like D:\sftp\acme\in or \\server\share\acme\in)";
+#[cfg(not(windows))]
+const ABSOLUTE_PATH_EXAMPLES: &str = "";
+
+/// Whether two folder paths name the same folder as written. Windows paths are
+/// case-insensitive; `/` and `\` are already the same separator there.
+fn same_folder(a: &Path, b: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        a.components()
+            .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+            .eq(b
+                .components()
+                .map(|c| c.as_os_str().to_string_lossy().to_lowercase()))
+    }
+    #[cfg(not(windows))]
+    {
+        a == b
+    }
+}
+
 fn validate_dirs(spec: &JobSpec) -> Result<()> {
     // The labels are also the job form's field names.
     let mut dirs = vec![
@@ -494,7 +517,11 @@ fn validate_dirs(spec: &JobSpec) -> Result<()> {
         if !dir.is_absolute() {
             return Err(Error::invalid_field(
                 label,
-                format!("{label} folder must be an absolute path: {}", dir.display()),
+                format!(
+                    "{label} folder must be an absolute path{}: {}",
+                    ABSOLUTE_PATH_EXAMPLES,
+                    dir.display()
+                ),
             ));
         }
     }
@@ -508,7 +535,7 @@ fn validate_dirs(spec: &JobSpec) -> Result<()> {
     }
     for (i, (a_label, a)) in dirs.iter().enumerate() {
         for (b_label, b) in &dirs[i + 1..] {
-            if a == b {
+            if same_folder(a, b) {
                 return Err(Error::invalid_field(
                     b_label,
                     format!("the {a_label} and {b_label} folders must differ"),
@@ -798,6 +825,50 @@ mod tests {
         ));
         let audit = f.vault.audit_events(10).unwrap();
         assert!(audit.iter().any(|e| e.action == "job.update"));
+    }
+
+    /// Windows paths are case-insensitive: the same folder spelled in different case is the
+    /// same folder.
+    #[cfg(windows)]
+    #[test]
+    fn same_folder_in_different_case_is_refused() {
+        let f = fixture();
+        let base = encrypt_spec(&f);
+        let spec = JobSpec {
+            output_dir: PathBuf::from(base.input_dir.to_string_lossy().to_uppercase()),
+            ..base
+        };
+        let err = f
+            .vault
+            .create_job(Actor::Cli, f.customer, &spec)
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("must differ"), "{err}");
+    }
+
+    /// Folders on a network share, given as UNC paths. The runner's administrative share for
+    /// the temp drive stands in for one.
+    #[cfg(windows)]
+    #[test]
+    fn unc_folders_are_accepted() {
+        let f = fixture();
+        let base = encrypt_spec(&f);
+        let spec = JobSpec {
+            input_dir: unc(&base.input_dir),
+            output_dir: unc(&base.output_dir),
+            failed_dir: unc(&base.failed_dir),
+            ..base
+        };
+        let job = f.vault.create_job(Actor::Cli, f.customer, &spec).unwrap();
+        assert!(job.spec.input_dir.starts_with(r"\\localhost\"));
+    }
+
+    /// `C:\dir` as `\\localhost\C$\dir`.
+    #[cfg(windows)]
+    fn unc(path: &Path) -> PathBuf {
+        let path = path.to_string_lossy();
+        let (drive, rest) = path.split_once(r":\").unwrap();
+        PathBuf::from(format!(r"\\localhost\{drive}$\{rest}"))
     }
 
     #[test]
