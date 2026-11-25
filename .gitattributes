@@ -1,0 +1,3 @@
+# LF in every checkout, Windows included: embedded web assets (and their hashes) and
+# rustfmt output are then the same on every platform.
+* text=auto eol=lf

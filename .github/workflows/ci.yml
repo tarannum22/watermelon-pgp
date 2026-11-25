@@ -61,22 +61,40 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
 
   # Runner images: Ubuntu 24.04 (GnuPG 2.4.4), latest Ubuntu (GnuPG 2.4.8 + libgcrypt 1.12.0,
-  # see README "Known issues"), macOS (current GnuPG from Homebrew).
+  # see README "Known issues"), macOS (current GnuPG from Homebrew), Windows (GnuPG from
+  # Gpg4win, what Windows partners run).
   test:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - name: Install GnuPG (macOS)
         if: runner.os == 'macOS'
         run: brew install gnupg
+      # Put Gpg4win's gpg ahead of the one bundled with Git for Windows. Gpg4win 4 installs
+      # to Program Files (x86), 5 to Program Files.
+      - name: Install GnuPG (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install gpg4win --yes --no-progress
+          $bin = @("$env:ProgramFiles\GnuPG\bin", "${env:ProgramFiles(x86)}\GnuPG\bin") |
+            Where-Object { Test-Path "$_\gpg.exe" } | Select-Object -First 1
+          if (-not $bin) { throw "gpg.exe not found after installing Gpg4win" }
+          Add-Content $env:GITHUB_PATH $bin
       - run: gpg --version
+      # The lint job runs on Linux only; this catches warnings in Windows-only code.
+      - name: Clippy (Windows)
+        if: runner.os == 'Windows'
+        run: cargo clippy --all-targets --release -- -D warnings
       - run: cargo test --release
 
   # Further GnuPG versions partners are likely to run: 2.2 (Debian 12) and the newest 2.4.
