@@ -39,8 +39,8 @@
       "image": "https://tarannum22.github.io/watermelon-pgp/img/social-card.png",
       "screenshot": "https://tarannum22.github.io/watermelon-pgp/img/dashboard.png",
       "applicationCategory": "SecurityApplication",
-      "operatingSystem": "Linux, macOS",
-      "softwareVersion": "0.2.0",
+      "operatingSystem": "Linux, macOS, Windows Server",
+      "softwareVersion": "0.3.0",
       "license": "https://github.com/tarannum22/watermelon-pgp#license",
       "downloadUrl": "https://github.com/tarannum22/watermelon-pgp/releases/latest",
       "sameAs": ["https://github.com/tarannum22/watermelon-pgp"],
@@ -231,7 +231,7 @@ footer a { color: var(--muted); }
     <img class="logo" src="img/logo.svg" alt="WatermelonPGP logo" width="128" height="128">
     <h1>Watermelon<span>PGP</span></h1>
     <p class="tagline">OpenPGP for your file transfers, <span>without the scripts</span></p>
-    <a class="badge" href="https://github.com/tarannum22/watermelon-pgp/releases">v0.2.0 · new look, anonymous keys · open source</a>
+    <a class="badge" href="https://github.com/tarannum22/watermelon-pgp/releases">v0.3.0 · Windows Server · open source</a>
     <p class="lead">Manage your customers' PGP keys and let folders encrypt and decrypt themselves: every CSV or PDF dropped for your SFTP transfers is processed automatically, safely and with a full audit trail. One self-hosted binary with a web UI.</p>
     <div class="actions">
       <a class="btn primary" href="#install">Get started</a>
@@ -350,8 +350,8 @@ footer a { color: var(--muted); }
         <h3>Easy to run</h3>
         <p>One binary, one SQLite file, no external services.</p>
         <ul>
-          <li>Homebrew, Docker image, or Linux/macOS binaries</li>
-          <li>Hardened systemd unit included</li>
+          <li>Homebrew, Docker image, or Linux, macOS and Windows Server binaries</li>
+          <li>Hardened systemd unit, or a native Windows service</li>
           <li>Built-in HTTPS, or behind your reverse proxy</li>
           <li>JSON logs, health endpoint, online backups</li>
         </ul>
@@ -402,7 +402,7 @@ footer a { color: var(--muted); }
       <li><strong>Secret keys encrypted at rest</strong><span>XChaCha20-Poly1305 under a master key kept outside the database. A stolen database alone reveals nothing.</span></li>
       <li><strong>Private by default</strong><span>Listens on localhost only until you configure HTTPS or a reverse proxy.</span></li>
       <li><strong>Hardened web UI</strong><span>Argon2id password, strict session cookies, CSRF protection, login rate limiting, strict Content Security Policy.</span></li>
-      <li><strong>Interoperable and tested</strong><span>Every change is tested against GnuPG 2.2 to 2.5 in both directions, on Linux and macOS.</span></li>
+      <li><strong>Interoperable and tested</strong><span>Every change is tested against GnuPG 2.2 to 2.5 in both directions, on Linux, macOS and Windows Server.</span></li>
       <li><strong>Memory-safe and auditable</strong><span>Written in Rust on rPGP, an independently audited OpenPGP implementation. Open source under MIT or Apache-2.0.</span></li>
     </ul>
   </div>
@@ -433,10 +433,11 @@ docker run -d -p 127.0.0.1:8080:8080 \
       </div>
       <div class="card">
         <h3>Binaries</h3>
-        <p>Linux (x86_64, arm64) and macOS, with checksums.</p>
+        <p>Linux (x86_64, arm64), macOS and Windows Server (x86_64), with checksums.</p>
 <div class="code"><pre><span class="c"># from the releases page:</span>
-tar xzf watermelon-pgp-v0.2.0-*.tar.gz
-./watermelon-pgp-v0.2.0-*/watermelon --help</pre></div>
+tar xzf watermelon-pgp-v0.3.0-*.tar.gz
+./watermelon-pgp-v0.3.0-*/watermelon --help
+<span class="c"># Windows: Expand-Archive watermelon-pgp-v0.3.0-x86_64-pc-windows-msvc.zip</span></pre></div>
         <p style="margin:12px 0 0"><a href="https://github.com/tarannum22/watermelon-pgp/releases/latest">Download the latest release →</a></p>
       </div>
     </div>
@@ -476,7 +477,7 @@ watermelon --data-dir ~/watermelon serve   <span class="c"># open http://127.0.0
       </details>
       <details>
         <summary>What does it cost, and where does it run?</summary>
-        <p>It's free and open source under MIT or Apache-2.0. It runs on Linux and macOS: install with Homebrew, run the Docker image, or download the binary. Windows Server support is planned.</p>
+        <p>It's free and open source under MIT or Apache-2.0. It runs on Linux, macOS and Windows Server. On Linux and macOS, install with Homebrew, run the Docker image, or download the binary; on Windows Server, download the zip and run it as a native service.</p>
       </details>
     </div>
   </div>
@@ -488,7 +489,7 @@ watermelon --data-dir ~/watermelon serve   <span class="c"># open http://127.0.0
     <h2>Everything you need to run it in production</h2>
     <div class="docs">
       <a class="doc" href="https://github.com/tarannum22/watermelon-pgp#readme"><strong>README</strong><span>Overview, quick start, known issues.</span></a>
-      <a class="doc" href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md"><strong>Deployment guide</strong><span>systemd, Docker, HTTPS, master key, backups, upgrades.</span></a>
+      <a class="doc" href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md"><strong>Deployment guide</strong><span>systemd, Docker, Windows Server, HTTPS, master key, backups, upgrades.</span></a>
       <a class="doc" href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/cli.md"><strong>Command-line reference</strong><span>Every command and option, with examples.</span></a>
       <a class="doc" href="https://github.com/tarannum22/watermelon-pgp/blob/main/DESIGN.md"><strong>Design</strong><span>How it works and why, including the security model.</span></a>
       <a class="doc" href="https://github.com/tarannum22/watermelon-pgp/blob/main/CHANGELOG.md"><strong>Changelog</strong><span>What's in each release.</span></a>
