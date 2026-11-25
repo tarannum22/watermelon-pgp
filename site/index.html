@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>WatermelonPGP: self-hosted PGP encryption for SFTP file transfers</title>
-<meta name="description" content="WatermelonPGP is an open-source, self-hosted tool to manage your customers' OpenPGP keys and automatically encrypt or decrypt files for SFTP transfers. One binary, web UI, audit log, GnuPG compatible.">
+<meta name="description" content="WatermelonPGP is an open-source, self-hosted tool to manage your customers' OpenPGP keys and automatically encrypt or decrypt files for SFTP transfers. One binary, web UI, audit log, GnuPG compatible. Runs on Linux, macOS and Windows Server.">
 <meta name="google-site-verification" content="3aXwTZgLuCBqV72yQx7aUd7ZS5Kuy6OGuy6CrW7Hf6c">
 <link rel="canonical" href="https://tarannum22.github.io/watermelon-pgp/">
 <meta name="theme-color" content="#1b7a43">
@@ -14,7 +14,7 @@
 <meta property="og:site_name" content="WatermelonPGP">
 <meta property="og:url" content="https://tarannum22.github.io/watermelon-pgp/">
 <meta property="og:title" content="WatermelonPGP: self-hosted PGP encryption for SFTP file transfers">
-<meta property="og:description" content="OpenPGP key management and automatic folder encryption for file transfers, in one self-hosted binary with a web UI and an audit log. Open source.">
+<meta property="og:description" content="OpenPGP key management and automatic folder encryption for file transfers, in one self-hosted binary with a web UI and an audit log, for Linux, macOS and Windows Server. Open source.">
 <meta property="og:image" content="https://tarannum22.github.io/watermelon-pgp/img/social-card.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -34,7 +34,7 @@
       "@type": "SoftwareApplication",
       "name": "WatermelonPGP",
       "alternateName": ["Watermelon PGP", "watermelon-pgp"],
-      "description": "Self-hosted tool to manage customers' OpenPGP keys and automatically encrypt or decrypt files for SFTP transfers, with a web UI and an audit log.",
+      "description": "Self-hosted tool to manage customers' OpenPGP keys and automatically encrypt or decrypt files for SFTP transfers, with a web UI and an audit log. Runs on Linux, macOS and Windows Server.",
       "url": "https://tarannum22.github.io/watermelon-pgp/",
       "image": "https://tarannum22.github.io/watermelon-pgp/img/social-card.png",
       "screenshot": "https://tarannum22.github.io/watermelon-pgp/img/dashboard.png",
@@ -321,6 +321,7 @@ footer a { color: var(--muted); }
           <li>Output appears atomically and never overwrites an existing file</li>
           <li>Tampered or unsigned input never produces output</li>
           <li>Multi-gigabyte files stream with constant memory</li>
+          <li>On Windows, a file the SFTP server still has open is left alone until it's released, and hidden or system files are skipped</li>
         </ul>
       </div>
       <div class="feature">
@@ -400,6 +401,7 @@ footer a { color: var(--muted); }
     </div>
     <ul class="checks">
       <li><strong>Secret keys encrypted at rest</strong><span>XChaCha20-Poly1305 under a master key kept outside the database. A stolen database alone reveals nothing.</span></li>
+      <li><strong>Secrets only the service can read</strong><span>The database, master key and backups are private to the account that runs WatermelonPGP: mode 0600 on Linux and macOS, access lists on Windows. A master key file others can read is refused.</span></li>
       <li><strong>Private by default</strong><span>Listens on localhost only until you configure HTTPS or a reverse proxy.</span></li>
       <li><strong>Hardened web UI</strong><span>Argon2id password, strict session cookies, CSRF protection, login rate limiting, strict Content Security Policy.</span></li>
       <li><strong>Interoperable and tested</strong><span>Every change is tested against GnuPG 2.2 to 2.5 in both directions, on Linux, macOS and Windows Server.</span></li>
@@ -433,12 +435,22 @@ docker run -d -p 127.0.0.1:8080:8080 \
       </div>
       <div class="card">
         <h3>Binaries</h3>
-        <p>Linux (x86_64, arm64), macOS and Windows Server (x86_64), with checksums.</p>
+        <p>Linux (x86_64, arm64) and macOS (Apple silicon, Intel), with checksums.</p>
 <div class="code"><pre><span class="c"># from the releases page:</span>
 tar xzf watermelon-pgp-v0.3.0-*.tar.gz
-./watermelon-pgp-v0.3.0-*/watermelon --help
-<span class="c"># Windows: Expand-Archive watermelon-pgp-v0.3.0-x86_64-pc-windows-msvc.zip</span></pre></div>
+./watermelon-pgp-v0.3.0-*/watermelon --help</pre></div>
         <p style="margin:12px 0 0"><a href="https://github.com/tarannum22/watermelon-pgp/releases/latest">Download the latest release →</a></p>
+      </div>
+      <div class="card">
+        <h3>Windows Server</h3>
+        <p>A zip with <code>watermelon.exe</code> (x86_64) that runs as a native Windows service. In an elevated PowerShell, after unpacking it into <code>C:\Program Files\WatermelonPGP</code>:</p>
+<div class="code"><pre>$env:WATERMELON_DATA_DIR = "C:\ProgramData\WatermelonPGP"
+<span class="c"># once: database, master key, admin password</span>
+watermelon init
+<span class="c"># runs as NT SERVICE\watermelon</span>
+watermelon service install --bind 127.0.0.1:8080
+Start-Service watermelon</pre></div>
+        <p style="margin:12px 0 0"><a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#windows-server">Windows Server guide: checksums, job folders, HTTPS →</a></p>
       </div>
     </div>
     <div class="card quickstart">
@@ -474,6 +486,10 @@ watermelon --data-dir ~/watermelon serve   <span class="c"># open http://127.0.0
       <details>
         <summary>Where are the secret keys stored?</summary>
         <p>On your own server, in a local SQLite database, with secret keys encrypted under a master key. Nothing is sent to a cloud service.</p>
+      </details>
+      <details>
+        <summary>Does it run on Windows Server?</summary>
+        <p>Yes, since 0.3.0. Download the Windows zip, run <code>watermelon init</code> and <code>watermelon service install</code> from an elevated PowerShell, and it runs as a native Windows service under its own virtual account, <code>NT SERVICE\watermelon</code>; only that account, LocalSystem and Administrators can open its data and keys. Job folders can be local drives or UNC network shares; a share must allow the server's computer account. Stopping the service lets running jobs finish the file they're on. The <a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#windows-server">Windows Server section of the deployment guide</a> covers the details.</p>
       </details>
       <details>
         <summary>What does it cost, and where does it run?</summary>
