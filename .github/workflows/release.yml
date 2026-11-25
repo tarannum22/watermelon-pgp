@@ -70,7 +70,7 @@ jobs:
         with:
           key: ${{ matrix.target }}
           save-if: ${{ github.event_name == 'workflow_dispatch' }}
-      - run: cargo build --release --locked --bin watermelon --target ${{ matrix.target }}
+      - run: cargo build --release --locked --bin watermelonpgp --target ${{ matrix.target }}
         env:
           # Windows: link the C runtime statically, so no Visual C++ redistributable is needed.
           CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
@@ -79,8 +79,8 @@ jobs:
         run: |
           name="watermelon-pgp-${TAG}-${{ matrix.target }}"
           mkdir -p "dist/$name"
-          bin=watermelon
-          if [ "$RUNNER_OS" = Windows ]; then bin=watermelon.exe; fi
+          bin=watermelonpgp
+          if [ "$RUNNER_OS" = Windows ]; then bin=watermelonpgp.exe; fi
           cp "target/${{ matrix.target }}/release/$bin" README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "dist/$name/"
           cp -R contrib docs "dist/$name/"
           if [ "$RUNNER_OS" = Windows ]; then
@@ -98,8 +98,8 @@ jobs:
           $name = "watermelon-pgp-$env:TAG-${{ matrix.target }}"
           Expand-Archive "dist\$name.zip" "$env:RUNNER_TEMP\unpacked"
           $root = "$env:RUNNER_TEMP\unpacked\$name"
-          $exe = "$root\watermelon.exe"
-          foreach ($entry in "watermelon.exe", "README.md", "CHANGELOG.md", "LICENSE-MIT", "LICENSE-APACHE", "contrib", "docs") {
+          $exe = "$root\watermelonpgp.exe"
+          foreach ($entry in "watermelonpgp.exe", "README.md", "CHANGELOG.md", "LICENSE-MIT", "LICENSE-APACHE", "contrib", "docs") {
             if (-not (Test-Path "$root\$entry")) { throw "the zip has no $name\$entry" }
           }
           Get-ChildItem $root | Select-Object -ExpandProperty Name
@@ -113,7 +113,7 @@ jobs:
           # Every Windows program imports KERNEL32.dll: without it the output isn't a list.
           if (-not ($deps | Select-String -Pattern '^\s+KERNEL32\.dll\s*$')) { throw "no dependency list from dumpbin" }
           $crt = $deps | Select-String -Pattern '^\s+(vcruntime|msvcp|api-ms-win-crt|ucrtbase)\S*\.dll\s*$'
-          if ($crt) { throw "watermelon.exe needs the C runtime DLLs: $crt" }
+          if ($crt) { throw "watermelonpgp.exe needs the C runtime DLLs: $crt" }
 
           $version = & $exe --version
           $version
@@ -212,7 +212,7 @@ jobs:
             mkdir -p "dist/linux/$arch"
             tar -xzf "artifacts/watermelon-pgp-${TAG}-${target}.tar.gz" \
               -C "dist/linux/$arch" --strip-components=1 \
-              "watermelon-pgp-${TAG}-${target}/watermelon"
+              "watermelon-pgp-${TAG}-${target}/watermelonpgp"
           done
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
@@ -263,7 +263,7 @@ jobs:
           packaging/chocolatey/package_test.sh
           packaging/chocolatey/package.sh "${TAG#v}" dist/SHA256SUMS choco/package
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
-            WATERMELON_DOWNLOAD_BASE="file:///$(cygpath -m "$PWD/dist")" \
+            WATERMELONPGP_DOWNLOAD_BASE="file:///$(cygpath -m "$PWD/dist")" \
               packaging/chocolatey/package.sh "${TAG#v}" dist/SHA256SUMS choco/smoke
           else
             cp -R choco/package choco/smoke
@@ -310,47 +310,47 @@ jobs:
           # Install: checksum-verified, on the Path, nothing else set up.
           Invoke-Choco install watermelon-pgp --version $version --source $source
           Update-Path
-          $wm = (Get-Command watermelon).Source
-          if ($wm -ne "$dir\watermelon.exe") { throw "watermelon on the Path is $wm" }
-          $v = & watermelon --version
+          $wm = (Get-Command watermelonpgp).Source
+          if ($wm -ne "$dir\watermelonpgp.exe") { throw "watermelonpgp on the Path is $wm" }
+          $v = & watermelonpgp --version
           if ($v -cne "watermelon-pgp $version") { throw "--version: $v" }
           if (Test-Path $data) { throw "the package created $data" }
-          if (Get-Service watermelon -ErrorAction SilentlyContinue) { throw "the package installed a service" }
+          if (Get-Service watermelonpgp -ErrorAction SilentlyContinue) { throw "the package installed a service" }
 
           # Upgrade (a forced reinstall runs the same script) while the service runs: it is
           # stopped cleanly and started again.
-          "release smoke test password" | watermelon --data-dir $data --passphrase-stdin init
+          "release smoke test password" | watermelonpgp --data-dir $data --passphrase-stdin init
           if ($LASTEXITCODE -ne 0) { throw "init failed" }
-          watermelon --data-dir $data service install --bind 127.0.0.1:18080
+          watermelonpgp --data-dir $data service install --bind 127.0.0.1:18080
           if ($LASTEXITCODE -ne 0) { throw "service install failed" }
-          Start-Service watermelon
+          Start-Service watermelonpgp
           Wait-Healthy
           Invoke-Choco install watermelon-pgp --version $version --source $source --force
-          if ((Get-Service watermelon).Status -ne 'Running') { throw "the service is not running after the upgrade" }
+          if ((Get-Service watermelonpgp).Status -ne 'Running') { throw "the service is not running after the upgrade" }
           Wait-Healthy
-          $stops = [regex]::Matches((Get-Content "$data\watermelon.log" -Raw), 'INFO stopped').Count
+          $stops = [regex]::Matches((Get-Content "$data\watermelonpgp.log" -Raw), 'INFO stopped').Count
           if ($stops -ne 1) { throw "expected 1 clean stop in the log, found $stops" }
 
           # Uninstall refuses while the service runs the program...
           & choco uninstall watermelon-pgp -y --no-progress
           if ($LASTEXITCODE -eq 0) { throw "choco uninstall succeeded with the service installed" }
-          if (-not (Test-Path "$dir\watermelon.exe")) { throw "the refused uninstall removed watermelon.exe" }
+          if (-not (Test-Path "$dir\watermelonpgp.exe")) { throw "the refused uninstall removed watermelonpgp.exe" }
           # ...and once the service is gone, removes the program and the Path entry, not the data.
-          watermelon service uninstall
+          watermelonpgp service uninstall
           if ($LASTEXITCODE -ne 0) { throw "service uninstall failed" }
           Invoke-Choco uninstall watermelon-pgp
           if (Test-Path $dir) { throw "$dir is still there" }
           $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';'
           if ($machinePath | Where-Object { $_.TrimEnd('\') -ieq $dir }) { throw "$dir is still on the Path" }
-          foreach ($file in 'watermelon.db', 'master.key') {
+          foreach ($file in 'watermelonpgp.db', 'master.key') {
             if (-not (Test-Path "$data\$file")) { throw "uninstall removed $data\$file" }
           }
-      - name: Chocolatey and watermelon logs
+      - name: Chocolatey and watermelonpgp logs
         if: failure()
         shell: pwsh
         run: |
           Get-Content "$env:ProgramData\chocolatey\logs\chocolatey.log" -Tail 150 -ErrorAction SilentlyContinue
-          Get-Content "$env:ProgramData\WatermelonPGP\watermelon.log" -ErrorAction SilentlyContinue
+          Get-Content "$env:ProgramData\WatermelonPGP\watermelonpgp.log" -ErrorAction SilentlyContinue
       - uses: actions/upload-artifact@v7
         with:
           name: chocolatey

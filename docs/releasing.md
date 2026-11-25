@@ -35,7 +35,7 @@ website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands (after the rel
       writes the release notes and the Homebrew formula, builds the image, and builds the
       Chocolatey package and smoke-tests it (job `chocolatey`: install, upgrade with the
       service running, uninstall), but publishes nothing. The Windows build
-      (`build (x86_64-pc-windows-msvc, windows-latest)`) also smoke-tests the unpacked zip: `--version`, `init` and `/healthz`, and that `watermelon.exe`
+      (`build (x86_64-pc-windows-msvc, windows-latest)`) also smoke-tests the unpacked zip: `--version`, `init` and `/healthz`, and that `watermelonpgp.exe`
       needs no C runtime DLL (`dumpbin /dependents`):
 
   ```sh
@@ -75,7 +75,7 @@ website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands (after the rel
   gh release download vX.Y.Z --pattern '*aarch64-apple-darwin*' --pattern SHA256SUMS
   shasum -a 256 --ignore-missing -c SHA256SUMS
   tar xzf watermelon-pgp-vX.Y.Z-aarch64-apple-darwin.tar.gz
-  ./watermelon-pgp-vX.Y.Z-aarch64-apple-darwin/watermelon --version
+  ./watermelon-pgp-vX.Y.Z-aarch64-apple-darwin/watermelonpgp --version
   ```
 
 - [ ] The image is on GHCR as `X.Y.Z` and `latest`, for amd64 and arm64:
@@ -102,7 +102,7 @@ the tap is updated by hand:
   cd ../homebrew-tap && git commit -am "watermelon-pgp X.Y.Z" && git push
   ```
 
-- [ ] It installs: `brew update && brew upgrade tarannum22/tap/watermelon-pgp && watermelon --version`
+- [ ] It installs: `brew update && brew upgrade tarannum22/tap/watermelon-pgp && watermelonpgp --version`
       (`brew test` and `brew audit --strict tarannum22/tap/watermelon-pgp` for formula changes).
 
 ## 5. Chocolatey
@@ -129,9 +129,9 @@ job warns and prints the commands to push by hand, and keeps the package as the 
       A.B.C; the release notes and docs/deployment.md point to the zip meanwhile, so nothing else
       needs to wait. If a moderator asks for changes, fix `packaging/chocolatey/` on `main` and
       push the fixed package with the same version (it replaces the one under review).
-      `watermelon.exe` isn't code-signed yet, which a reviewer may ask about.
+      `watermelonpgp.exe` isn't code-signed yet, which a reviewer may ask about.
 - [ ] Once approved, on a Windows machine:
-      `choco upgrade watermelon-pgp -y && watermelon --version`.
+      `choco upgrade watermelon-pgp -y && watermelonpgp --version`.
 
 ## 6. Website
 

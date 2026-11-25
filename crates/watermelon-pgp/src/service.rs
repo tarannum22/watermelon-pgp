@@ -1,8 +1,8 @@
-//! `watermelon service`: running `serve` as a Windows service.
+//! `watermelonpgp service`: running `serve` as a Windows service.
 //!
 //! The service's command line is built here, on every platform, so it is tested everywhere. The
 //! Windows-only parts (the service manager, access lists) are in [`windows`]; elsewhere `main`
-//! refuses `watermelon service` before calling into this module.
+//! refuses `watermelonpgp service` before calling into this module.
 
 use std::{
     ffi::OsString,
@@ -19,10 +19,10 @@ use crate::{Control, LogFormat, ServeArgs};
 #[cfg(windows)]
 mod windows;
 
-pub const DEFAULT_NAME: &str = "watermelon";
+pub const DEFAULT_NAME: &str = "watermelonpgp";
 
-pub const NOT_WINDOWS: &str = "`watermelon service` installs a Windows service; elsewhere, run \
-                               `watermelon serve` under systemd or Docker (docs/deployment.md)";
+pub const NOT_WINDOWS: &str = "`watermelonpgp service` installs a Windows service; elsewhere, run \
+                               `watermelonpgp serve` under systemd or Docker (docs/deployment.md)";
 
 /// The settings the service runs with.
 pub struct Settings<'a> {
@@ -104,12 +104,12 @@ pub fn install(name: &str, settings: &Settings) -> Result<()> {
         );
     }
     for (what, path) in [
-        ("database", settings.data_dir.join(vault::DB_FILE)),
+        ("database", vault::db_path(settings.data_dir)?),
         ("master keyfile", settings.master_key.to_owned()),
     ] {
         if !path.is_file() {
             bail!(
-                "no {what} at {}: run `watermelon init` first",
+                "no {what} at {}: run `watermelonpgp init` first",
                 path.display()
             );
         }
@@ -204,13 +204,13 @@ mod tests {
         };
         let a = |path: &str| std::path::absolute(path).unwrap();
         assert_eq!(
-            files_to_allow(&settings(Path::new("data/watermelon.log"))).unwrap(),
+            files_to_allow(&settings(Path::new("data/watermelonpgp.log"))).unwrap(),
             [(a("tls/cert.pem"), false), (a("tls/key.pem"), false)]
         );
         assert_eq!(
-            files_to_allow(&settings(Path::new("logs/watermelon.log"))).unwrap(),
+            files_to_allow(&settings(Path::new("logs/watermelonpgp.log"))).unwrap(),
             [
-                (a("logs/watermelon.log"), true),
+                (a("logs/watermelonpgp.log"), true),
                 (a("tls/cert.pem"), false),
                 (a("tls/key.pem"), false)
             ]

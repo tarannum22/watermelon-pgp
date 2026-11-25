@@ -56,40 +56,40 @@ class WatermelonPgp < Formula
   end
 
   def install
-    bin.install "watermelon"
+    bin.install "watermelonpgp"
     doc.install "README.md", "CHANGELOG.md", "docs"
     pkgshare.install "contrib"
   end
 
   service do
-    run [opt_bin/"watermelon", "serve"]
-    environment_variables WATERMELON_DATA_DIR: var/"watermelon"
+    run [opt_bin/"watermelonpgp", "serve"]
+    environment_variables WATERMELONPGP_DATA_DIR: var/"watermelonpgp"
     keep_alive crashed: true
-    log_path var/"log/watermelon.log"
-    error_log_path var/"log/watermelon.log"
+    log_path var/"log/watermelonpgp.log"
+    error_log_path var/"log/watermelonpgp.log"
   end
 
   def caveats
     <<~EOS
       Create the database, master key and admin password once:
-        watermelon --data-dir #{var}/watermelon init
+        watermelonpgp --data-dir #{var}/watermelonpgp init
 
       Then run it in the background (web UI on http://127.0.0.1:8080):
         brew services start watermelon-pgp
       or in the foreground:
-        watermelon --data-dir #{var}/watermelon serve
+        watermelonpgp --data-dir #{var}/watermelonpgp serve
 
-      Back up #{var}/watermelon/master.key separately: without it the
+      Back up #{var}/watermelonpgp/master.key separately: without it the
       secret keys in the database cannot be recovered.
     EOS
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/watermelon --version")
-    ENV["WATERMELON_DATA_DIR"] = testpath/"data"
-    pipe_output("#{bin}/watermelon --passphrase-stdin init", "a long test password\\n", 0)
-    assert_path_exists testpath/"data/watermelon.db"
-    assert_match "Created customer", shell_output("#{bin}/watermelon customer add ACME")
+    assert_match version.to_s, shell_output("#{bin}/watermelonpgp --version")
+    ENV["WATERMELONPGP_DATA_DIR"] = testpath/"data"
+    pipe_output("#{bin}/watermelonpgp --passphrase-stdin init", "a long test password\\n", 0)
+    assert_path_exists testpath/"data/watermelonpgp.db"
+    assert_match "Created customer", shell_output("#{bin}/watermelonpgp customer add ACME")
   end
 end
 RUBY

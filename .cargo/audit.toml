@@ -11,7 +11,7 @@ ignore = [
     "RUSTSEC-2023-0071",
     # crypto-bigint 0.5: timing variability in "constant-time" operations.
     # Pulled in by pgp 0.21.1 through elliptic-curve, used only for NIST P-curves, brainpool,
-    # secp256k1 and X448 keys, which watermelon never generates (only imports, if a partner
+    # secp256k1 and X448 keys, which WatermelonPGP never generates (only imports, if a partner
     # sends one). Same timing-oracle argument as above.
     "RUSTSEC-2026-0387",
 ]

@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsString,
     io::Write,
     path::{Path, PathBuf},
     sync::{
@@ -25,28 +26,28 @@ mod service;
 
 /// Manage OpenPGP keys and folder encrypt/decrypt jobs.
 #[derive(Parser)]
-#[command(version)]
+#[command(name = "watermelonpgp", version)]
 struct Cli {
     /// Directory holding the database.
     #[arg(
         long,
         global = true,
-        env = "WATERMELON_DATA_DIR",
+        env = "WATERMELONPGP_DATA_DIR",
         default_value = "data"
     )]
     data_dir: PathBuf,
-    /// Master keyfile [default: <data-dir>/master.key]. Ignored when WATERMELON_MASTER_KEY is set.
-    #[arg(long, global = true, env = "WATERMELON_MASTER_KEY_FILE")]
+    /// Master keyfile [default: <data-dir>/master.key]. Ignored when WATERMELONPGP_MASTER_KEY is set.
+    #[arg(long, global = true, env = "WATERMELONPGP_MASTER_KEY_FILE")]
     master_key: Option<PathBuf>,
     /// Read the password or passphrase from the first line of stdin instead of prompting.
     #[arg(long, global = true)]
     passphrase_stdin: bool,
-    /// Log format for `serve` and `run`. Levels are set with WATERMELON_LOG (default: info).
-    #[arg(long, global = true, env = "WATERMELON_LOG_FORMAT", value_enum, default_value_t = LogFormat::Text)]
+    /// Log format for `serve` and `run`. Levels are set with WATERMELONPGP_LOG (default: info).
+    #[arg(long, global = true, env = "WATERMELONPGP_LOG_FORMAT", value_enum, default_value_t = LogFormat::Text)]
     log_format: LogFormat,
     /// Append the log of `serve` and `run` to this file instead of writing it to stderr
-    /// [Windows service default: <data-dir>\watermelon.log].
-    #[arg(long, global = true, env = "WATERMELON_LOG_FILE")]
+    /// [Windows service default: <data-dir>\watermelonpgp.log].
+    #[arg(long, global = true, env = "WATERMELONPGP_LOG_FILE")]
     log_file: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
@@ -102,21 +103,21 @@ enum Command {
 struct ServeArgs {
     /// Address and port to listen on. For anything but loopback, use --tls-cert/--tls-key or
     /// a TLS-terminating reverse proxy.
-    #[arg(long, env = "WATERMELON_BIND", default_value = "127.0.0.1:8080")]
+    #[arg(long, env = "WATERMELONPGP_BIND", default_value = "127.0.0.1:8080")]
     bind: std::net::SocketAddr,
     /// Jobs processed in parallel [default: number of CPUs].
     #[arg(long)]
     workers: Option<usize>,
     /// Mark the session cookie Secure. Set this when a reverse proxy terminates HTTPS;
     /// implied by --tls-cert.
-    #[arg(long, env = "WATERMELON_SECURE_COOKIES")]
+    #[arg(long, env = "WATERMELONPGP_SECURE_COOKIES")]
     secure_cookies: bool,
     /// Serve HTTPS with this PEM certificate chain. Reloaded on SIGHUP (Unix) or
     /// `sc.exe control <service> paramchange` (Windows service).
-    #[arg(long, env = "WATERMELON_TLS_CERT", requires = "tls_key")]
+    #[arg(long, env = "WATERMELONPGP_TLS_CERT", requires = "tls_key")]
     tls_cert: Option<PathBuf>,
     /// PEM private key for --tls-cert.
-    #[arg(long, env = "WATERMELON_TLS_KEY", requires = "tls_cert")]
+    #[arg(long, env = "WATERMELONPGP_TLS_KEY", requires = "tls_cert")]
     tls_key: Option<PathBuf>,
 }
 
@@ -149,7 +150,7 @@ enum ServiceCommand {
     },
 }
 
-const LOG_FILE: &str = "watermelon.log";
+const LOG_FILE: &str = "watermelonpgp.log";
 
 /// What a running `serve` is asked to do: by signals in a console, by the service manager in a
 /// Windows service.
@@ -363,6 +364,7 @@ enum AlgorithmArg {
 }
 
 fn main() -> Result<()> {
+    check_legacy_env(std::env::vars_os())?;
     let Cli {
         data_dir,
         master_key,
@@ -431,15 +433,42 @@ fn main() -> Result<()> {
 
 fn open_vault(data_dir: &Path, master_key: &Path) -> Result<Vault> {
     Ok(Vault::open(
-        &data_dir.join(vault::DB_FILE),
+        &vault::db_path(data_dir)?,
         MasterKey::load(master_key)?,
     )?)
+}
+
+/// The prefix of the environment variables up to 0.3, when the command was `watermelon`.
+const LEGACY_ENV_PREFIX: &str = "WATERMELON_";
+const ENV_PREFIX: &str = "WATERMELONPGP_";
+
+/// Refuse to start while a `WATERMELON_*` variable from before the rename is set: ignoring it
+/// would quietly change what runs (no TLS, another data directory, the keyfile instead of the
+/// key in the environment).
+fn check_legacy_env(vars: impl IntoIterator<Item = (OsString, OsString)>) -> Result<()> {
+    let mut renamed: Vec<String> = vars
+        .into_iter()
+        .filter_map(|(name, _)| {
+            let name = name.into_string().ok()?;
+            let rest = name.strip_prefix(LEGACY_ENV_PREFIX)?;
+            Some(format!("{name} is now {ENV_PREFIX}{rest}"))
+        })
+        .collect();
+    if renamed.is_empty() {
+        return Ok(());
+    }
+    renamed.sort();
+    bail!(
+        "the environment variables were renamed along with the command; set the new names \
+         and unset the old ones:\n  {}",
+        renamed.join("\n  ")
+    )
 }
 
 /// Log to stderr, or append to `file`.
 fn init_logging(format: LogFormat, file: Option<&Path>) -> Result<()> {
     use tracing_subscriber::fmt::writer::BoxMakeWriter;
-    let filter = tracing_subscriber::EnvFilter::try_from_env("WATERMELON_LOG")
+    let filter = tracing_subscriber::EnvFilter::try_from_env("WATERMELONPGP_LOG")
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
     let (writer, ansi) = match file {
         Some(path) => {
@@ -710,7 +739,7 @@ fn init(data_dir: &Path, master_key_path: &Path, prompt: Prompt) -> Result<()> {
     eprintln!();
     eprintln!("IMPORTANT: back up the master key now and store it separately from the database.");
     eprintln!("Without it, every secret key in the database is unrecoverable, and");
-    eprintln!("`watermelon backup` deliberately does not include it.");
+    eprintln!("`watermelonpgp backup` deliberately does not include it.");
     Ok(())
 }
 
@@ -800,7 +829,7 @@ fn run(vault: &Vault, command: Command, prompt: Prompt) -> Result<()> {
             let key = vault.revoke_key(Actor::Cli, &key, reason, &comment)?;
             println!("Revoked {} {}", key.fingerprint, key.label());
             eprintln!(
-                "Send partners the updated public key: watermelon key export {}",
+                "Send partners the updated public key: watermelonpgp key export {}",
                 key.fingerprint
             );
         }
@@ -1080,6 +1109,39 @@ fn format_date(unix: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
+
+    fn vars(names: &[&str]) -> Vec<(OsString, OsString)> {
+        names.iter().map(|n| (n.into(), "x".into())).collect()
+    }
+
+    /// A variable from before the rename would otherwise be ignored without a word: the TLS
+    /// settings, say, leaving the UI on plain HTTP.
+    #[test]
+    fn refuses_watermelon_variables_from_before_the_rename() {
+        let error = check_legacy_env(vars(&["PATH", "WATERMELON_TLS_CERT", "WATERMELON_LOG"]))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("WATERMELON_TLS_CERT is now WATERMELONPGP_TLS_CERT"),
+            "{error}"
+        );
+        assert!(
+            error.contains("WATERMELON_LOG is now WATERMELONPGP_LOG"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn accepts_the_new_variables() {
+        check_legacy_env(vars(&["WATERMELONPGP_DATA_DIR", "WATERMELON", "HOME"])).unwrap();
+    }
+
+    #[test]
+    fn usage_names_the_watermelonpgp_command() {
+        let help = Cli::command().render_usage().to_string();
+        assert!(help.starts_with("Usage: watermelonpgp "), "{help}");
+    }
 
     /// The service's command line, parsed back, gives `service run` the installer's settings.
     #[test]
@@ -1097,19 +1159,19 @@ mod tests {
                 data_dir: Path::new("data dir"),
                 master_key: Path::new("keys/master.key"),
                 log_format: LogFormat::Json,
-                log_file: Path::new("data dir/watermelon.log"),
+                log_file: Path::new("data dir/watermelonpgp.log"),
                 serve: &serve,
             },
         )
         .unwrap();
         let cli =
-            Cli::try_parse_from(std::iter::once("watermelon".into()).chain(arguments)).unwrap();
+            Cli::try_parse_from(std::iter::once("watermelonpgp".into()).chain(arguments)).unwrap();
         let absolute = |path: &str| std::path::absolute(path).unwrap();
         assert_eq!(cli.data_dir, absolute("data dir"));
         assert!(cli.data_dir.is_absolute());
         assert_eq!(cli.master_key, Some(absolute("keys/master.key")));
         assert!(matches!(cli.log_format, LogFormat::Json));
-        assert_eq!(cli.log_file, Some(absolute("data dir/watermelon.log")));
+        assert_eq!(cli.log_file, Some(absolute("data dir/watermelonpgp.log")));
         let Command::Service(ServiceCommand::Run {
             name,
             serve: parsed,
@@ -1143,7 +1205,7 @@ mod tests {
                 data_dir: Path::new("/data"),
                 master_key: Path::new("/data/master.key"),
                 log_format: LogFormat::Text,
-                log_file: Path::new("/data/watermelon.log"),
+                log_file: Path::new("/data/watermelonpgp.log"),
                 serve: &serve,
             },
         )

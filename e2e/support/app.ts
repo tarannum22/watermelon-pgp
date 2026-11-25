@@ -68,7 +68,7 @@ export async function waitForFile(dir: string, pattern: RegExp, timeout = 45_000
 export function partnerPublicKey(userId: string): string {
   const dir = path.join(RUN_DIR, "partner", Date.now().toString(36));
   fs.mkdirSync(dir, { recursive: true });
-  const env = { ...process.env, WATERMELON_DATA_DIR: dir, WATERMELON_LOG: "warn" };
+  const env = { ...process.env, WATERMELONPGP_DATA_DIR: dir, WATERMELONPGP_LOG: "warn" };
   const run = (args: string[], input = "") =>
     execFileSync(BINARY, args, { env, input, encoding: "utf8", stdio: ["pipe", "pipe", "inherit"] });
   run(["init", "--passphrase-stdin"], "partner-password-123\n");

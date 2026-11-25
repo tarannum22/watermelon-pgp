@@ -1,11 +1,11 @@
 # Command-line reference
 
 ```
-watermelon [GLOBAL OPTIONS] <COMMAND> [OPTIONS]
+watermelonpgp [GLOBAL OPTIONS] <COMMAND> [OPTIONS]
 ```
 
 Everything the web UI does can also be done here, which is handy for scripting and for setting
-things up before the UI is reachable. `watermelon --help` and `watermelon <command> --help` show
+things up before the UI is reachable. `watermelonpgp --help` and `watermelonpgp <command> --help` show
 the same information as this page.
 
 - [Global options](#global-options)
@@ -22,19 +22,19 @@ the same information as this page.
 ## Global options
 
 These work with every command, before or after the command name
-(`watermelon --data-dir X init` and `watermelon init --data-dir X` are the same). Each has an
+(`watermelonpgp --data-dir X init` and `watermelonpgp init --data-dir X` are the same). Each has an
 environment variable, which is the easiest way to set it once for a shell, a systemd unit or a
 container.
 
 | Option | Environment variable | Default | Meaning |
 |---|---|---|---|
-| `--data-dir <dir>` | `WATERMELON_DATA_DIR` | `data` (relative to the current directory) | Where the database lives. Use the same one for every command. |
-| `--master-key <file>` | `WATERMELON_MASTER_KEY_FILE` | `<data-dir>/master.key` | The master key file. Must be readable only by its owner. |
-| | `WATERMELON_MASTER_KEY` | | The master key itself (64 hex characters), instead of a file. Wins over `--master-key`. |
+| `--data-dir <dir>` | `WATERMELONPGP_DATA_DIR` | `data` (relative to the current directory) | Where the database lives. Use the same one for every command. |
+| `--master-key <file>` | `WATERMELONPGP_MASTER_KEY_FILE` | `<data-dir>/master.key` | The master key file. Must be readable only by its owner. |
+| | `WATERMELONPGP_MASTER_KEY` | | The master key itself (64 hex characters), instead of a file. Wins over `--master-key`. |
 | `--passphrase-stdin` | | off | Read the password or passphrase from the first line of stdin instead of prompting. For scripts. |
-| `--log-format <text\|json>` | `WATERMELON_LOG_FORMAT` | `text` | Log format of `serve` and `run`. |
-| | `WATERMELON_LOG` | `info` | Log level of `serve` and `run`: `error`, `warn`, `info`, `debug`. |
-| `--log-file <file>` | `WATERMELON_LOG_FILE` | stderr; `<data-dir>\watermelon.log` for the Windows service | Append the log of `serve` and `run` to this file instead. |
+| `--log-format <text\|json>` | `WATERMELONPGP_LOG_FORMAT` | `text` | Log format of `serve` and `run`. |
+| | `WATERMELONPGP_LOG` | `info` | Log level of `serve` and `run`: `error`, `warn`, `info`, `debug`. |
+| `--log-file <file>` | `WATERMELONPGP_LOG_FILE` | stderr; `<data-dir>\watermelonpgp.log` for the Windows service | Append the log of `serve` and `run` to this file instead. |
 | `-h`, `--help` | | | Help for the command. |
 | `-V`, `--version` | | | Print the version. |
 
@@ -55,8 +55,8 @@ Create a new data directory: the database, the master key and the admin password
 the password twice (at least 12 characters).
 
 ```sh
-watermelon init
-watermelon --data-dir /var/lib/watermelon --master-key /etc/watermelon/key/master.key init
+watermelonpgp init
+watermelonpgp --data-dir /var/lib/watermelonpgp --master-key /etc/watermelonpgp/key/master.key init
 ```
 
 Refuses to overwrite an existing database or key file. Back up the master key afterwards: without
@@ -69,19 +69,19 @@ are working on before the process exits.
 
 | Option | Environment variable | Default | Meaning |
 |---|---|---|---|
-| `--bind <address:port>` | `WATERMELON_BIND` | `127.0.0.1:8080` | Where to listen. Only this machine can connect by default. |
-| `--tls-cert <file>` | `WATERMELON_TLS_CERT` | | Serve HTTPS with this PEM certificate chain. Needs `--tls-key`. |
-| `--tls-key <file>` | `WATERMELON_TLS_KEY` | | The PEM private key for `--tls-cert`. |
-| `--secure-cookies` | `WATERMELON_SECURE_COOKIES` | off | Mark the login cookie HTTPS-only. Set it when a reverse proxy terminates HTTPS; implied by `--tls-cert`. |
+| `--bind <address:port>` | `WATERMELONPGP_BIND` | `127.0.0.1:8080` | Where to listen. Only this machine can connect by default. |
+| `--tls-cert <file>` | `WATERMELONPGP_TLS_CERT` | | Serve HTTPS with this PEM certificate chain. Needs `--tls-key`. |
+| `--tls-key <file>` | `WATERMELONPGP_TLS_KEY` | | The PEM private key for `--tls-cert`. |
+| `--secure-cookies` | `WATERMELONPGP_SECURE_COOKIES` | off | Mark the login cookie HTTPS-only. Set it when a reverse proxy terminates HTTPS; implied by `--tls-cert`. |
 | `--workers <n>` | | number of CPUs | How many jobs may process files at the same time. Files within one job are always processed one after another. |
 
 ```sh
-watermelon serve
-watermelon serve --bind 0.0.0.0:8443 --tls-cert fullchain.pem --tls-key privkey.pem
+watermelonpgp serve
+watermelonpgp serve --bind 0.0.0.0:8443 --tls-cert fullchain.pem --tls-key privkey.pem
 ```
 
-Send SIGHUP (`systemctl reload watermelon`) to reload a renewed TLS certificate without a
-restart; for the Windows service, `sc.exe control watermelon paramchange`. To run it as a
+Send SIGHUP (`systemctl reload watermelonpgp`) to reload a renewed TLS certificate without a
+restart; for the Windows service, `sc.exe control watermelonpgp paramchange`. To run it as a
 service, see [deployment.md](deployment.md) for systemd and Docker, and
 [Windows Server](deployment.md#windows-server) and [Windows service](#windows-service) on
 Windows.
@@ -106,17 +106,17 @@ The whole setup, including job folder permissions and HTTPS, is in
 [deployment.md](deployment.md#windows-server).
 It takes the options of [`serve`](#serve), `--data-dir`, `--master-key`, `--log-format` and
 `--log-file`, from the command line or their environment variables, and stores them in the
-service's command line with absolute paths, so put `watermelon.exe` where it will stay
+service's command line with absolute paths, so put `watermelonpgp.exe` where it will stay
 (e.g. `C:\Program Files\WatermelonPGP`) before installing.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--name <name>` | `watermelon` | Service name. |
+| `--name <name>` | `watermelonpgp` | Service name. |
 
 ```powershell
-watermelon --data-dir C:\ProgramData\WatermelonPGP init
-watermelon --data-dir C:\ProgramData\WatermelonPGP service install --bind 127.0.0.1:8080
-Start-Service watermelon
+watermelonpgp --data-dir C:\ProgramData\WatermelonPGP init
+watermelonpgp --data-dir C:\ProgramData\WatermelonPGP service install --bind 127.0.0.1:8080
+Start-Service watermelonpgp
 ```
 
 - The service starts with Windows, and is restarted if it fails (after 5 seconds, twice, then
@@ -128,18 +128,18 @@ Start-Service watermelon
 - `install` adds an entry allowing `NT SERVICE\<name>` to read the TLS certificate and key,
   and to write a `--log-file` outside the data directory (creating it), keeping their other
   entries. It says which files it changed. Give the account access to the job folders yourself.
-- The log goes to `<data-dir>\watermelon.log` unless `--log-file` says otherwise. If the service
+- The log goes to `<data-dir>\watermelonpgp.log` unless `--log-file` says otherwise. If the service
   can't open its log file, it doesn't start; when that file is a `--log-file` other than the
-  default, it writes why to `<data-dir>\watermelon.log` if it can. Otherwise only Windows
+  default, it writes why to `<data-dir>\watermelonpgp.log` if it can. Otherwise only Windows
   records the failure: the exit code in `sc.exe query <name>` and the Service Control Manager
   entries in the System event log.
-- `Stop-Service watermelon` lets running jobs finish their current file before the service
+- `Stop-Service watermelonpgp` lets running jobs finish their current file before the service
   stops. While jobs make progress, the service keeps telling Windows it is stopping; after
   90 seconds without progress it stops doing so, and Windows can treat it as hung. At Windows
-  shutdown it gets up to 5 minutes. `sc.exe control watermelon paramchange` reloads the TLS
+  shutdown it gets up to 5 minutes. `sc.exe control watermelonpgp paramchange` reloads the TLS
   certificate.
 - To change a setting, uninstall and install again.
-- The master key must be in a file: `install` refuses `WATERMELON_MASTER_KEY`.
+- The master key must be in a file: `install` refuses `WATERMELONPGP_MASTER_KEY`.
 
 ### `service uninstall`
 
@@ -155,7 +155,7 @@ it belongs to no customer (for example your own signing key that several custome
 ### `customer add <name>`
 
 ```sh
-watermelon customer add ACME
+watermelonpgp customer add ACME
 ```
 
 Names must be unique.
@@ -177,8 +177,8 @@ Generate a new key pair, for one of your customers or as an anonymous key.
 | `--algorithm <curve25519\|rsa4096>` | `curve25519` | `curve25519` (Ed25519 for signing, Cv25519 for encryption) is recommended. `rsa4096` for partners whose software can't handle it; it takes a few seconds to generate. Both work with GnuPG 2.2 and later. |
 
 ```sh
-watermelon key gen --customer ACME --uid "ACME Exports <exports@acme.example>"
-watermelon key gen --uid "Our signing key <pgp@example.com>"   # anonymous
+watermelonpgp key gen --customer ACME --uid "ACME Exports <exports@acme.example>"
+watermelonpgp key gen --uid "Our signing key <pgp@example.com>"   # anonymous
 ```
 
 ### `key import [--customer <name>] <file>`
@@ -197,7 +197,7 @@ another customer.
 - Importing the secret key of a public key you already have adds the secret part.
 
 ```sh
-watermelon key import --customer ACME acme-public.asc
+watermelonpgp key import --customer ACME acme-public.asc
 ```
 
 ### `key list`
@@ -215,8 +215,8 @@ Print a key, armored, to stdout.
 | `-o`, `--output <file>` | Write to this file instead of stdout. Refuses to overwrite an existing file; secret exports are created readable only by you. |
 
 ```sh
-watermelon key export AB12CD34EF567890 > acme-public.asc
-watermelon key export AB12CD34EF567890 --secret -o acme-secret.asc
+watermelonpgp key export AB12CD34EF567890 > acme-public.asc
+watermelonpgp key export AB12CD34EF567890 --secret -o acme-secret.asc
 ```
 
 ### `key revoke <key>`
@@ -230,8 +230,8 @@ public key, so export it again and send it to them afterwards. This cannot be un
 | `--comment <text>` | empty | A short explanation stored in the revocation. |
 
 ```sh
-watermelon key revoke AB12CD34EF567890 --reason superseded --comment "replaced by 99FF..."
-watermelon key export AB12CD34EF567890 > acme-public-revoked.asc
+watermelonpgp key revoke AB12CD34EF567890 --reason superseded --comment "replaced by 99FF..."
+watermelonpgp key export AB12CD34EF567890 > acme-public-revoked.asc
 ```
 
 Jobs that encrypt to or sign with a revoked key pause themselves. A revoked key can still decrypt
@@ -282,7 +282,7 @@ paths (`\\server\share\acme\in`).
 | `--seipd-v2` | off | Use the newer RFC 9580 format. Only for partners known to support it; GnuPG 2.4 and older cannot read it. |
 
 ```sh
-watermelon job add encrypt --customer ACME --name outbound \
+watermelonpgp job add encrypt --customer ACME --name outbound \
     --input /srv/sftp/acme/outbox --output /srv/sftp/acme/out \
     --recipient <ACME's key> --recipient <your own key> --sign-with <your key>
 ```
@@ -296,7 +296,7 @@ watermelon job add encrypt --customer ACME --name outbound \
 | `--verify <ignore\|warn\|require>` | `ignore` | What to do about signatures. `warn` processes unsigned or unverifiable files but notes it in the audit log; `require` sends them to the failed folder. `warn` and `require` need at least one `--verify-with`. |
 
 ```sh
-watermelon job add decrypt --customer ACME --name inbound \
+watermelonpgp job add decrypt --customer ACME --name inbound \
     --input /srv/sftp/acme/in --output /srv/import/acme \
     --key <your key> --verify-with <ACME's key> --verify require
 ```
@@ -329,7 +329,7 @@ job, or for running jobs from cron instead of `serve`/`run`. Waits `--settle <se
 enabled. Exits with status 1 if any file failed or the job had a problem.
 
 ```sh
-watermelon job run-once outbound
+watermelonpgp job run-once outbound
 ```
 
 ## Audit log and backups
@@ -351,7 +351,7 @@ is running. **The master key is not included**: back it up separately and keep t
 Restoring is described in [deployment.md](deployment.md#backups-and-restore).
 
 ```sh
-watermelon backup /backups/watermelon-$(date +%F).db
+watermelonpgp backup /backups/watermelonpgp-$(date +%F).db
 ```
 
 ## Scripting
@@ -360,11 +360,11 @@ watermelon backup /backups/watermelon-$(date +%F).db
   can run unattended:
 
   ```sh
-  printf '%s\n' "$ADMIN_PASSWORD" | watermelon --passphrase-stdin init
-  printf '%s\n' "$KEY_PASSPHRASE" | watermelon --passphrase-stdin key import --customer ACME key.asc
+  printf '%s\n' "$ADMIN_PASSWORD" | watermelonpgp --passphrase-stdin init
+  printf '%s\n' "$KEY_PASSPHRASE" | watermelonpgp --passphrase-stdin key import --customer ACME key.asc
   ```
 
   Commands that ask for a new password read it once instead of twice.
 - Commands exit with status 0 on success and non-zero on any error, with the reason on stderr.
-- Set `WATERMELON_DATA_DIR` (and `WATERMELON_MASTER_KEY_FILE`) once instead of repeating the
+- Set `WATERMELONPGP_DATA_DIR` (and `WATERMELONPGP_MASTER_KEY_FILE`) once instead of repeating the
   options.

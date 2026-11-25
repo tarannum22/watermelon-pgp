@@ -91,7 +91,7 @@ pub fn make_private(path: &Path) -> io::Result<()> {
     }
 }
 
-/// Windows: make `account` (`DOMAIN\name`, e.g. `NT SERVICE\watermelon`) the owner of
+/// Windows: make `account` (`DOMAIN\name`, e.g. `NT SERVICE\watermelonpgp`) the owner of
 /// `path` and replace its access list, so that only `account`, LocalSystem and Administrators
 /// can access `path` and, for a directory, everything inside it, including files created there
 /// later. Administrators keep access so that they can still run commands against a service's
@@ -334,7 +334,7 @@ mod tests {
             assert!(!is_readable_by_others(path).unwrap(), "{}", path.display());
         }
         // Created later by someone else (an administrator's CLI): same access, inherited.
-        let later = data.join("watermelon.db-wal");
+        let later = data.join("watermelonpgp.db-wal");
         fs::write(&later, b"x").unwrap();
         let (_, allowed) = super::windows::testing::owner_and_allowed(&later);
         assert_eq!(allowed, expected);
@@ -410,7 +410,7 @@ mod tests {
             !is_readable_by_others(&existing).unwrap(),
             "applied to contents"
         );
-        let created = data.join("watermelon.db-wal");
+        let created = data.join("watermelonpgp.db-wal");
         fs::write(&created, b"x").unwrap();
         assert!(!is_readable_by_others(&created).unwrap());
     }

@@ -321,7 +321,7 @@ impl Store {
 }
 
 /// Where [`Store::open`] keeps the database as it was before upgrading it from schema `version`:
-/// `watermelon.db` → `watermelon.db.schema-v3.bak`.
+/// `watermelonpgp.db` → `watermelonpgp.db.schema-v3.bak`.
 pub fn snapshot_path(db: &Path, version: usize) -> std::path::PathBuf {
     let mut name = db.as_os_str().to_owned();
     name.push(format!(".schema-v{version}.bak"));
@@ -552,7 +552,7 @@ mod tests {
     #[test]
     fn upgrading_a_database_file_keeps_a_copy_older_builds_can_open() {
         let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join("watermelon.db");
+        let db = dir.path().join("watermelonpgp.db");
         v3_database()
             .execute("VACUUM INTO ?1", [db.to_str().unwrap()])
             .unwrap();
@@ -587,7 +587,7 @@ mod tests {
     #[test]
     fn backup_is_private_and_never_overwrites() {
         let dir = tempfile::tempdir().unwrap();
-        let store = Store::open(&dir.path().join("watermelon.db")).unwrap();
+        let store = Store::open(&dir.path().join("watermelonpgp.db")).unwrap();
         let dest = dir.path().join("backup.db");
         store.backup_to(&dest).unwrap();
         assert!(!crate::platform::is_readable_by_others(&dest).unwrap());
@@ -601,7 +601,7 @@ mod tests {
     #[test]
     fn a_new_database_file_has_no_copy() {
         let dir = tempfile::tempdir().unwrap();
-        let db = dir.path().join("watermelon.db");
+        let db = dir.path().join("watermelonpgp.db");
         Store::open(&db).unwrap();
         let names: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()

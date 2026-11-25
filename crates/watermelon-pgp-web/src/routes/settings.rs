@@ -43,7 +43,7 @@ pub async fn show(State(state): State<AppState>, auth: Authed) -> Markup {
                     }).title("Appearance").icon(Icon::Sun))
                     (ui::panel(html! {
                         p { "Take a consistent snapshot of the database on the server:" }
-                        (ui::terminal(html! { "watermelon backup /backups/watermelon-$(date +%F).db" }))
+                        (ui::terminal(html! { "watermelonpgp backup /backups/watermelonpgp-$(date +%F).db" }))
                         (ui::alert(Tone::Warn, None, html! {
                             "The master key is not part of the backup. Keep a copy of it somewhere else, "
                             "or the secret keys in the backup are unrecoverable."

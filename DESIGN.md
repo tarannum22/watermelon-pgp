@@ -21,23 +21,23 @@ config export/import.
   - `watermelon-pgp-core` — crypto wrapper (rPGP), key store, master-key envelope, SQLite schema, audit log.
   - `watermelon-pgp-jobs` — polling job engine.
   - `watermelon-pgp-web` — the web UI (axum, maud templates, vendored htmx).
-  - `watermelon-pgp` — the `watermelon` binary: CLI, and `serve` for web UI + job engine.
+  - `watermelon-pgp` — the `watermelonpgp` binary: CLI, and `serve` for web UI + job engine.
 - Single binary, embedded assets. Linux primary, Windows Server (x86_64, as a native
   service), macOS for development. What differs between them stays behind small `platform`
   modules (access lists, file locking and attributes, moves).
 - Storage: SQLite in the data dir. Process-level settings (bind address, data dir, master key
-  path, TLS cert/key, log format) are CLI flags, each with a `WATERMELON_*` environment variable.
+  path, TLS cert/key, log format) are CLI flags, each with a `WATERMELONPGP_*` environment variable.
   Everything else lives in the DB and is managed through the GUI.
   - *Changed from the original plan of a TOML config file:* every deployment target already has
     a natural way to set environment variables (systemd `EnvironmentFile=`, Docker `-e`/`--env-file`),
     and one mechanism is easier to document and reason about than two with precedence rules.
 - Web: axum + server-rendered templates + htmx. No JS build step.
-- Runs in the foreground (`watermelon serve`); a sandboxed systemd unit
+- Runs in the foreground (`watermelonpgp serve`); a sandboxed systemd unit
   (`contrib/systemd/`) and a Docker image (non-root, uid 10001) are provided, see
   `docs/deployment.md`. SIGTERM lets running jobs finish their current file; SIGHUP reloads
   the TLS certificate.
-- On Windows, `watermelon service install` registers `serve` as a native service (the
-  `windows-service` crate) running as the virtual account `NT SERVICE\watermelon`, which it
+- On Windows, `watermelonpgp service install` registers `serve` as a native service (the
+  `windows-service` crate) running as the virtual account `NT SERVICE\watermelonpgp`, which it
   makes the owner of the data directory and master key. Stop, Preshutdown and Shutdown take
   the same path as SIGTERM; the ParamChange control reloads the TLS certificate. Settings go into the
   service's command line as flags, so there is still one configuration mechanism.
@@ -54,7 +54,7 @@ config export/import.
 
 ## Security
 
-- **Auth:** single admin password, Argon2id hash. Created by `watermelon init` on the CLI — there
+- **Auth:** single admin password, Argon2id hash. Created by `watermelonpgp init` on the CLI — there
   is no web first-run setup page (a fresh exposed instance could be claimed by anyone).
 - **Network:** binds `127.0.0.1` by default; exposing it is explicit config. Optional built-in TLS
   (rustls) when a cert/key is configured, otherwise run behind a reverse proxy. Secure cookie
@@ -83,8 +83,8 @@ config export/import.
 - **Imported secret keys:** the passphrase is asked once, the key is unlocked and re-wrapped under
   the master key. Their passphrase is not stored.
 - **Export:** public keys freely. Secret-key export requires choosing a new passphrase and is audited.
-- **Backups:** `watermelon backup` writes a consistent SQLite snapshot. The master key is
-  deliberately excluded and must be backed up separately; `watermelon init` warns about this once.
+- **Backups:** `watermelonpgp backup` writes a consistent SQLite snapshot. The master key is
+  deliberately excluded and must be backed up separately; `watermelonpgp init` warns about this once.
 
 ## OpenPGP
 
@@ -148,10 +148,10 @@ Hash-chaining for tamper evidence comes later.
 
 - `/healthz` endpoint (no login; checks the database).
 - Logs to stderr or a file (`--log-file`; the Windows service has no console), text or JSON
-  (`--log-format`), level via `WATERMELON_LOG`: page requests, job passes that did something,
+  (`--log-format`), level via `WATERMELONPGP_LOG`: page requests, job passes that did something,
   pauses and errors. The audit log remains the record of who did what.
 - TLS: rustls with the `ring` provider (no C/C++ build dependencies beyond a C compiler).
-- CLI: `watermelon init`, `watermelon serve`, `watermelon backup`, plus key and job commands.
+- CLI: `watermelonpgp init`, `watermelonpgp serve`, `watermelonpgp backup`, plus key and job commands.
 
 ## Quality gates (CI)
 

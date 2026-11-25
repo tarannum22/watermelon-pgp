@@ -10,9 +10,9 @@
     <summary>Self-hosted OpenPGP key management and folder encryption jobs, with a web UI.</summary>
     <description><![CDATA[watermelon-pgp manages OpenPGP keys for your partners and encrypts or decrypts the files that land in watched folders, such as an SFTP server's upload folders. One program with a web UI, a command line and a Windows service.
 
-This package installs `watermelon.exe` into `C:\Program Files\WatermelonPGP` and puts that folder on the Path. It doesn't create a database or install the service: run `watermelon init` and `watermelon service install` yourself, as described in [the Windows Server guide](https://github.com/@REPO@/blob/v@VERSION@/docs/deployment.md#windows-server).
+This package installs `watermelonpgp.exe` into `C:\Program Files\WatermelonPGP` and puts that folder on the Path. It doesn't create a database or install the service: run `watermelonpgp init` and `watermelonpgp service install` yourself, as described in [the Windows Server guide](https://github.com/@REPO@/blob/v@VERSION@/docs/deployment.md#windows-server).
 
-`choco upgrade` stops a running watermelon service, replaces the program and starts the service again. `choco uninstall` refuses while a service runs the program (`watermelon service uninstall` first) and never removes data directories or master keys.
+`choco upgrade` stops a running watermelonpgp service, replaces the program and starts the service again. `choco uninstall` refuses while a service runs the program (`watermelonpgp service uninstall` first) and never removes data directories or master keys.
 
 Licensed under MIT OR Apache-2.0, at your option.]]></description>
     <projectUrl>https://tarannum22.github.io/watermelon-pgp/</projectUrl>

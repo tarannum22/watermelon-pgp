@@ -183,7 +183,7 @@ fn set_security(path: &Path, owner: Option<&Sid>, acl: &[u64]) -> io::Result<()>
 }
 
 /// Add an entry to `path`'s access list allowing `account` to read it, or to read and write
-/// it. Keeps the existing entries and the owner, so it suits files watermelon doesn't own, such
+/// it. Keeps the existing entries and the owner, so it suits files WatermelonPGP doesn't own, such
 /// as a TLS certificate.
 pub fn allow_account(path: &Path, account: &str, write: bool) -> io::Result<()> {
     let account = Sid::of_account(account)?;
@@ -276,7 +276,7 @@ pub fn is_readable_by_others(path: &Path) -> io::Result<bool> {
 /// How to restrict `path` after [`is_readable_by_others`] said others can access it.
 pub fn how_to_restrict(path: &Path) -> String {
     let account = current_user().map_or_else(
-        |_| "<the account that runs watermelon>".to_owned(),
+        |_| "<the account that runs WatermelonPGP>".to_owned(),
         |me| me.account_name(),
     );
     let shown = path.display();
@@ -475,7 +475,7 @@ impl Sid {
         }
     }
 
-    /// Look up an account by name, e.g. `NT SERVICE\watermelon`.
+    /// Look up an account by name, e.g. `NT SERVICE\watermelonpgp`.
     fn of_account(name: &str) -> io::Result<Self> {
         let wide_name: Vec<u16> = name.encode_utf16().chain([0]).collect();
         let mut sid = [0u32; (SECURITY_MAX_SID_SIZE as usize).div_ceil(4)];
