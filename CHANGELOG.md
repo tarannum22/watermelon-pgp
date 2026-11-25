@@ -6,7 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+- `watermelon backup` writes the copy readable only by you (mode 0600 on Unix), like the
+  upgrade backup. It holds the sealed secret keys and the admin password hash; before, it got
+  the default permissions.
+
 ### Windows (no Windows release yet)
+- Secrets are protected with access lists: the data directory, database, master keyfile,
+  upgrade backups and exported secret keys are created so that only the account running
+  watermelon can access them, ignoring permissive parents such as `C:\ProgramData`.
+  `init` also restricts an existing data directory that other users can access, so that
+  files created in it (SQLite's `-wal` and `-shm`) are private. A master keyfile other users
+  can access is refused, as on Unix, with the `icacls` commands that fix it; LocalSystem and
+  Administrators don't count, like root.
 - Jobs leave a file alone while another process still has it open for writing, such as an
   SFTP upload that stalled, and pick it up once it's released, without logging it as failed.
   While a file is processed, others can read it but not change or delete it.

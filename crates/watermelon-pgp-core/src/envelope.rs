@@ -54,8 +54,9 @@ impl MasterKey {
         );
         if platform::is_readable_by_others(path)? {
             return Err(Error::MasterKey(format!(
-                "{} is readable by other users; restrict it with `chmod 600`",
-                path.display()
+                "{} is readable by other users; {}",
+                path.display(),
+                platform::how_to_restrict(path)
             )));
         }
         Self::from_hex(&contents)
@@ -147,14 +148,13 @@ mod tests {
         assert_eq!(&**loaded.open(&sealed, "c").unwrap(), b"x");
     }
 
-    #[cfg(unix)]
     #[test]
     fn rejects_world_readable_keyfile() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("master.key");
         MasterKey::generate().write_new(&path).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(MasterKey::load(&path).is_err());
+        crate::platform::testing::grant_others_read(&path);
+        let err = MasterKey::load(&path).err().unwrap().to_string();
+        assert!(err.contains("readable by other users"), "{err}");
     }
 }

@@ -298,18 +298,24 @@ impl Store {
         &self.conn
     }
 
-    /// Write a consistent snapshot of the database to `dest`, which must not exist yet.
+    /// Write a consistent snapshot of the database to `dest`, which must not exist yet,
+    /// readable only by us: it holds the sealed secret keys and the admin password hash.
     pub fn backup_to(&self, dest: &Path) -> Result<()> {
-        if dest.exists() {
-            return Err(Error::Conflict(format!(
-                "{} already exists",
-                dest.display()
-            )));
-        }
-        let dest = dest
+        let name = dest
             .to_str()
             .ok_or_else(|| Error::Invalid("backup path must be valid UTF-8".into()))?;
-        self.conn.execute("VACUUM INTO ?1", [dest])?;
+        // VACUUM INTO accepts an empty file, so create it private first.
+        crate::platform::write_private_file(dest, &[]).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                Error::Conflict(format!("{} already exists", dest.display()))
+            } else {
+                e.into()
+            }
+        })?;
+        if let Err(e) = self.conn.execute("VACUUM INTO ?1", [name]) {
+            let _ = std::fs::remove_file(dest);
+            return Err(e.into());
+        }
         Ok(())
     }
 }
@@ -564,6 +570,7 @@ mod tests {
         assert_eq!(keys, 1);
         // Windows can't delete a file SQLite still has open.
         drop(old);
+        assert!(!crate::platform::is_readable_by_others(&copy).unwrap());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -575,6 +582,20 @@ mod tests {
         std::fs::remove_file(&copy).unwrap();
         Store::open(&db).unwrap();
         assert!(!copy.exists());
+    }
+
+    #[test]
+    fn backup_is_private_and_never_overwrites() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("watermelon.db")).unwrap();
+        let dest = dir.path().join("backup.db");
+        store.backup_to(&dest).unwrap();
+        assert!(!crate::platform::is_readable_by_others(&dest).unwrap());
+        Connection::open(&dest)
+            .unwrap()
+            .query_row("SELECT count(*) FROM keys", [], |row| row.get::<_, i64>(0))
+            .unwrap();
+        assert!(matches!(store.backup_to(&dest), Err(Error::Conflict(_))));
     }
 
     #[test]
