@@ -198,7 +198,30 @@ directory is the layout the Windows CI tests; to keep it elsewhere, see
 
 ### Install
 
-Windows releases start with 0.3.0. Download
+**With [Chocolatey](https://chocolatey.org/install)** (from an elevated PowerShell):
+
+```powershell
+choco install watermelon-pgp
+```
+
+The package downloads the release's zip from GitHub, checks it against the release's
+`SHA256SUMS`, copies it into `C:\Program Files\WatermelonPGP` and adds that folder to the system
+Path, so `watermelon --version` works in a new shell. That's all it does: it doesn't run `init`
+or `service install` and doesn't create or touch a data directory; those are the next steps,
+below. A new version can take a few days to appear on Chocolatey after its GitHub release,
+while the community repository reviews it; until then, install it from the zip.
+
+- `choco upgrade watermelon-pgp`: if a Windows service runs
+  `C:\Program Files\WatermelonPGP\watermelon.exe`, the package stops it (running jobs finish
+  their current file first), replaces the files and starts it again, which runs any database
+  migration ([Backups and upgrades](#backups-and-upgrades)). A `watermelon` running outside a
+  service makes the upgrade fail; stop it and try again.
+- `choco uninstall watermelon-pgp` refuses while a service runs that program. Run
+  `watermelon service uninstall` first, then uninstall again. It removes the program and its
+  Path entry, and leaves the data directory and the master key; delete those yourself once
+  you no longer need them.
+
+**From the zip.** Windows releases start with 0.3.0. Download
 `watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc.zip` and `SHA256SUMS` from the
 [GitHub releases](https://github.com/tarannum22/watermelon-pgp/releases), check the zip, and
 unpack it into a folder of its own, named after the version:
@@ -439,12 +462,14 @@ from the same volume keeps the private access list of the backup, and the servic
 it. Uninstalling and installing the service again also works: `install` re-applies its
 hand-over to everything in the data directory.
 
-To upgrade: unpack the new zip into its own folder as in [Install](#install), then
-`Stop-Service watermelon`, copy the new `watermelon.exe` over the old one in
-`C:\Program Files\WatermelonPGP`, and `Start-Service watermelon`. As described in
+To upgrade: with Chocolatey, `choco upgrade watermelon-pgp`, which stops the service,
+replaces the program and starts it again ([Install](#install)). From the zip: unpack the new
+zip into its own folder as in [Install](#install), then `Stop-Service watermelon`, copy the new
+`watermelon.exe` over the old one in `C:\Program Files\WatermelonPGP`, and
+`Start-Service watermelon`. As described in
 [Upgrading](#upgrading), a database upgrade first keeps a copy of the old database in the data
 directory (`watermelon.db.schema-v<N>.bak`); for a backup the old release can read, run
-`backup` with the old `watermelon.exe` before replacing it.
+`backup` with the old `watermelon.exe` before replacing it (or before `choco upgrade`).
 
 ### Known limits
 

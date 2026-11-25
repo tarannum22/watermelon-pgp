@@ -32,8 +32,9 @@ website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands (after the rel
 - [ ] Nothing else still names the old version:
       `git grep -nF A.B.C -- ':!CHANGELOG.md' ':!Cargo.lock'` (the website is updated later).
 - [ ] The release dry run passes on the release branch. It builds and packages every target,
-      writes the release notes and the Homebrew formula, and builds the image, but publishes
-      nothing. The Windows build (`build (x86_64-pc-windows-msvc, windows-latest)`) also
+      writes the release notes and the Homebrew formula, builds the image, and builds the
+      Chocolatey package and smoke-tests it (job `chocolatey`: install, upgrade with the
+      service running, uninstall), but publishes nothing. The Windows build (`build (x86_64-pc-windows-msvc, windows-latest)`) also
       smoke-tests the unpacked zip: `--version`, `init` and `/healthz`, and that `watermelon.exe`
       needs no C runtime DLL (`dumpbin /dependents`):
 
@@ -104,7 +105,35 @@ the tap is updated by hand:
 - [ ] It installs: `brew update && brew upgrade tarannum22/tap/watermelon-pgp && watermelon --version`
       (`brew test` and `brew audit --strict tarannum22/tap/watermelon-pgp` for formula changes).
 
-## 5. Website
+## 5. Chocolatey
+
+The `chocolatey` job builds `watermelon-pgp.X.Y.Z.nupkg` from the release's `SHA256SUMS`
+(`packaging/chocolatey/package.sh`), installs it from the GitHub release on a Windows runner, and
+pushes it to the [community repository](https://community.chocolatey.org/packages/watermelon-pgp)
+when the `CHOCOLATEY_API_KEY` secret is set: the API key of the package's maintainer account on
+community.chocolatey.org (the `tarannum22` account, the `<owners>` in the nuspec). Without it the
+job warns and prints the commands to push by hand, and keeps the package as the run's
+`chocolatey` artifact:
+
+- [ ] Push it, if the job didn't (from Windows, or anywhere `choco` runs):
+
+  ```sh
+  gh run download <run id> --name chocolatey
+  choco push watermelon-pgp.X.Y.Z.nupkg --source https://push.chocolatey.org/ --api-key <key>
+  ```
+
+- [ ] Every version goes through moderation: automated checks (validator, verifier), then a
+      human review, which can take days, longest for the first version. Follow it on
+      `https://community.chocolatey.org/packages/watermelon-pgp/X.Y.Z` and the email to the
+      maintainer account. Until it's approved, `choco install watermelon-pgp` still installs
+      A.B.C; the release notes and docs/deployment.md point to the zip meanwhile, so nothing else
+      needs to wait. If a moderator asks for changes, fix `packaging/chocolatey/` on `main` and
+      push the fixed package with the same version (it replaces the one under review).
+      `watermelon.exe` isn't code-signed yet, which a reviewer may ask about.
+- [ ] Once approved, on a Windows machine:
+      `choco upgrade watermelon-pgp -y && watermelon --version`.
+
+## 6. Website
 
 Merge only once the release has its tarballs, or the install commands point at nothing. The
 `Website` workflow (`pages.yml`) deploys `site/` when it changes on `main`.
