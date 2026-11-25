@@ -23,8 +23,6 @@ website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands (after the rel
 - [ ] `CHANGELOG.md`: a `## [X.Y.Z] - YYYY-MM-DD` section above the previous release (rename
       `## [Unreleased]` if there is one). `release.yml` uses this section as the release notes
       and fails if it can't find `## [X.Y.Z]`.
-- [ ] Until Windows support is done (issue #1), the notes call the Windows zip a preview for
-      testing, and README's Install doesn't list it.
 - [ ] A database schema change is called out in the CHANGELOG (what happens on upgrade, how to
       go back) and in the PR's **Merge Danger** as a one-way door.
 - [ ] `README.md`: the status line (`> **Status: X.Y.Z.** …`), and Features, Install and Known
@@ -68,7 +66,7 @@ website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands (after the rel
       `gh run watch <id>`. (CI also runs on the tag.)
 - [ ] `gh release view vX.Y.Z`: four tarballs, `watermelon-pgp-vX.Y.Z-<target>.tar.gz` for
       `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin` and
-      `x86_64-apple-darwin`, the Windows preview `watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc.zip`,
+      `x86_64-apple-darwin`, the Windows `watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc.zip`,
       and `SHA256SUMS` listing all five; the notes are the CHANGELOG section.
 - [ ] A binary runs and matches its checksum:
 
