@@ -8,17 +8,20 @@
     'schedule:weekly',
   ],
   dependencyDashboard: true,
-  // Match the repo's "Area: subject" commit style.
+  // Match the repo's "Area: subject" commit style: "Deps: update …".
   commitMessagePrefix: 'Deps:',
+  commitMessageAction: 'update',
   // Refresh Cargo.lock and e2e/package-lock.json (default schedule: before 4am on Monday).
   lockFileMaintenance: {
     enabled: true,
   },
   packageRules: [
     // One PR per ecosystem for minor and patch updates. Major updates stay separate PRs.
+    // Pre-release crates (lightningcss 1.0.0-alpha.N) can break in any bump: their own PRs.
     {
       matchManagers: ['cargo'],
       matchUpdateTypes: ['patch'],
+      matchCurrentVersion: '!/-/',
       groupName: 'Rust crates (non-breaking)',
       groupSlug: 'rust-crates',
     },
@@ -27,7 +30,7 @@
       // Keep them out of the group, as their own PRs, like majors.
       matchManagers: ['cargo'],
       matchUpdateTypes: ['minor'],
-      matchCurrentVersion: '!/^0\\./',
+      matchCurrentVersion: '!/^0\\.|-/',
       groupName: 'Rust crates (non-breaking)',
       groupSlug: 'rust-crates',
     },
@@ -59,7 +62,8 @@
     },
     // Automerge only patch and digest updates of test and CI tooling, after CI passes.
     // Nothing here ships in the watermelon binary or the Docker image. Rust crates and
-    // base images always wait for a review.
+    // base images always wait for a review. Only ci.yml: CI runs on a change to it, but a
+    // change to release.yml or pages.yml alone runs no CI, so those wait for a review too.
     {
       matchManagers: ['npm'],
       matchFileNames: ['e2e/package.json'],
@@ -70,6 +74,7 @@
     },
     {
       matchManagers: ['github-actions'],
+      matchFileNames: ['.github/workflows/ci.yml'],
       matchUpdateTypes: ['patch', 'digest'],
       minimumReleaseAge: '3 days',
       automerge: true,
