@@ -109,8 +109,9 @@ enum Command {
 #[derive(Subcommand)]
 enum JobCommand {
     /// Create a job.
+    // Boxed: a PathBuf is larger on Windows, which makes this variant too big for clippy.
     #[command(subcommand)]
-    Add(AddJob),
+    Add(Box<AddJob>),
     /// List jobs with their state and folders.
     List,
     /// Show one job's settings and state.
@@ -679,7 +680,7 @@ fn run(vault: &Vault, command: Command, prompt: Prompt) -> Result<()> {
             unreachable!("handled before")
         }
         Command::Job(JobCommand::Add(add)) => {
-            let (customer, spec) = job_spec(add)?;
+            let (customer, spec) = job_spec(*add)?;
             let customer = vault.customer(&customer)?;
             let job = vault.create_job(Actor::Cli, customer.id, &spec)?;
             println!("Created job {} {:?}", job.id, job.spec.name);

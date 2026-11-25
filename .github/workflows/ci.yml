@@ -6,6 +6,12 @@ on:
     tags: ["v*"]
   pull_request:
 
+# A new push to a pull request cancels its older, now pointless run. Runs on main and tags
+# always finish.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -20,6 +26,7 @@ jobs:
   # checked by pages.yml.
   changes:
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
@@ -50,33 +57,98 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --release -- -D warnings
       # Debug builds add the /styleguide page.
       - run: cargo clippy --all-targets -- -D warnings
 
   # Runner images: Ubuntu 24.04 (GnuPG 2.4.4), latest Ubuntu (GnuPG 2.4.8 + libgcrypt 1.12.0,
-  # see README "Known issues"), macOS (current GnuPG from Homebrew).
+  # see README "Known issues"), macOS (current GnuPG from Homebrew), Windows (GnuPG's own
+  # Windows build, the one Gpg4win bundles).
   test:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-latest, macos-latest]
+        os: [ubuntu-24.04, ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      # Windows: GnuPG's own Windows build from gnupg.org (see "Install GnuPG (Windows)").
+      GNUPG_INSTALLER: gnupg-w32-2.5.24_20260923.exe
+      GNUPG_SHA256: ea6f9dee2cccd83287432625b8b399173805add81d27067fcaf019c0c4da1ad8
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install GnuPG (macOS)
         if: runner.os == 'macOS'
         run: brew install gnupg
+      # GnuPG's own Windows build from gnupg.org: the GnuPG that Gpg4win bundles, without
+      # Kleopatra and the rest, 6 MB instead of 45. The installer is cached. To update:
+      # download the new gnupg-w32-X.exe and .sig from gnupg.org/ftp/gcrypt/binary, check the
+      # signature against a key from gnupg.org/signature_key.html, and pin its name and
+      # SHA-256 in the job's env. 2.5.24 is signed by "Werner Koch (dist signing 2020)",
+      # 6DAA 6E64 A76D 2840 571B  4902 5288 97B8 2640 3ADA.
+      - name: Cache the GnuPG installer
+        if: runner.os == 'Windows'
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/gnupg-installer
+          key: ${{ env.GNUPG_INSTALLER }}
+      - name: Install GnuPG (Windows)
+        if: runner.os == 'Windows'
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $dir = "$env:RUNNER_TEMP\gnupg-installer"
+          $exe = "$dir\$env:GNUPG_INSTALLER"
+          if (-not (Test-Path $exe)) {
+            New-Item -ItemType Directory -Force $dir | Out-Null
+            Invoke-WebRequest "https://gnupg.org/ftp/gcrypt/binary/$env:GNUPG_INSTALLER" `
+              -OutFile $exe -MaximumRetryCount 3 -RetryIntervalSec 5
+          }
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash
+          if ($hash -ne $env:GNUPG_SHA256) { throw "GnuPG installer SHA-256 mismatch: $hash" }
+          # Unpack rather than run the installer: every installer we tried (Gpg4win via
+          # Chocolatey and directly, gnupg-w32) hung in silent mode on this runner. GnuPG finds
+          # its files relative to gpg.exe, so the unpacked tree works as is.
+          $target = "$env:RUNNER_TEMP\gnupg"
+          & "$env:ProgramFiles\7-Zip\7z.exe" x $exe "-o$target" -y -bso0 -bsp0
+          if ($LASTEXITCODE -ne 0) { throw "7-Zip failed to unpack the GnuPG installer" }
+          if (-not (Test-Path "$target\bin\gpg.exe")) {
+            Get-ChildItem $target -Recurse -Depth 1 | Select-Object -ExpandProperty FullName
+            throw "gpg.exe not found in $target\bin"
+          }
+          # Put it ahead of the gpg bundled with Git for Windows.
+          Add-Content $env:GITHUB_PATH "$target\bin"
       - run: gpg --version
+      # Fail rather than quietly test against the gpg bundled with Git for Windows.
+      - name: Check gpg is the pinned GnuPG (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $gpg = (Get-Command gpg).Source
+          if ($gpg -ne "$env:RUNNER_TEMP\gnupg\bin\gpg.exe") { throw "gpg on PATH is $gpg" }
+      # The lint job runs on Linux only; this catches warnings in Windows-only code.
+      - name: Clippy (Windows)
+        if: runner.os == 'Windows'
+        run: cargo clippy --all-targets --release -- -D warnings
       - run: cargo test --release
 
   # Further GnuPG versions partners are likely to run: 2.2 (Debian 12) and the newest 2.4.
@@ -88,6 +160,7 @@ jobs:
       matrix:
         image: ["debian:bookworm", "debian:testing"]
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     container: ${{ matrix.image }}
     steps:
       - name: Install build tools and GnuPG
@@ -96,6 +169,10 @@ jobs:
           apt-get install -y --no-install-recommends ca-certificates curl build-essential git gnupg gpg-agent
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.image }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: gpg --version
       - run: cargo test --release
 
@@ -105,12 +182,16 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: e2e
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build
       - uses: actions/setup-node@v7
         with:
@@ -135,9 +216,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.89
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --workspace --all-targets --locked
 
   # Known vulnerabilities in dependencies (RustSec advisory database).
@@ -145,6 +230,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: taiki-e/install-action@v2
@@ -156,6 +242,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - run: docker build -t watermelon-pgp:ci .
@@ -177,6 +264,7 @@ jobs:
     needs: [changes, lint, test, test-gnupg, e2e, msrv, audit, docker]
     if: always()
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Fail if a job failed or was cancelled
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')

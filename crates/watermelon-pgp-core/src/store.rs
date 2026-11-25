@@ -562,6 +562,8 @@ mod tests {
             .query_row("SELECT count(*) FROM keys", [], |row| row.get(0))
             .unwrap();
         assert_eq!(keys, 1);
+        // Windows can't delete a file SQLite still has open.
+        drop(old);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

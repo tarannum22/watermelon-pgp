@@ -22,7 +22,8 @@ config export/import, Windows as a first-class platform.
   - `watermelon-pgp-jobs` — polling job engine.
   - `watermelon-pgp-web` — the web UI (axum, maud templates, vendored htmx).
   - `watermelon-pgp` — the `watermelon` binary: CLI, and `serve` for web UI + job engine.
-- Single binary, embedded assets. Linux primary, macOS for development; Windows later, so
+- Single binary, embedded assets. Linux primary, macOS for development; Windows Server in
+  progress (issue #1), so
   Unix-specific code stays behind a small `platform` module.
 - Storage: SQLite in the data dir. Process-level settings (bind address, data dir, master key
   path, TLS cert/key, log format) are CLI flags, each with a `WATERMELON_*` environment variable.
@@ -143,6 +144,9 @@ Hash-chaining for tamper evidence comes later.
 - GnuPG interop both directions: Ed25519/Cv25519 and RSA-4096, binary and armored, signed and unsigned.
 - Large-file streaming tests, crash-during-write tests, tampered-file tests (a tampered SEIPD v1
   file must produce no output and land in `failed/`).
+- The test suite, GnuPG interop included, runs on Linux, macOS and Windows (Server 2025,
+  GnuPG's own Windows build, the one Gpg4win bundles), and Clippy runs on Linux and Windows,
+  so Windows-only code is linted.
 - Minimum supported Rust version (1.89) builds; `cargo audit` finds no known-vulnerable
   dependencies; the Docker image builds and passes a smoke test.
 
