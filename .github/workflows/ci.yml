@@ -150,6 +150,81 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo clippy --all-targets --release -- -D warnings
       - run: cargo test --release
+      # The Windows service end to end, like the Docker smoke test: install it from where a
+      # deployment would put it, start it, stop it, and check it stopped cleanly and that only
+      # its account (plus LocalSystem and Administrators) can access the data. The runner is an
+      # administrator, as `service install` needs.
+      - name: Smoke test the Windows service
+        if: runner.os == 'Windows'
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          cargo build --release --bin watermelon
+          $dir = "$env:ProgramFiles\WatermelonPGP"
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          Copy-Item target\release\watermelon.exe $dir
+          $wm = "$dir\watermelon.exe"
+          $data = "$env:ProgramData\WatermelonPGP"
+          $account = 'NT SERVICE\watermelon'
+
+          "ci smoke test password" | & $wm --data-dir $data --passphrase-stdin init
+          # A non-default port: proves the settings reach the service.
+          & $wm --data-dir $data service install --bind 127.0.0.1:18080
+          $service = Get-CimInstance Win32_Service -Filter "Name='watermelon'"
+          if ($service.StartName -ne $account) { throw "runs as $($service.StartName)" }
+
+          function Wait-Healthy {
+            for ($i = 0; $i -lt 30; $i++) {
+              try {
+                if ((Invoke-WebRequest http://127.0.0.1:18080/healthz).Content -match '"ok"') { return }
+              } catch { Start-Sleep 1 }
+            }
+            throw "/healthz did not answer"
+          }
+          Start-Service watermelon
+          Wait-Healthy
+
+          Stop-Service watermelon
+          $service = Get-CimInstance Win32_Service -Filter "Name='watermelon'"
+          if ($service.State -ne 'Stopped' -or $service.ExitCode -ne 0) {
+            throw "state $($service.State), exit code $($service.ExitCode)/$($service.ServiceSpecificExitCode)"
+          }
+          $log = Get-Content "$data\watermelon.log" -Raw
+          Write-Output $log
+          foreach ($line in 'serving', 'running jobs finish their current file first', 'stopped') {
+            if ($log -notmatch [regex]::Escape($line)) { throw "the log lacks '$line'" }
+          }
+
+          # The data directory and everything in it, including files the service created.
+          $allowed = $account, 'NT AUTHORITY\SYSTEM', 'BUILTIN\Administrators'
+          foreach ($item in @(Get-Item $data) + @(Get-ChildItem $data -Recurse -Force)) {
+            $acl = Get-Acl $item.FullName
+            $who = @($acl.Access | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique)
+            Write-Output "$($item.Name): owner $($acl.Owner); $($who -join ', ')"
+            if ($acl.Owner -ne $account) { throw "$($item.FullName) is owned by $($acl.Owner)" }
+            $others = $who | Where-Object { $_ -notin $allowed }
+            if ($others) { throw "$($item.FullName) also allows $($others -join ', ')" }
+            if ($account -notin $who) { throw "$($item.FullName) doesn't allow $account" }
+          }
+
+          # An administrator can still run commands on the service's data.
+          & $wm --data-dir $data audit --limit 3
+
+          # Uninstalling a running service stops it first, cleanly.
+          Start-Service watermelon
+          Wait-Healthy
+          & $wm service uninstall
+          if (Get-Service watermelon -ErrorAction SilentlyContinue) { throw "still installed" }
+          $stops = [regex]::Matches((Get-Content "$data\watermelon.log" -Raw), 'INFO stopped').Count
+          if ($stops -ne 2) { throw "expected 2 clean stops in the log, found $stops" }
+      - name: Windows service log and events
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-Content "$env:ProgramData\WatermelonPGP\watermelon.log" -ErrorAction SilentlyContinue
+          Get-WinEvent -LogName System -MaxEvents 20 -FilterXPath "*[System[Provider[@Name='Service Control Manager']]]" -ErrorAction SilentlyContinue | Format-List TimeCreated, Message
 
   # Further GnuPG versions partners are likely to run: 2.2 (Debian 12) and the newest 2.4.
   test-gnupg:

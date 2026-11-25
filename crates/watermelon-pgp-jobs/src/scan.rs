@@ -1,8 +1,10 @@
 //! Finding input files that are ready to process.
 //!
 //! A file is ready once two consecutive scans saw the same size and modification time, so a
-//! file still being uploaded is left alone. Temp-file patterns used by SFTP clients and
-//! dotfiles are never picked up.
+//! file still being uploaded is left alone. (On Windows, a file another process still has open
+//! for writing is also left alone when processing would start: see `process::ProcessError`.)
+//! Temp-file patterns used by SFTP clients, dotfiles and (on Windows) hidden or system files
+//! are never picked up.
 
 use std::{
     collections::HashMap,
@@ -33,6 +35,9 @@ impl Scanner {
                 continue;
             }
             let meta = entry.metadata()?;
+            if crate::platform::is_hidden(&meta) {
+                continue;
+            }
             current.insert(entry.path(), (meta.len(), meta.modified().ok()));
         }
 
@@ -101,6 +106,25 @@ mod tests {
             fs::write(dir.path().join(name), "x").unwrap();
         }
         fs::create_dir(dir.path().join("processed")).unwrap();
+        let mut scanner = Scanner::default();
+        scanner.scan(dir.path()).unwrap();
+        assert!(scanner.scan(dir.path()).unwrap().is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ignores_hidden_and_system_files() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, flag) in [("Thumbs.db", "+h"), ("desktop.ini", "+s")] {
+            let path = dir.path().join(name);
+            fs::write(&path, "x").unwrap();
+            let status = std::process::Command::new("attrib")
+                .arg(flag)
+                .arg(&path)
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
         let mut scanner = Scanner::default();
         scanner.scan(dir.path()).unwrap();
         assert!(scanner.scan(dir.path()).unwrap().is_empty());

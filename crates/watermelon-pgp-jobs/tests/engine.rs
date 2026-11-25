@@ -246,3 +246,97 @@ fn engine_runs_jobs_until_stopped() {
     stopper.join().unwrap();
     assert_eq!(names(&out), ["a.csv.pgp"]);
 }
+
+/// Windows: a file another process still has open (an SFTP upload that stalled) is neither
+/// processed nor logged as failed; once released it's processed as usual.
+#[cfg(windows)]
+#[test]
+fn files_open_elsewhere_wait_until_released() {
+    let s = Setup::new();
+    let job = s.encrypt_job();
+    let file = s.dir("in").join("a.csv");
+    fs::write(&file, "id\n1\n").unwrap();
+    let held = fs::File::options().append(true).open(&file).unwrap();
+
+    let mut scanner = Scanner::default();
+    for _ in 0..3 {
+        assert_eq!(run_pass(&s.vault, job, &mut scanner), PassReport::default());
+    }
+    assert!(file.exists());
+    assert!(names(&s.dir("out")).is_empty());
+    assert!(!s.actions().iter().any(|a| a.starts_with("file.")));
+
+    drop(held);
+    assert_eq!(run_pass(&s.vault, job, &mut scanner).processed, 1);
+    assert_eq!(names(&s.dir("out")), ["a.csv.pgp"]);
+}
+
+/// Windows: a processed source moves to `processed/` on another drive (on CI: the temp
+/// folder is on C:, the build directory on D:).
+#[cfg(windows)]
+#[test]
+fn processed_folder_on_another_drive() {
+    let s = Setup::new();
+    let elsewhere = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let drive = |path: &Path| path.components().next().map(|c| c.as_os_str().to_owned());
+    assert_ne!(
+        drive(s.root.path()),
+        drive(elsewhere.path()),
+        "the test needs the two folders on different drives"
+    );
+    let mut spec = JobSpec::new("cross", JobKind::Encrypt, &s.dir("in"), &s.dir("out"));
+    spec.processed_dir = Some(elsewhere.path().join("processed"));
+    spec.recipients = vec![s.partner_fpr.clone()];
+    let job = s
+        .vault
+        .lock()
+        .unwrap()
+        .create_job(Actor::Cli, s.customer, &spec)
+        .unwrap()
+        .id;
+    fs::write(s.dir("in").join("a.csv"), "id\n1\n").unwrap();
+
+    let mut scanner = Scanner::default();
+    run_pass(&s.vault, job, &mut scanner);
+    assert_eq!(run_pass(&s.vault, job, &mut scanner).processed, 1);
+    assert_eq!(names(&elsewhere.path().join("processed")), ["a.csv"]);
+    assert_eq!(
+        fs::read(elsewhere.path().join("processed").join("a.csv")).unwrap(),
+        b"id\n1\n"
+    );
+    assert!(!s.dir("in").join("a.csv").exists());
+}
+
+/// Windows: a job whose folders are UNC paths on a network share runs like any other. The
+/// runner's administrative share for the temp drive stands in for a file server.
+#[cfg(windows)]
+#[test]
+fn unc_folders_run() {
+    fn unc(path: &Path) -> PathBuf {
+        let path = path.to_string_lossy();
+        let (drive, rest) = path.split_once(r":\").unwrap();
+        PathBuf::from(format!(r"\\localhost\{drive}$\{rest}"))
+    }
+    let s = Setup::new();
+    let mut spec = JobSpec::new(
+        "share",
+        JobKind::Encrypt,
+        &unc(&s.dir("in")),
+        &unc(&s.dir("out")),
+    );
+    spec.recipients = vec![s.partner_fpr.clone()];
+    let job = s
+        .vault
+        .lock()
+        .unwrap()
+        .create_job(Actor::Cli, s.customer, &spec)
+        .unwrap()
+        .id;
+    fs::write(s.dir("in").join("a.csv"), "id\n1\n").unwrap();
+
+    let mut scanner = Scanner::default();
+    run_pass(&s.vault, job, &mut scanner);
+    assert_eq!(run_pass(&s.vault, job, &mut scanner).processed, 1);
+    assert_eq!(names(&s.dir("out")), ["a.csv.pgp"]);
+    assert_eq!(names(&s.dir("in").join("processed")), ["a.csv"]);
+}

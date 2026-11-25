@@ -20,7 +20,7 @@ use watermelon_pgp_core::{
 };
 
 use crate::{
-    process::{self, JobKeys},
+    process::{self, JobKeys, ProcessError},
     scan::Scanner,
 };
 
@@ -86,16 +86,18 @@ pub fn run_pass(vault: &Mutex<Vault>, job_id: i64, scanner: &mut Scanner) -> Pas
 
     for input in ready {
         let outcome = handle_file(&job, &keys, &input);
+        // Processed and failed files are gone from the folder; a busy one must settle again.
         scanner.forget(&input);
         let (action, detail) = match outcome {
-            Ok(detail) => {
+            Outcome::Processed(detail) => {
                 report.processed += 1;
                 (Action::FileProcessed, detail)
             }
-            Err(detail) => {
+            Outcome::Failed(detail) => {
                 report.failed += 1;
                 (Action::FileFailed, detail)
             }
+            Outcome::Busy => continue,
         };
         let vault = vault.lock().unwrap();
         if let Err(e) = vault.record_file(&job, action, &detail) {
@@ -178,8 +180,19 @@ fn prepare(vault: &Vault, job_id: i64) -> Result<Option<(Job, JobKeys)>, Prepare
     Ok(Some((job, keys)))
 }
 
-/// Process one file and move the source away. Returns the audit detail either way.
-fn handle_file(job: &Job, keys: &JobKeys, input: &Path) -> Result<String, String> {
+/// What happened to one input file.
+enum Outcome {
+    /// Processed and moved away; the audit detail.
+    Processed(String),
+    /// Failed, and moved to the failed folder if possible; the audit detail.
+    Failed(String),
+    /// Windows: another process has it open for writing. Left alone for a later pass, without
+    /// an audit entry.
+    Busy,
+}
+
+/// Process one file and move the source away.
+fn handle_file(job: &Job, keys: &JobKeys, input: &Path) -> Outcome {
     let name = input.file_name().unwrap_or_default().to_string_lossy();
     match process::process_file(&job.spec, keys, input) {
         Ok(done) => {
@@ -199,11 +212,12 @@ fn handle_file(job: &Job, keys: &JobKeys, input: &Path) -> Result<String, String
             if let Err(e) = disposal {
                 // The output is published; leaving the source would encrypt it again next pass.
                 detail.push_str(&format!("; WARNING: could not move source away: {e}"));
-                return Err(detail);
+                return Outcome::Failed(detail);
             }
-            Ok(detail)
+            Outcome::Processed(detail)
         }
-        Err(error) => {
+        Err(ProcessError::InUse) => Outcome::Busy,
+        Err(ProcessError::Failed(error)) => {
             let sha256 = process::sha256_of(input).unwrap_or_else(|e| format!("unreadable: {e}"));
             let mut detail = format!("{name}: {error} (sha256 {sha256})");
             match process::move_into(input, &job.spec.failed_dir) {
@@ -212,7 +226,7 @@ fn handle_file(job: &Job, keys: &JobKeys, input: &Path) -> Result<String, String
                     detail.push_str(&format!("; WARNING: could not move to failed folder: {e}"))
                 }
             }
-            Err(detail)
+            Outcome::Failed(detail)
         }
     }
 }

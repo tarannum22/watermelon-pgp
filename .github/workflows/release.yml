@@ -2,8 +2,9 @@
 # including tagging, are in docs/releasing.md; this workflow only builds and publishes.
 #
 # Dry run: start it by hand (Actions > Release > Run workflow, or `gh workflow run release.yml`).
-# It builds and packages all four targets, checksums them, writes the release notes and the
-# Homebrew formula, and builds the image for both platforms, all as v<version in Cargo.toml>.
+# It builds and packages all five targets (the Windows zip is smoke-tested), checksums them,
+# writes the release notes and the Homebrew formula, and builds the image for both platforms,
+# all as v<version in Cargo.toml>.
 # It publishes nothing: no GitHub release, no image push, no tap update.
 name: Release
 
@@ -21,6 +22,8 @@ env:
 jobs:
   build:
     strategy:
+      # A failed target fails the release, the Windows preview included: the zip is in the
+      # release notes and SHA256SUMS, and the dry run on the release branch catches it first.
       fail-fast: true
       matrix:
         include:
@@ -34,7 +37,11 @@ jobs:
           # Intel Macs, cross-compiled on Apple silicon.
           - target: x86_64-apple-darwin
             os: macos-latest
+          # A zip instead of a tarball. A preview until Windows support (issue #1) is done.
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     outputs:
       tag: ${{ steps.version.outputs.tag }}
     steps:
@@ -56,24 +63,91 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "TAG=$tag" >> "$GITHUB_ENV"
+      # Saved by dry runs only: repeated dry runs on a release branch reuse it. A tag run can't
+      # restore a branch's cache, and nothing reuses a tag's, so it doesn't save one.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          save-if: ${{ github.event_name == 'workflow_dispatch' }}
       - run: cargo build --release --locked --bin watermelon --target ${{ matrix.target }}
+        env:
+          # Windows: link the C runtime statically, so no Visual C++ redistributable is needed.
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
       - name: Package
         shell: bash
         run: |
           name="watermelon-pgp-${TAG}-${{ matrix.target }}"
           mkdir -p "dist/$name"
-          cp "target/${{ matrix.target }}/release/watermelon" README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "dist/$name/"
+          bin=watermelon
+          if [ "$RUNNER_OS" = Windows ]; then bin=watermelon.exe; fi
+          cp "target/${{ matrix.target }}/release/$bin" README.md CHANGELOG.md LICENSE-MIT LICENSE-APACHE "dist/$name/"
           cp -R contrib docs "dist/$name/"
-          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          if [ "$RUNNER_OS" = Windows ]; then
+            (cd dist && 7z a -tzip -bso0 -bsp0 "$name.zip" "$name")
+          else
+            tar -C dist -czf "dist/$name.tar.gz" "$name"
+          fi
+      # Check what ships, from the unpacked zip: the version, init and serve, and no DLL
+      # dependency on the C runtime (VCRUNTIME140.dll, api-ms-win-crt-*, ucrtbase.dll).
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          $name = "watermelon-pgp-$env:TAG-${{ matrix.target }}"
+          Expand-Archive "dist\$name.zip" "$env:RUNNER_TEMP\unpacked"
+          $root = "$env:RUNNER_TEMP\unpacked\$name"
+          $exe = "$root\watermelon.exe"
+          foreach ($entry in "watermelon.exe", "README.md", "CHANGELOG.md", "LICENSE-MIT", "LICENSE-APACHE", "contrib", "docs") {
+            if (-not (Test-Path "$root\$entry")) { throw "the zip has no $name\$entry" }
+          }
+          Get-ChildItem $root | Select-Object -ExpandProperty Name
+
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $dumpbin = & $vswhere -latest -products * -find "VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          if (-not $dumpbin) { throw "dumpbin.exe not found" }
+          $deps = & $dumpbin /nologo /dependents $exe
+          $deps
+          if ($LASTEXITCODE -ne 0) { throw "dumpbin failed" }
+          # Every Windows program imports KERNEL32.dll: without it the output isn't a list.
+          if (-not ($deps | Select-String -Pattern '^\s+KERNEL32\.dll\s*$')) { throw "no dependency list from dumpbin" }
+          $crt = $deps | Select-String -Pattern '^\s+(vcruntime|msvcp|api-ms-win-crt|ucrtbase)\S*\.dll\s*$'
+          if ($crt) { throw "watermelon.exe needs the C runtime DLLs: $crt" }
+
+          $version = & $exe --version
+          $version
+          if ($LASTEXITCODE -ne 0) { throw "--version failed" }
+          if ($version -cne "watermelon-pgp $($env:TAG.TrimStart('v'))") { throw "--version does not match $env:TAG" }
+
+          $data = "$env:RUNNER_TEMP\wm-data"
+          "release smoke test password" | & $exe --data-dir $data --passphrase-stdin init
+          if ($LASTEXITCODE -ne 0) { throw "init failed" }
+          $log = "$env:RUNNER_TEMP\serve"
+          $serve = Start-Process $exe -ArgumentList "--data-dir", $data, "serve", "--bind", "127.0.0.1:8080" `
+            -RedirectStandardOutput "$log.out" -RedirectStandardError "$log.err" -PassThru -NoNewWindow
+          try {
+            $health = $null
+            foreach ($i in 1..30) {
+              try { $health = (Invoke-WebRequest http://127.0.0.1:8080/healthz).Content; break } catch { Start-Sleep 1 }
+            }
+            "/healthz: $health"
+            if ($health -ne '{"status":"ok"}') { throw "/healthz did not answer ok" }
+          } finally {
+            Stop-Process -Id $serve.Id -Force -ErrorAction SilentlyContinue
+            Get-Content "$log.out", "$log.err" -ErrorAction SilentlyContinue
+          }
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
-          path: dist/*.tar.gz
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
           if-no-files-found: error
 
   release:
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
     env:
@@ -85,7 +159,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Checksums
-        run: cd dist && sha256sum -- *.tar.gz > SHA256SUMS && cat SHA256SUMS
+        run: cd dist && sha256sum -- *.tar.gz *.zip > SHA256SUMS && cat SHA256SUMS
       - name: Release notes from CHANGELOG.md
         run: |
           awk -v v="${TAG#v}" '
@@ -99,7 +173,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$TAG" dist/*.tar.gz dist/SHA256SUMS \
+          gh release create "$TAG" dist/*.tar.gz dist/*.zip dist/SHA256SUMS \
             --title "$TAG" --notes-file notes.md --verify-tag
       # The homebrew job below needs the published release; the dry run checks the formula here.
       - name: Dry run, no release created
@@ -111,6 +185,7 @@ jobs:
   image:
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -121,6 +196,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
+          pattern: "*-linux-gnu"
           merge-multiple: true
       - name: Unpack the Linux binaries
         run: |
@@ -157,6 +233,7 @@ jobs:
     needs: release
     if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - name: Formula

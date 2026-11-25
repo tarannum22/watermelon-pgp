@@ -1,7 +1,8 @@
 //! The few operations whose behaviour differs between operating systems.
 //!
 //! "Private" means only the current user can access it: mode `0600`/`0700` on Unix, an
-//! access list that allows only the current user on Windows (see [`windows`]).
+//! access list that allows only the current user on Windows (see [`windows`]). On Windows,
+//! [`set_owner_and_restrict_to`] makes files private to another account instead (a service's).
 
 use std::{io, io::Write, path::Path};
 
@@ -55,12 +56,24 @@ pub fn create_private_dir(path: &Path) -> io::Result<()> {
 /// the database file's mode. On Windows those files take their access from the directory,
 /// and the defaults (`C:\ProgramData` lets every local user read) would expose them, so an
 /// existing directory that others can access is made private. That covers everything created
-/// in it from then on; files already inside keep any access set on them explicitly.
+/// in it from then on; files already inside keep any access set on them explicitly. A
+/// directory owned by an account that isn't trusted is refused: its owner could change the
+/// access list back.
 pub fn secure_data_dir(path: &Path) -> io::Result<()> {
     create_private_dir(path)?;
     #[cfg(windows)]
     if windows::is_readable_by_others(path)? {
         windows::make_private(path)?;
+        if windows::is_readable_by_others(path)? {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "data directory {}: {}",
+                    path.display(),
+                    windows::how_to_restrict(path)
+                ),
+            ));
+        }
     }
     Ok(())
 }
@@ -76,6 +89,23 @@ pub fn make_private(path: &Path) -> io::Result<()> {
     {
         windows::make_private(path)
     }
+}
+
+/// Windows: make `account` (`DOMAIN\name`, e.g. `NT SERVICE\watermelon`) the owner of
+/// `path` and replace its access list, so that only `account`, LocalSystem and Administrators
+/// can access `path` and, for a directory, everything inside it, including files created there
+/// later. Administrators keep access so that they can still run commands against a service's
+/// data directory. Needs an elevated administrator.
+#[cfg(windows)]
+pub fn set_owner_and_restrict_to(path: &Path, account: &str) -> io::Result<()> {
+    windows::set_owner_and_restrict_to(path, account)
+}
+
+/// Windows: add an entry to `path`'s access list allowing `account` to read it (and write it,
+/// with `write`). The owner and the other entries stay as they are.
+#[cfg(windows)]
+pub fn allow_account(path: &Path, account: &str, write: bool) -> io::Result<()> {
+    windows::allow_account(path, account, write)
 }
 
 /// Whether users other than the owner can access `path`. Root on Unix, and LocalSystem and
@@ -103,6 +133,52 @@ pub fn how_to_restrict(path: &Path) -> String {
         format!("restrict it with `chmod 600 '{}'`", path.display())
     }
 }
+
+/// Whether two folder paths name the same folder as written. Windows paths are
+/// case-insensitive, and `/` and `\` are the same separator there. Doesn't resolve links,
+/// short names, or a drive path and a UNC path to the same place.
+pub fn same_folder(a: &Path, b: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let folded = |path: &Path| -> Vec<String> {
+            path.components()
+                .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+                .collect()
+        };
+        folded(a) == folded(b)
+    }
+    #[cfg(not(windows))]
+    {
+        a == b
+    }
+}
+
+/// Example job folders in this platform's path style, for the job form and error messages.
+pub struct FolderExamples {
+    pub input: &'static str,
+    pub output: &'static str,
+    pub processed: &'static str,
+    pub failed: &'static str,
+    /// Appended to "must be an absolute path".
+    pub absolute_path_hint: &'static str,
+}
+
+#[cfg(windows)]
+pub const FOLDER_EXAMPLES: FolderExamples = FolderExamples {
+    input: r"D:\sftp\acme\outbound",
+    output: r"D:\sftp\acme\upload",
+    processed: r"<input>\processed",
+    failed: r"<input>\failed",
+    absolute_path_hint: r" (like D:\sftp\acme\in or \\server\share\acme\in)",
+};
+#[cfg(not(windows))]
+pub const FOLDER_EXAMPLES: FolderExamples = FolderExamples {
+    input: "/srv/sftp/acme/outbound",
+    output: "/srv/sftp/acme/upload",
+    processed: "<input>/processed",
+    failed: "<input>/failed",
+    absolute_path_hint: "",
+};
 
 #[cfg(test)]
 pub(crate) mod testing {
@@ -220,6 +296,101 @@ mod tests {
         let advice = how_to_restrict(&path);
         assert!(advice.contains("/inheritance:r /grant:r"), "{advice}");
         assert!(advice.contains("/remove \"BUILTIN\\Users\""), "{advice}");
+    }
+
+    #[cfg(windows)]
+    const LOCAL_SERVICE: &str = "S-1-5-19";
+    #[cfg(windows)]
+    const SYSTEM: &str = "S-1-5-18";
+    #[cfg(windows)]
+    const ADMINISTRATORS: &str = "S-1-5-32-544";
+    #[cfg(windows)]
+    /// A service account (`S-1-5-80-…`) that exists on every Windows.
+    const TRUSTED_INSTALLER: &str = "NT SERVICE\\TrustedInstaller";
+
+    /// What `service install` does to the data directory: the service account owns it, and
+    /// only it, LocalSystem and Administrators can access it and what is inside.
+    #[cfg(windows)]
+    #[test]
+    fn set_owner_and_restrict_to_a_service_account() {
+        let shared = tempfile::tempdir().unwrap();
+        grant_others_read(shared.path());
+        let data = shared.path().join("data");
+        create_private_dir(&data).unwrap();
+        let key = data.join("master.key");
+        write_private_file(&key, b"x").unwrap();
+        let sub = data.join("sub");
+        fs::create_dir(&sub).unwrap();
+
+        set_owner_and_restrict_to(&data, TRUSTED_INSTALLER).unwrap();
+        let (service, _) = super::windows::testing::owner_and_allowed(&data);
+        assert!(service.starts_with("S-1-5-80-"), "{service}");
+        let mut expected = [SYSTEM, ADMINISTRATORS, service.as_str()];
+        expected.sort();
+        for path in [&data, &key, &sub] {
+            let (owner, allowed) = super::windows::testing::owner_and_allowed(path);
+            assert_eq!(owner, service, "{}", path.display());
+            assert_eq!(allowed, expected, "{}", path.display());
+            assert!(!is_readable_by_others(path).unwrap(), "{}", path.display());
+        }
+        // Created later by someone else (an administrator's CLI): same access, inherited.
+        let later = data.join("watermelon.db-wal");
+        fs::write(&later, b"x").unwrap();
+        let (_, allowed) = super::windows::testing::owner_and_allowed(&later);
+        assert_eq!(allowed, expected);
+        assert_eq!(fs::read(&key).unwrap(), b"x", "administrators keep access");
+    }
+
+    /// An owner that isn't the current user, a trusted account or a service can change the
+    /// access list, so it counts as access by others, like a Unix group or other bit.
+    #[cfg(windows)]
+    #[test]
+    fn an_untrusted_owner_counts_as_access_by_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = dir.path().join("master.key");
+        write_private_file(&key, b"x").unwrap();
+        set_owner_and_restrict_to(&key, "NT AUTHORITY\\LOCAL SERVICE").unwrap();
+        let (owner, allowed) = super::windows::testing::owner_and_allowed(&key);
+        assert_eq!(owner, LOCAL_SERVICE);
+        assert_eq!(allowed, [SYSTEM, LOCAL_SERVICE, ADMINISTRATORS]);
+        assert!(is_readable_by_others(&key).unwrap());
+        assert!(
+            how_to_restrict(&key).contains("/setowner"),
+            "{}",
+            how_to_restrict(&key)
+        );
+
+        // `init` refuses such a data directory rather than make it look private.
+        let data = dir.path().join("data");
+        fs::create_dir(&data).unwrap();
+        set_owner_and_restrict_to(&data, "NT AUTHORITY\\LOCAL SERVICE").unwrap();
+        let err = secure_data_dir(&data).unwrap_err();
+        assert!(err.to_string().contains("/setowner"), "{err}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn allow_account_keeps_the_other_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let cert = dir.path().join("cert.pem");
+        write_private_file(&cert, b"x").unwrap();
+        let (owner, before) = super::windows::testing::owner_and_allowed(&cert);
+        allow_account(&cert, "NT AUTHORITY\\LOCAL SERVICE", false).unwrap();
+        let (owner_after, after) = super::windows::testing::owner_and_allowed(&cert);
+        assert_eq!(owner_after, owner);
+        let mut expected = before.clone();
+        expected.push(LOCAL_SERVICE.to_owned());
+        expected.sort();
+        assert_eq!(after, expected);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_unknown_account_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let unknown = "NT SERVICE\\no-such-watermelon-service";
+        assert!(set_owner_and_restrict_to(dir.path(), unknown).is_err());
+        assert!(allow_account(dir.path(), unknown, false).is_err());
     }
 
     #[cfg(windows)]

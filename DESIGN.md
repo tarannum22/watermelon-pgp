@@ -36,6 +36,11 @@ config export/import, Windows as a first-class platform.
   (`contrib/systemd/`) and a Docker image (non-root, uid 10001) are provided, see
   `docs/deployment.md`. SIGTERM lets running jobs finish their current file; SIGHUP reloads
   the TLS certificate.
+- On Windows, `watermelon service install` registers `serve` as a native service (the
+  `windows-service` crate) running as the virtual account `NT SERVICE\watermelon`, which it
+  makes the owner of the data directory and master key. Stop, Preshutdown and Shutdown take
+  the same path as SIGTERM; the ParamChange control reloads the TLS certificate. Settings go into the
+  service's command line as flags, so there is still one configuration mechanism.
 - License: MIT OR Apache-2.0.
 
 ## Domain
@@ -72,6 +77,9 @@ config export/import, Windows as a first-class platform.
   an environment variable. Jobs therefore run unattended across restarts; stealing the DB alone
   yields nothing. Sealed mode and OS keyring / KMS backends can come later behind the same
   abstraction.
+  On Windows a keyfile counts as private when its owner is the current user, LocalSystem,
+  Administrators or a Windows service account (`NT SERVICE\…`), and its access list allows
+  no one else: any other owner could change the access list.
 - **Imported secret keys:** the passphrase is asked once, the key is unlocked and re-wrapped under
   the master key. Their passphrase is not stored.
 - **Export:** public keys freely. Secret-key export requires choosing a new passphrase and is audited.
@@ -104,13 +112,19 @@ config export/import, Windows as a first-class platform.
   `ignore` / `warn` / `require`. Strips a trailing `.pgp` / `.gpg` / `.asc`, otherwise keeps the name.
 - **Detection:** polling, per-job interval (default 30 s, minimum 5 s). A file is only picked up
   when it is stable — size and mtime unchanged across two scans — and does not match ignore
-  patterns (`*.part`, `*.filepart`, `*.tmp`, `*.crdownload`, `*.partial`, dotfiles). Only regular
-  files directly in the input folder are considered; subfolders and symlinks are skipped.
+  patterns (`*.part`, `*.filepart`, `*.tmp`, `*.crdownload`, `*.partial`, dotfiles; on Windows
+  also files with the hidden or system attribute). Only regular files directly in the input
+  folder are considered; subfolders and symlinks are skipped. On Windows a file another process
+  still has open for writing (an SFTP upload that stalled) is skipped when processing would
+  start, without an audit entry, and tried again later; while a file is processed, others can
+  read it but not change or delete it.
 - **Processing:** streamed (bounded memory, multi-GB files). Output is written to a hidden temp file
   inside the output folder, fsynced, verified, then atomically renamed into place. SEIPD v1 input
   uses rPGP's streaming read mode; unauthenticated plaintext only ever lands in the temp file, which
   is deleted if the integrity check or signature verification fails.
 - **After success:** source moves to the job's `processed/` folder (default) or is deleted.
+  Moves never replace an existing file (a numbered name is used instead) and work across
+  filesystems; on Windows the no-replace move is a single atomic call.
 - **After failure:** source moves to the job's `failed/` folder; the error is in the audit log and on
   the job page. No automatic retries; retry is a button or moving the file back.
 - **Crash recovery:** a crash mid-file leaves at most a hidden `.<name>.<pid>-<n>.watermelon-tmp`
@@ -133,9 +147,9 @@ Hash-chaining for tamper evidence comes later.
 ## Operations
 
 - `/healthz` endpoint (no login; checks the database).
-- Logs to stderr, text or JSON (`--log-format`), level via `WATERMELON_LOG`: page requests,
-  job passes that did something, pauses and errors. The audit log remains the record of who did
-  what.
+- Logs to stderr or a file (`--log-file`; the Windows service has no console), text or JSON
+  (`--log-format`), level via `WATERMELON_LOG`: page requests, job passes that did something,
+  pauses and errors. The audit log remains the record of who did what.
 - TLS: rustls with the `ring` provider (no C/C++ build dependencies beyond a C compiler).
 - CLI: `watermelon init`, `watermelon serve`, `watermelon backup`, plus key and job commands.
 

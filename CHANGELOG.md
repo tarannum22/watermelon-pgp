@@ -11,7 +11,12 @@ All notable changes to this project are documented here. The format follows
   upgrade backup. It holds the sealed secret keys and the admin password hash; before, it got
   the default permissions.
 
-### Windows (no Windows release yet)
+### Windows (preview for testing, not supported yet)
+- A Windows build is published with each release as a preview for testing:
+  `watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc.zip` (x86_64; the C runtime is linked in, so no
+  Visual C++ redistributable is needed), in `SHA256SUMS` with the other archives. Windows support
+  isn't finished (issue #1): no Windows service and no Windows deployment docs yet. Don't use
+  it in production.
 - Secrets are protected with access lists: the data directory, database, master keyfile,
   upgrade backups and exported secret keys are created so that only the account running
   watermelon can access them, ignoring permissive parents such as `C:\ProgramData`.
@@ -19,6 +24,33 @@ All notable changes to this project are documented here. The format follows
   files created in it (SQLite's `-wal` and `-shm`) are private. A master keyfile other users
   can access is refused, as on Unix, with the `icacls` commands that fix it; LocalSystem and
   Administrators don't count, like root.
+- Jobs leave a file alone while another process still has it open for writing, such as an
+  SFTP upload that stalled, and pick it up once it's released, without logging it as failed.
+  While a file is processed, others can read it but not change or delete it.
+- Moving sources to `processed/` or `failed/` and publishing outputs never replace an
+  existing file, also on filesystems without hard links, and work across drives.
+- Files marked hidden or system (`Thumbs.db`, `desktop.ini`) are ignored like dotfiles.
+- Job folders: drive-letter and UNC paths; folders that differ only in case count as the
+  same folder; the job form shows Windows examples.
+- Retrying a failed file refuses names with `:`, which on Windows could point outside the
+  failed folder (`C:name`) or at an alternate data stream.
+- Runs as a Windows service: `watermelon service install` (after `init`, from an elevated
+  prompt) creates an auto-start service running `serve` as the virtual account
+  `NT SERVICE\watermelon`, with the given options, and hands the data directory and master
+  keyfile over to that account (owner; access for it, LocalSystem and Administrators only). It
+  also allows the account to read the TLS certificate and key and to write a log file outside
+  the data directory. Stopping the service, including at Windows shutdown (up to 5 minutes),
+  lets running jobs finish their current file; `sc.exe control watermelon paramchange` reloads
+  the TLS certificate. `watermelon service uninstall` stops and removes it.
+- The master-key check looks at the file's owner too: an owner that isn't the current user,
+  LocalSystem, Administrators or a Windows service account counts as access by others, since
+  it can change the access list. A service account owner is trusted, so administrators can run
+  commands on a service's data directory. `init` refuses a data directory owned by an account
+  that isn't trusted.
+
+### Operations
+- `--log-file` / `WATERMELON_LOG_FILE` appends the log of `serve` and `run` to a file instead of
+  stderr. The Windows service logs to `<data-dir>\watermelon.log` by default.
 
 ## [0.2.0] - 2026-11-25
 
