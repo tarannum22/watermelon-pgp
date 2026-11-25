@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Windows (no Windows release yet)
+- Secrets are protected with access lists: the data directory, database, master keyfile,
+  upgrade backups and exported secret keys are created so that only the account running
+  watermelon can access them, ignoring permissive parents such as `C:\ProgramData`.
+  `init` also restricts an existing data directory that other users can access, since
+  SQLite's `-wal` and `-shm` files take their access from it. A master keyfile other users
+  can access is refused, as on Unix; LocalSystem and Administrators don't count, like root.
+
 ## [0.2.0] - 2026-11-25
 
 ### Keys

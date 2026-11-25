@@ -3233,6 +3233,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "time",
+ "windows-sys 0.61.2",
  "zeroize",
 ]
 

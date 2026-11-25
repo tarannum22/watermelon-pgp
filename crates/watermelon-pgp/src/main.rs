@@ -899,20 +899,16 @@ impl Prompt {
 }
 
 fn write_new_file(path: &Path, contents: &[u8], private: bool) -> Result<()> {
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    if private {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    #[cfg(not(unix))]
-    let _ = private;
-    let mut file = options
-        .open(path)
-        .with_context(|| format!("creating {}", path.display()))?;
-    file.write_all(contents)?;
-    Ok(())
+    let written = if private {
+        watermelon_pgp_core::platform::write_private_file(path, contents)
+    } else {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .and_then(|mut file| file.write_all(contents))
+    };
+    written.with_context(|| format!("creating {}", path.display()))
 }
 
 fn format_time(unix: i64) -> String {

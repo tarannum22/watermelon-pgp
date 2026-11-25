@@ -564,12 +564,7 @@ mod tests {
         assert_eq!(keys, 1);
         // Windows can't delete a file SQLite still has open.
         drop(old);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&copy).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o600);
-        }
+        assert!(!crate::platform::is_readable_by_others(&copy).unwrap());
 
         // Up to date: opening again neither fails nor takes another copy.
         std::fs::remove_file(&copy).unwrap();
