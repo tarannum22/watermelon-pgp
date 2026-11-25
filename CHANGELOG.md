@@ -19,9 +19,10 @@ interop against GnuPG's own Windows build.
 - A Windows build is published with each release:
   `watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc.zip` (x86_64; the C runtime is linked in, so no
   Visual C++ redistributable is needed), in `SHA256SUMS` with the other archives. CI tests on
-  Windows Server 2025; Server 2022 is expected to work but isn't tested.
+  Windows Server 2025; Server 2022 isn't tested.
 - Secrets are protected with access lists: the data directory, database, master keyfile,
-  upgrade backups and exported secret keys are created so that only the account running
+  upgrade backups, `watermelon backup` copies and exported secret keys are created so that
+  only the account running
   watermelon can access them, ignoring permissive parents such as `C:\ProgramData`.
   `init` also restricts an existing data directory that other users can access, so that
   files created in it (SQLite's `-wal` and `-shm`) are private. A master keyfile other users

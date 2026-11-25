@@ -120,6 +120,9 @@ For scripted setups, `--passphrase-stdin` reads passwords from stdin instead of 
 
 ## Known issues
 
+- **Windows:** x86_64 only, an unsigned exe, the service runs as its virtual account only, and
+  only Windows Server 2025 is tested. See
+  [Known limits](docs/deployment.md#known-limits) in the Windows deployment guide.
 - **Two dependency advisories without a fix yet**, both timing side channels inside rPGP's
   dependencies: [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071) (`rsa`,
   "Marvin attack", RSA keys) and [RUSTSEC-2026-0387](https://rustsec.org/advisories/RUSTSEC-2026-0387)
