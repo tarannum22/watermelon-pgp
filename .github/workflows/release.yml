@@ -1,5 +1,5 @@
-# Publishes a release when a version tag is pushed: `git tag v0.1.0 && git push origin v0.1.0`.
-# Tag a commit whose CI run is green; this workflow only builds and publishes.
+# Publishes a release when a version tag (vX.Y.Z) is pushed. The steps before and after,
+# including tagging, are in docs/releasing.md; this workflow only builds and publishes.
 #
 # Dry run: start it by hand (Actions > Release > Run workflow, or `gh workflow run release.yml`).
 # It builds and packages all four targets, checksums them, writes the release notes and the
