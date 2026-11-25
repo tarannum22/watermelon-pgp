@@ -47,6 +47,9 @@ All notable changes to this project are documented here. The format follows
   it can change the access list. A service account owner is trusted, so administrators can run
   commands on a service's data directory. `init` refuses a data directory owned by an account
   that isn't trusted.
+- Windows deployment guide in `docs/deployment.md`: install from the zip, the data directory
+  and master key, the service, job folder permissions (including network shares), HTTPS,
+  backups, upgrades and known limits.
 
 ### Operations
 - `--log-file` / `WATERMELON_LOG_FILE` appends the log of `serve` and `run` to a file instead of

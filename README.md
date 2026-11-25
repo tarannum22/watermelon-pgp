@@ -51,8 +51,8 @@ from and write to.
 - **From source:** Rust 1.89 or later, then `cargo build --release`; the binary is
   `target/release/watermelon`.
 
-To run it as a service, see [docs/deployment.md](docs/deployment.md): systemd, Docker, HTTPS,
-the master key, logs, backups and upgrades. All commands and options are in
+To run it as a service, see [docs/deployment.md](docs/deployment.md): systemd, Docker, Windows
+Server, HTTPS, the master key, logs, backups and upgrades. All commands and options are in
 [docs/cli.md](docs/cli.md).
 
 ## Quick start

@@ -10,6 +10,9 @@ It needs three things:
 Every command-line flag has a `WATERMELON_*` environment variable; `watermelon serve --help`
 lists them.
 
+On Linux, run it with [systemd](#systemd) or [Docker](#docker); on Windows, as a
+[Windows service](#windows-server).
+
 ## The master key
 
 `watermelon init` creates the master key next to the database unless you say otherwise. In
@@ -17,7 +20,9 @@ production, keep it **outside** the data directory, so a backup or a stolen copy
 contains the other:
 
 - a file: `WATERMELON_MASTER_KEY_FILE=/etc/watermelon/key/master.key`. It must be readable only
-  by its owner (`0600` or `0400`); watermelon refuses a key file other users can read.
+  by its owner (`0600` or `0400`); watermelon refuses a key file other users can read. On
+  Windows the same goes for its access list; see
+  [the data directory and the master key](#the-data-directory-and-the-master-key).
 - or the key itself, hex-encoded, in `WATERMELON_MASTER_KEY` (for secret stores that inject
   environment variables).
 
@@ -108,7 +113,7 @@ WATERMELON_TLS_KEY=/etc/watermelon/tls/privkey.pem
 
 Session cookies are then marked `Secure` and HSTS is sent. After renewing the certificate, send
 `SIGHUP` (`systemctl reload watermelon`, `docker kill -s HUP watermelon`): new connections use
-the new certificate, no restart needed.
+the new certificate, no restart needed. On Windows, see [HTTPS on Windows](#https-on-windows).
 
 **Behind a reverse proxy.** Keep watermelon on `127.0.0.1:8080`, terminate TLS in the proxy,
 and set `WATERMELON_SECURE_COOKIES=true`. The proxy must pass the `Host` header through
@@ -136,6 +141,8 @@ applies to all clients together. With a single admin account that is acceptable.
 
 - `WATERMELON_LOG_FORMAT=json` writes one JSON object per line to stderr; `text` is the default.
 - `WATERMELON_LOG=debug` (or `warn`, `error`) changes the level; the default is `info`.
+- `WATERMELON_LOG_FILE` (`--log-file`) appends the log to a file instead of stderr. The Windows
+  service always logs to a file ([below](#the-windows-service)).
 - `GET /healthz` returns `200 {"status":"ok"}` when the database is reachable, `503` otherwise.
   It needs no login.
 - Logged: every page request (method, path, status, duration, client), job passes that
@@ -170,3 +177,286 @@ like the database, it contains your keys (sealed under the master key).
 
 `watermelon backup` run with the *new* binary migrates the database before it copies it, so
 for a backup the old release can read, run it with the old binary, before replacing it.
+
+## Windows Server
+
+watermelon runs natively on Windows Server (x86_64) as a Windows service; WSL2 is not needed.
+CI tests it on Windows Server 2025. The commands below are for an **elevated** Windows
+PowerShell ("Run as administrator"; the 5.1 that ships with Windows is enough). The layout used
+here:
+
+| What | Where |
+|---|---|
+| Program | `C:\Program Files\WatermelonPGP\watermelon.exe` |
+| Data directory | `C:\ProgramData\WatermelonPGP`, with the master key in it (`master.key`) |
+| TLS certificate (optional) | `C:\ProgramData\WatermelonPGP-tls` |
+| Service | `watermelon`, running as `NT SERVICE\watermelon` |
+
+Another drive works the same way (e.g. `D:\WatermelonPGP`). The master key in the data
+directory is the layout the Windows CI tests; to keep it elsewhere, see
+[A master key outside the data directory](#a-master-key-outside-the-data-directory).
+
+### Install
+
+Windows releases start with 0.3.0. Download
+`watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc.zip` and `SHA256SUMS` from the
+[GitHub releases](https://github.com/tarannum22/watermelon-pgp/releases), check the zip, and
+unpack it into a folder of its own, named after the version:
+
+```powershell
+$name = "watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc"
+$expected = ((Get-Content SHA256SUMS) -match [regex]::Escape("$name.zip")) -split '\s+' | Select-Object -First 1
+if ((Get-FileHash "$name.zip" -Algorithm SHA256).Hash -ne $expected) { throw "$name.zip does not match SHA256SUMS" }
+
+Expand-Archive "$name.zip" -DestinationPath "$env:TEMP\$name"
+New-Item -ItemType Directory "C:\Program Files\WatermelonPGP" -Force | Out-Null
+Copy-Item "$env:TEMP\$name\$name\*" "C:\Program Files\WatermelonPGP" -Recurse -Force
+$env:Path += ";C:\Program Files\WatermelonPGP"    # this shell; add it to the system Path to keep it
+watermelon --version
+```
+
+The zip holds `watermelon.exe` with the C runtime linked in (no Visual C++ redistributable
+needed), plus this documentation. `watermelon.exe` isn't code-signed yet, so SmartScreen may
+warn about it.
+
+### The data directory and the master key
+
+Every command works on a data directory: `.\data` relative to the current folder unless you
+choose another with `--data-dir` or `WATERMELON_DATA_DIR`. For a server, set it once for the
+shell, then create the database, the master key and the admin password of the web UI:
+
+```powershell
+$env:WATERMELON_DATA_DIR = "C:\ProgramData\WatermelonPGP"
+watermelon init      # prompts for the admin password
+```
+
+`init` creates the data directory (and any missing parent folder), the database and
+`master.key` so that **only the account that ran it** can access them: their access lists don't
+inherit from `C:\ProgramData`, which every local user can read. If the data directory already
+exists and others can access it, `init` restricts it. `service install` then hands all of it to
+the service account (next section).
+
+The master key file is refused, the way Unix refuses one that isn't `0600`, if its access list
+lets in anyone other than the account running watermelon, LocalSystem, Administrators and the
+file's owner, or if the owner is anyone other than those or a service account
+(`NT SERVICE\…`): an owner can always change the access list. The error says which `icacls`
+commands fix it. `init` likewise refuses a data directory owned by another account. Because
+Administrators and service-account owners count, an administrator can still run commands such
+as `backup` and `audit` against the service's data from an elevated prompt.
+
+Back the master key up once, somewhere safe and separate from the database backups. A copy
+takes the access list of the folder it lands in, so restrict it to Administrators right away:
+
+```powershell
+Copy-Item C:\ProgramData\WatermelonPGP\master.key E:\keys\watermelon-master.key
+icacls E:\keys\watermelon-master.key /inheritance:r /grant:r "BUILTIN\Administrators:F"
+```
+
+### The Windows service
+
+After `init`, in the same elevated PowerShell (so `WATERMELON_DATA_DIR` still applies), install
+the service with the installed `watermelon.exe`, which the service will run from where it is.
+It runs `serve`, so it takes the same options; add `--tls-cert`/`--tls-key` here for HTTPS
+([below](#https-on-windows)). The options, what `install` changes and the restart and stop
+timings are in [docs/cli.md](cli.md#service-install).
+
+```powershell
+watermelon service install --bind 127.0.0.1:8080
+icacls D:\sftp /grant "NT SERVICE\watermelon:(OI)(CI)M"    # the job folders, see below
+Start-Service watermelon
+(Invoke-WebRequest http://127.0.0.1:8080/healthz -UseBasicParsing).Content   # {"status":"ok"}
+```
+
+The service runs as the virtual account **`NT SERVICE\watermelon`**: no password to manage,
+and no rights beyond what you grant it. `install` makes it the owner of the data directory and
+everything in it, with access for it, LocalSystem and Administrators only, and prints what else
+it allowed it to use. It starts with Windows and is restarted if it fails. To change a setting,
+uninstall and install again; the data stays.
+
+If `install` fails after it created the service, it removes the service again, but ownership
+and access-list changes it already made stay: the data directory may be owned by
+`NT SERVICE\watermelon`, in part or in full. Administrators keep access either way, so CLI
+commands still work. Fix the cause and run `service install` again; it applies the hand-over to
+everything again.
+
+**Stopping.** `Stop-Service watermelon` (and `Restart-Service`) let running jobs finish their
+current file, as SIGTERM does on Linux, and the service tells Windows it is still stopping for
+as long as a job makes progress. A file an OS shutdown cuts short is processed again from the
+start after the next boot.
+
+**Uninstalling.** `watermelon service uninstall` stops the service the same way and removes it.
+The data directory and master key stay, still owned by the service account; Administrators keep
+access.
+
+**Logs.** The service has no console; it appends its log to `<data dir>\watermelon.log`, or the
+file given with `--log-file` at install. Follow it from an elevated prompt:
+
+```powershell
+Get-Content C:\ProgramData\WatermelonPGP\watermelon.log -Tail 50 -Wait
+```
+
+If the service doesn't start and the log says nothing, it may not have been able to open the
+log file (see [docs/cli.md](cli.md#service-install) for when it leaves a note in the default
+log). Windows records the exit code and the reason:
+
+```powershell
+sc.exe query watermelon     # WIN32_EXIT_CODE / SERVICE_EXIT_CODE
+Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'Service Control Manager' } -MaxEvents 20
+```
+
+The log file isn't rotated: watch its size, and to start a new one stop the service, rename the
+file and start it again. `--log-format json` at install writes one JSON object per line. To
+change the level, set `WATERMELON_LOG` in the service's environment and restart:
+
+```powershell
+Set-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\watermelon -Name Environment `
+    -Type MultiString -Value "WATERMELON_LOG=debug"
+Restart-Service watermelon
+```
+
+Don't put `WATERMELON_MASTER_KEY` there: it would override the key file. `GET /healthz` works
+as on Linux (see [Logs and monitoring](#logs-and-monitoring)).
+
+### A master key outside the data directory
+
+To keep the key apart from the data, as recommended in [The master key](#the-master-key), put
+it in a folder of its own, e.g. `C:\ProgramData\WatermelonPGP-key`, and pass it to both
+commands:
+
+```powershell
+$env:WATERMELON_DATA_DIR = "C:\ProgramData\WatermelonPGP"
+$env:WATERMELON_MASTER_KEY_FILE = "C:\ProgramData\WatermelonPGP-key\master.key"
+watermelon init
+watermelon service install --bind 127.0.0.1:8080
+icacls C:\ProgramData\WatermelonPGP-key /grant "NT SERVICE\watermelon:(RX)"
+```
+
+`install` hands the key **file** to the service account, but not its folder: `init` creates
+that folder (and every missing parent) private to you. The service then reaches the key only
+through Windows' "Bypass traverse checking" right, which a security policy can remove, and
+this layout isn't tested in CI. The last command grants the service account access to the
+folder itself (no `(OI)(CI)`, so nothing inside inherits it). Do the same for every folder
+`init` created on the way, if there are more.
+
+### Job folders
+
+The service account needs to read, write and delete in every job's input, output, `processed\`
+and `failed\` folders (`processed\` and `failed\` are created if missing). Grant it on the folder
+your SFTP server writes into; `(OI)(CI)` passes it on to files and subfolders:
+
+```powershell
+icacls D:\sftp /grant "NT SERVICE\watermelon:(OI)(CI)M"
+```
+
+Folders are entered as drive paths (`D:\sftp\acme\in`) or UNC paths
+(`\\fileserver\sftp\acme\in`), on the job form or with `watermelon job add`.
+
+- **Network shares:** a virtual account such as `NT SERVICE\watermelon` reaches other machines as
+  the server's **computer account**, `DOMAIN\HOST$`. Grant that account change access on the
+  share and modify access on its folders. On a server that isn't in a domain, the computer
+  account has no identity on the network, so shares that need a login don't work.
+  `service install` can't run the service as a domain account or gMSA yet (see
+  [Known limits](#known-limits)).
+- **Mapped drive letters** (`Z:\`) belong to a user's logon session; the service doesn't see
+  them. Use the UNC path.
+- **Uploads in progress:** besides waiting until a file's size and modification time stop
+  changing, a job leaves a file alone while another program (the SFTP server) still has it open
+  for writing, without logging it as failed, and picks it up once it's closed. While a file is
+  being processed, others can read it but not change or delete it.
+- **Hidden files:** files with the *hidden* or *system* attribute (`Thumbs.db`, `desktop.ini`)
+  are ignored, like names starting with a dot and the usual temporary upload names (`*.part`,
+  `*.filepart`, `*.tmp`, `*.crdownload`, `*.partial`).
+- **Output being written** goes to a temporary file in the output folder,
+  `.<name>.<pid>-<n>.watermelon-tmp`, which is renamed to its final name once complete. On
+  Windows it isn't marked hidden, so a process that collects files from the output folder
+  should ignore names ending in `.watermelon-tmp` (or starting with a dot). Temporary files
+  left by a crash are removed after 15 minutes.
+
+### HTTPS on Windows
+
+Keep the PEM certificate chain and key in a folder **outside** the data directory, which is
+private to the service. The folder must be writable by whatever renews the certificate
+(win-acme runs as LocalSystem) and readable by the service, and nobody else should read the
+key. Create it with that access list before you install the service:
+
+```powershell
+New-Item -ItemType Directory C:\ProgramData\WatermelonPGP-tls | Out-Null
+icacls C:\ProgramData\WatermelonPGP-tls /inheritance:r /grant:r `
+    "NT AUTHORITY\SYSTEM:(OI)(CI)F" "BUILTIN\Administrators:(OI)(CI)F"
+```
+
+Put the certificate files there and install the service with them (see [HTTPS](#https) for what
+changes; if it's already installed, `watermelon service uninstall` first):
+
+```powershell
+watermelon service install --bind 0.0.0.0:8443 `
+    --tls-cert C:\ProgramData\WatermelonPGP-tls\fullchain.pem `
+    --tls-key C:\ProgramData\WatermelonPGP-tls\privkey.pem
+icacls C:\ProgramData\WatermelonPGP-tls /grant "NT SERVICE\watermelon:(OI)(CI)R"
+```
+
+`install` lets the service account read the two files as they are. The last command grants it
+on the folder too, so files a renewal writes anew inherit it. After renewing, reload the
+certificate without a restart:
+
+```powershell
+sc.exe control watermelon paramchange
+```
+
+With [win-acme](https://www.win-acme.com/), store the certificate as PEM files in that folder
+and run that command as the installation step after each renewal.
+
+To bind beyond loopback, as above, allow the port in Windows Firewall:
+
+```powershell
+New-NetFirewallRule -DisplayName "WatermelonPGP" -Direction Inbound -Protocol TCP -LocalPort 8443 -Action Allow
+```
+
+### Backups and upgrades
+
+From an elevated prompt, an administrator can back up the database while the service runs:
+
+```powershell
+watermelon --data-dir C:\ProgramData\WatermelonPGP backup "D:\backups\watermelon-$(Get-Date -Format yyyy-MM-dd).db"
+```
+
+The copy is readable only by you. As on Linux, it doesn't include the master key; back that up
+separately ([above](#the-data-directory-and-the-master-key)).
+
+To restore: `Stop-Service watermelon`, delete `watermelon.db-wal` and `watermelon.db-shm` from
+the data directory if present, copy the snapshot to `<data dir>\watermelon.db`, give it the
+data directory's access list, and start the service with the same master key:
+
+```powershell
+Copy-Item D:\backups\watermelon-2026-11-25.db C:\ProgramData\WatermelonPGP\watermelon.db
+icacls C:\ProgramData\WatermelonPGP\watermelon.db /reset
+Start-Service watermelon
+```
+
+`icacls /reset` replaces the file's access list with the one it inherits from the data
+directory (the service account, LocalSystem and Administrators). Without it, a file moved in
+from the same volume keeps the private access list of the backup, and the service can't open
+it. Uninstalling and installing the service again also works: `install` re-applies its
+hand-over to everything in the data directory.
+
+To upgrade: unpack the new zip into its own folder as in [Install](#install), then
+`Stop-Service watermelon`, copy the new `watermelon.exe` over the old one in
+`C:\Program Files\WatermelonPGP`, and `Start-Service watermelon`. As described in
+[Upgrading](#upgrading), a database upgrade first keeps a copy of the old database in the data
+directory (`watermelon.db.schema-v<N>.bak`); for a backup the old release can read, run
+`backup` with the old `watermelon.exe` before replacing it.
+
+### Known limits
+
+- The service runs as its virtual account (`NT SERVICE\<name>`) only; a custom, domain or
+  group-managed service account isn't supported yet, so network shares must allow the computer
+  account.
+- To change a setting of an installed service, uninstall and install it again.
+- No jobs-only service (`run`): the service always serves the web UI too.
+- The log is a plain file without rotation; nothing goes to the Event Log.
+- An OS shutdown can stop the service before a large file is finished; the file is processed
+  again from the start on the next start.
+- The TLS certificate comes from PEM files, not the Windows certificate store.
+- Temporary output files aren't hidden (see [Job folders](#job-folders)).
+- `watermelon.exe` isn't code-signed, and there's no installer, winget or Scoop package yet.
+- x86_64 only. CI tests Windows Server 2025; Server 2022 isn't tested.

@@ -83,7 +83,8 @@ watermelon serve --bind 0.0.0.0:8443 --tls-cert fullchain.pem --tls-key privkey.
 Send SIGHUP (`systemctl reload watermelon`) to reload a renewed TLS certificate without a
 restart; for the Windows service, `sc.exe control watermelon paramchange`. To run it as a
 service, see [deployment.md](deployment.md) for systemd and Docker, and
-[Windows service](#windows-service) on Windows.
+[Windows Server](deployment.md#windows-server) and [Windows service](#windows-service) on
+Windows.
 
 ### `run`
 
@@ -101,6 +102,8 @@ Users already logged in to the web UI stay logged in until they log out or their
 ### `service install`
 
 Install `serve` as a Windows service, from an elevated (administrator) PowerShell, after `init`.
+The whole setup, including job folder permissions and HTTPS, is in
+[deployment.md](deployment.md#windows-server).
 It takes the options of [`serve`](#serve), `--data-dir`, `--master-key`, `--log-format` and
 `--log-file`, from the command line or their environment variables, and stores them in the
 service's command line with absolute paths, so put `watermelon.exe` where it will stay
@@ -126,7 +129,10 @@ Start-Service watermelon
   and to write a `--log-file` outside the data directory (creating it), keeping their other
   entries. It says which files it changed. Give the account access to the job folders yourself.
 - The log goes to `<data-dir>\watermelon.log` unless `--log-file` says otherwise. If the service
-  can't open its log file, it writes why to `<data-dir>\watermelon.log` and doesn't start.
+  can't open its log file, it doesn't start; when that file is a `--log-file` other than the
+  default, it writes why to `<data-dir>\watermelon.log` if it can. Otherwise only Windows
+  records the failure: the exit code in `sc.exe query <name>` and the Service Control Manager
+  entries in the System event log.
 - `Stop-Service watermelon` lets running jobs finish their current file before the service
   stops. While jobs make progress, the service keeps telling Windows it is stopping; after
   90 seconds without progress it stops doing so, and Windows can treat it as hung. At Windows
