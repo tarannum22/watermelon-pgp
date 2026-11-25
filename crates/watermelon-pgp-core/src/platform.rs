@@ -1,7 +1,8 @@
 //! The few operations whose behaviour differs between operating systems.
 //!
 //! "Private" means only the current user can access it: mode `0600`/`0700` on Unix, an
-//! access list that allows only the current user on Windows (see [`windows`]).
+//! access list that allows only the current user on Windows (see [`windows`]). On Windows,
+//! [`give_to_account`] makes files private to another account instead (a service's).
 
 use std::{io, io::Write, path::Path};
 
@@ -76,6 +77,16 @@ pub fn make_private(path: &Path) -> io::Result<()> {
     {
         windows::make_private(path)
     }
+}
+
+/// Windows: hand `path` over to `account` (`DOMAIN\name`, e.g. `NT SERVICE\watermelon`):
+/// it becomes the owner, and only it, LocalSystem and Administrators can access `path` and, for
+/// a directory, everything inside it, including files created there later. Administrators
+/// keep access so that they can still run commands against a service's data directory.
+/// Needs an elevated administrator.
+#[cfg(windows)]
+pub fn give_to_account(path: &Path, account: &str) -> io::Result<()> {
+    windows::give_to_account(path, account)
 }
 
 /// Whether users other than the owner can access `path`. Root on Unix, and LocalSystem and
@@ -266,6 +277,51 @@ mod tests {
         let advice = how_to_restrict(&path);
         assert!(advice.contains("/inheritance:r /grant:r"), "{advice}");
         assert!(advice.contains("/remove \"BUILTIN\\Users\""), "{advice}");
+    }
+
+    /// What `service install` does to the data directory: the service account owns it, and
+    /// only it, LocalSystem and Administrators can access it and what is inside.
+    #[cfg(windows)]
+    #[test]
+    fn give_to_another_account() {
+        const LOCAL_SERVICE: &str = "S-1-5-19";
+        const SYSTEM: &str = "S-1-5-18";
+        const ADMINISTRATORS: &str = "S-1-5-32-544";
+        let shared = tempfile::tempdir().unwrap();
+        grant_others_read(shared.path());
+        let data = shared.path().join("data");
+        create_private_dir(&data).unwrap();
+        let key = data.join("master.key");
+        write_private_file(&key, b"x").unwrap();
+        let sub = data.join("sub");
+        fs::create_dir(&sub).unwrap();
+
+        give_to_account(&data, "NT AUTHORITY\\LOCAL SERVICE").unwrap();
+        for path in [&data, &key, &sub] {
+            let (owner, allowed) = super::windows::testing::owner_and_allowed(path);
+            assert_eq!(owner, LOCAL_SERVICE, "{}", path.display());
+            assert_eq!(
+                allowed,
+                [SYSTEM, LOCAL_SERVICE, ADMINISTRATORS],
+                "{}",
+                path.display()
+            );
+            assert!(!is_readable_by_others(path).unwrap(), "{}", path.display());
+        }
+        // Created later by someone else (an administrator's CLI): same access, inherited.
+        let later = data.join("watermelon.db-wal");
+        fs::write(&later, b"x").unwrap();
+        let (_, allowed) = super::windows::testing::owner_and_allowed(&later);
+        assert_eq!(allowed, [SYSTEM, LOCAL_SERVICE, ADMINISTRATORS]);
+        assert_eq!(fs::read(&key).unwrap(), b"x", "administrators keep access");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn give_to_an_unknown_account_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = give_to_account(dir.path(), "NT SERVICE\\no-such-watermelon-service");
+        assert!(err.is_err());
     }
 
     #[cfg(windows)]

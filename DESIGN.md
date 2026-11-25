@@ -36,6 +36,11 @@ config export/import, Windows as a first-class platform.
   (`contrib/systemd/`) and a Docker image (non-root, uid 10001) are provided, see
   `docs/deployment.md`. SIGTERM lets running jobs finish their current file; SIGHUP reloads
   the TLS certificate.
+- On Windows, `watermelon service install` registers `serve` as a native service (the
+  `windows-service` crate) running as the virtual account `NT SERVICE\watermelon`, which it
+  makes the owner of the data directory and master key. Stop and Shutdown take the same path
+  as SIGTERM; the ParamChange control reloads the TLS certificate. Settings go into the
+  service's command line as flags, so there is still one configuration mechanism.
 - License: MIT OR Apache-2.0.
 
 ## Domain
@@ -139,9 +144,9 @@ Hash-chaining for tamper evidence comes later.
 ## Operations
 
 - `/healthz` endpoint (no login; checks the database).
-- Logs to stderr, text or JSON (`--log-format`), level via `WATERMELON_LOG`: page requests,
-  job passes that did something, pauses and errors. The audit log remains the record of who did
-  what.
+- Logs to stderr or a file (`--log-file`; the Windows service has no console), text or JSON
+  (`--log-format`), level via `WATERMELON_LOG`: page requests, job passes that did something,
+  pauses and errors. The audit log remains the record of who did what.
 - TLS: rustls with the `ring` provider (no C/C++ build dependencies beyond a C compiler).
 - CLI: `watermelon init`, `watermelon serve`, `watermelon backup`, plus key and job commands.
 

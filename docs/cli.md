@@ -11,6 +11,7 @@ the same information as this page.
 - [Global options](#global-options)
 - [Referring to keys and jobs](#referring-to-keys-and-jobs)
 - [Setup and running](#setup-and-running): `init`, `serve`, `run`, `passwd`
+- [Windows service](#windows-service): `service install`, `service uninstall`
 - [Customers](#customers): `customer add`, `customer list`
 - [Keys](#keys): `key gen`, `key import`, `key list`, `key export`, `key revoke`, `key delete`
 - [Jobs](#jobs): `job add encrypt`, `job add decrypt`, `job list`, `job show`, `job enable`,
@@ -33,6 +34,7 @@ container.
 | `--passphrase-stdin` | | off | Read the password or passphrase from the first line of stdin instead of prompting. For scripts. |
 | `--log-format <text\|json>` | `WATERMELON_LOG_FORMAT` | `text` | Log format of `serve` and `run`. |
 | | `WATERMELON_LOG` | `info` | Log level of `serve` and `run`: `error`, `warn`, `info`, `debug`. |
+| `--log-file <file>` | `WATERMELON_LOG_FILE` | stderr; `<data-dir>\watermelon.log` for the Windows service | Append the log of `serve` and `run` to this file instead. |
 | `-h`, `--help` | | | Help for the command. |
 | `-V`, `--version` | | | Print the version. |
 
@@ -79,7 +81,8 @@ watermelon serve --bind 0.0.0.0:8443 --tls-cert fullchain.pem --tls-key privkey.
 ```
 
 Send SIGHUP (`systemctl reload watermelon`) to reload a renewed TLS certificate without a
-restart. See [deployment.md](deployment.md) for running it as a service.
+restart; for the Windows service, `sc.exe control watermelon paramchange`. See
+[deployment.md](deployment.md) for running it as a service.
 
 ### `run`
 
@@ -91,6 +94,44 @@ Like `serve`, without the web UI: runs all enabled jobs until Ctrl-C or SIGTERM.
 Change the admin password of the web UI. Prompts for the new password twice. Doesn't ask for the
 old one: whoever can run this command on the server already has full access to the data.
 Users already logged in to the web UI stay logged in until they log out or their session expires.
+
+## Windows service
+
+### `service install`
+
+Install `serve` as a Windows service, from an elevated (administrator) PowerShell, after `init`.
+It takes the options of [`serve`](#serve), `--data-dir`, `--master-key`, `--log-format` and
+`--log-file`, from the command line or their environment variables, and stores them in the
+service's command line with absolute paths, so put `watermelon.exe` where it will stay
+(e.g. `C:\Program Files\WatermelonPGP`) before installing.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--name <name>` | `watermelon` | Service name. |
+
+```powershell
+watermelon --data-dir C:\ProgramData\WatermelonPGP init
+watermelon --data-dir C:\ProgramData\WatermelonPGP service install --bind 127.0.0.1:8080
+Start-Service watermelon
+```
+
+- The service starts with Windows, and is restarted if it fails (after 5 seconds, twice, then
+  every minute).
+- It runs as the virtual account `NT SERVICE\<name>`, which needs no password. `install` makes
+  that account the owner of the data directory, everything in it and the master keyfile, and
+  lets only it, LocalSystem and Administrators access them. Administrators can still run
+  commands such as `backup` on the data directory.
+- Give `NT SERVICE\<name>` access to the job folders and to any TLS certificate and key yourself.
+- The log goes to `<data-dir>\watermelon.log` unless `--log-file` says otherwise.
+- `Stop-Service watermelon` lets running jobs finish their current file before the service
+  stops. `sc.exe control watermelon paramchange` reloads the TLS certificate.
+- To change a setting, uninstall and install again.
+- The master key must be in a file: `install` refuses `WATERMELON_MASTER_KEY`.
+
+### `service uninstall`
+
+Stop the service if it runs, waiting while jobs finish their current file, then remove it. Takes
+`--name`. The data directory and master key stay as they are, accessible to Administrators.
 
 ## Customers
 

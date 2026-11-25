@@ -49,6 +49,8 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring"]
 # expose. Microsoft's raw bindings: no runtime, already in the tree through tokio and
 # tempfile.
 windows-sys = "0.61.2"
+# The Windows service entry point and install/uninstall. Mullvad's, on the same windows-sys.
+windows-service = "0.8.1"
 
 # Optimise dependencies in dev/test builds: RSA keygen is unusably slow unoptimised.
 [profile.dev.package."*"]

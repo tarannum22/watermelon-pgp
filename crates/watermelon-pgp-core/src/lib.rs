@@ -11,5 +11,7 @@ pub mod store;
 pub mod vault;
 
 pub use error::{Error, Result};
+#[cfg(windows)]
+pub use platform::give_to_account;
 /// For the CLI's secret-key exports.
 pub use platform::write_private_file;

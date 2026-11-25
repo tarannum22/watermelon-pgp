@@ -29,6 +29,18 @@ All notable changes to this project are documented here. The format follows
   same folder; the job form shows Windows examples.
 - Retrying a failed file refuses names with `:`, which on Windows could point outside the
   failed folder (`C:name`) or at an alternate data stream.
+- Runs as a Windows service: `watermelon service install` (after `init`, from an elevated
+  prompt) creates an auto-start service running `serve` as the virtual account
+  `NT SERVICE\watermelon`, with the given options, and hands the data directory and master
+  keyfile over to that account (owner; access for it, LocalSystem and Administrators only).
+  Stopping the service lets running jobs finish their current file; `sc.exe control watermelon
+  paramchange` reloads the TLS certificate. `watermelon service uninstall` stops and removes it.
+- The master-key check also trusts the file's owner, like Unix's mode check, so administrators
+  can run commands on a service's data directory.
+
+### Operations
+- `--log-file` / `WATERMELON_LOG_FILE` appends the log of `serve` and `run` to a file instead of
+  stderr. The Windows service logs to `<data-dir>\watermelon.log` by default.
 
 ## [0.2.0] - 2026-11-25
 
