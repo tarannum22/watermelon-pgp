@@ -1,0 +1,83 @@
+// Renovate: dependency update PRs for Cargo, e2e/ npm, GitHub Actions and the Dockerfile.
+// Docs: https://docs.renovatebot.com/configuration-options/
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+    // Monday, 00:00-03:59 UTC.
+    'schedule:weekly',
+  ],
+  dependencyDashboard: true,
+  // Match the repo's "Area: subject" commit style: "Deps: update …".
+  commitMessagePrefix: 'Deps:',
+  commitMessageAction: 'update',
+  // Refresh Cargo.lock and e2e/package-lock.json (default schedule: before 4am on Monday).
+  lockFileMaintenance: {
+    enabled: true,
+  },
+  packageRules: [
+    // One PR per ecosystem for minor and patch updates. Major updates stay separate PRs.
+    // Pre-release crates (lightningcss 1.0.0-alpha.N) can break in any bump: their own PRs.
+    {
+      matchManagers: ['cargo'],
+      matchUpdateTypes: ['patch'],
+      matchCurrentVersion: '!/-/',
+      groupName: 'Rust crates (non-breaking)',
+      groupSlug: 'rust-crates',
+    },
+    {
+      // In Cargo, 0.x minor bumps (pgp 0.21 -> 0.22, axum 0.8 -> 0.9) are breaking.
+      // Keep them out of the group, as their own PRs, like majors.
+      matchManagers: ['cargo'],
+      matchUpdateTypes: ['minor'],
+      matchCurrentVersion: '!/^0\\.|-/',
+      groupName: 'Rust crates (non-breaking)',
+      groupSlug: 'rust-crates',
+    },
+    {
+      matchManagers: ['npm'],
+      matchUpdateTypes: ['minor', 'patch'],
+      groupName: 'e2e npm packages (non-major)',
+      groupSlug: 'e2e-npm',
+    },
+    {
+      matchManagers: ['github-actions'],
+      matchUpdateTypes: ['minor', 'patch', 'digest'],
+      groupName: 'GitHub Actions (non-major)',
+      groupSlug: 'github-actions',
+    },
+    {
+      matchManagers: ['dockerfile'],
+      matchUpdateTypes: ['minor', 'patch', 'digest'],
+      groupName: 'Docker base images (non-major)',
+      groupSlug: 'docker-images',
+    },
+    // dtolnay/rust-toolchain refs are branches, not release tags: "stable" follows the
+    // latest Rust and "1.89" is the MSRV job, which must match rust-version in Cargo.toml.
+    // Both are changed by hand, so Renovate leaves them alone.
+    {
+      matchManagers: ['github-actions'],
+      matchPackageNames: ['dtolnay/rust-toolchain'],
+      enabled: false,
+    },
+    // Automerge only patch and digest updates of test and CI tooling, after CI passes.
+    // Nothing here ships in the watermelon binary or the Docker image. Rust crates and
+    // base images always wait for a review. Only ci.yml: CI runs on a change to it, but a
+    // change to release.yml or pages.yml alone runs no CI, so those wait for a review too.
+    {
+      matchManagers: ['npm'],
+      matchFileNames: ['e2e/package.json'],
+      matchDepTypes: ['devDependencies'],
+      matchUpdateTypes: ['patch'],
+      minimumReleaseAge: '3 days',
+      automerge: true,
+    },
+    {
+      matchManagers: ['github-actions'],
+      matchFileNames: ['.github/workflows/ci.yml'],
+      matchUpdateTypes: ['patch', 'digest'],
+      minimumReleaseAge: '3 days',
+      automerge: true,
+    },
+  ],
+}
