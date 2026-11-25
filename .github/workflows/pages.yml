@@ -4,7 +4,9 @@ name: Website
 on:
   push:
     branches: [main]
-    paths: ["site/**", ".github/workflows/pages.yml"]
+    paths: ["site/**", ".github/workflows/pages.yml", ".github/scripts/check-branding.py"]
+  pull_request:
+    paths: ["site/**", ".github/workflows/pages.yml", ".github/scripts/check-branding.py"]
   workflow_dispatch:
 
 permissions:
@@ -12,14 +14,24 @@ permissions:
   pages: write
   id-token: write
 
+# Deploys share one group; pull-request checks get their own, so they never cancel a deploy.
 concurrency:
-  group: pages
+  group: ${{ github.event_name == 'pull_request' && format('pages-pr-{0}', github.ref) || 'pages' }}
   cancel-in-progress: true
 
 jobs:
+  # The product is "WatermelonPGP" in all wording; see the script for what counts.
+  branding:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 .github/scripts/check-branding.py site
+
   # Upload and deploy in separate jobs, as in GitHub's template: deploying right after the
   # upload in the same job can miss the just-uploaded artifact.
   build:
+    needs: branding
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
