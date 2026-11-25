@@ -6,11 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Packaging
-- Preview Windows build for testing: `watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc.zip` (x86_64,
-  the C runtime linked in, so no Visual C++ redistributable is needed), in `SHA256SUMS` with the
-  other archives. Windows support isn't finished yet (issue #1): no Windows service and no
-  Windows deployment docs. Don't use it in production.
+### Security
+- `watermelon backup` writes the copy readable only by you (mode 0600 on Unix), like the
+  upgrade backup. It holds the sealed secret keys and the admin password hash; before, it got
+  the default permissions.
+
+### Windows (preview for testing, not supported yet)
+- A Windows build is published with each release as a preview for testing:
+  `watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc.zip` (x86_64; the C runtime is linked in, so no
+  Visual C++ redistributable is needed), in `SHA256SUMS` with the other archives. Windows support
+  isn't finished (issue #1): no Windows service and no Windows deployment docs yet. Don't use
+  it in production.
+- Secrets are protected with access lists: the data directory, database, master keyfile,
+  upgrade backups and exported secret keys are created so that only the account running
+  watermelon can access them, ignoring permissive parents such as `C:\ProgramData`.
+  `init` also restricts an existing data directory that other users can access, so that
+  files created in it (SQLite's `-wal` and `-shm`) are private. A master keyfile other users
+  can access is refused, as on Unix, with the `icacls` commands that fix it; LocalSystem and
+  Administrators don't count, like root.
 
 ## [0.2.0] - 2026-11-25
 
