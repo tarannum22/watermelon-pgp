@@ -32,11 +32,16 @@ All notable changes to this project are documented here. The format follows
 - Runs as a Windows service: `watermelon service install` (after `init`, from an elevated
   prompt) creates an auto-start service running `serve` as the virtual account
   `NT SERVICE\watermelon`, with the given options, and hands the data directory and master
-  keyfile over to that account (owner; access for it, LocalSystem and Administrators only).
-  Stopping the service lets running jobs finish their current file; `sc.exe control watermelon
-  paramchange` reloads the TLS certificate. `watermelon service uninstall` stops and removes it.
-- The master-key check also trusts the file's owner, like Unix's mode check, so administrators
-  can run commands on a service's data directory.
+  keyfile over to that account (owner; access for it, LocalSystem and Administrators only). It
+  also allows the account to read the TLS certificate and key and to write a log file outside
+  the data directory. Stopping the service, including at Windows shutdown (up to 5 minutes),
+  lets running jobs finish their current file; `sc.exe control watermelon paramchange` reloads
+  the TLS certificate. `watermelon service uninstall` stops and removes it.
+- The master-key check looks at the file's owner too: an owner that isn't the current user,
+  LocalSystem, Administrators or a Windows service account counts as access by others, since
+  it can change the access list. A service account owner is trusted, so administrators can run
+  commands on a service's data directory. `init` refuses a data directory owned by an account
+  that isn't trusted.
 
 ### Operations
 - `--log-file` / `WATERMELON_LOG_FILE` appends the log of `serve` and `run` to a file instead of

@@ -175,14 +175,16 @@ jobs:
           $service = Get-CimInstance Win32_Service -Filter "Name='watermelon'"
           if ($service.StartName -ne $account) { throw "runs as $($service.StartName)" }
 
-          Start-Service watermelon
-          $healthy = $false
-          for ($i = 0; $i -lt 30 -and -not $healthy; $i++) {
-            try {
-              $healthy = (Invoke-WebRequest http://127.0.0.1:18080/healthz).Content -match '"ok"'
-            } catch { Start-Sleep 1 }
+          function Wait-Healthy {
+            for ($i = 0; $i -lt 30; $i++) {
+              try {
+                if ((Invoke-WebRequest http://127.0.0.1:18080/healthz).Content -match '"ok"') { return }
+              } catch { Start-Sleep 1 }
+            }
+            throw "/healthz did not answer"
           }
-          if (-not $healthy) { throw "/healthz did not answer" }
+          Start-Service watermelon
+          Wait-Healthy
 
           Stop-Service watermelon
           $service = Get-CimInstance Win32_Service -Filter "Name='watermelon'"
@@ -209,8 +211,14 @@ jobs:
 
           # An administrator can still run commands on the service's data.
           & $wm --data-dir $data audit --limit 3
+
+          # Uninstalling a running service stops it first, cleanly.
+          Start-Service watermelon
+          Wait-Healthy
           & $wm service uninstall
           if (Get-Service watermelon -ErrorAction SilentlyContinue) { throw "still installed" }
+          $stops = [regex]::Matches((Get-Content "$data\watermelon.log" -Raw), 'INFO stopped').Count
+          if ($stops -ne 2) { throw "expected 2 clean stops in the log, found $stops" }
       - name: Windows service log and events
         if: failure() && runner.os == 'Windows'
         shell: pwsh

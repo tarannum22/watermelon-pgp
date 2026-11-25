@@ -81,8 +81,9 @@ watermelon serve --bind 0.0.0.0:8443 --tls-cert fullchain.pem --tls-key privkey.
 ```
 
 Send SIGHUP (`systemctl reload watermelon`) to reload a renewed TLS certificate without a
-restart; for the Windows service, `sc.exe control watermelon paramchange`. See
-[deployment.md](deployment.md) for running it as a service.
+restart; for the Windows service, `sc.exe control watermelon paramchange`. To run it as a
+service, see [deployment.md](deployment.md) for systemd and Docker, and
+[Windows service](#windows-service) on Windows.
 
 ### `run`
 
@@ -121,16 +122,23 @@ Start-Service watermelon
   that account the owner of the data directory, everything in it and the master keyfile, and
   lets only it, LocalSystem and Administrators access them. Administrators can still run
   commands such as `backup` on the data directory.
-- Give `NT SERVICE\<name>` access to the job folders and to any TLS certificate and key yourself.
-- The log goes to `<data-dir>\watermelon.log` unless `--log-file` says otherwise.
+- `install` adds an entry allowing `NT SERVICE\<name>` to read the TLS certificate and key,
+  and to write a `--log-file` outside the data directory (creating it), keeping their other
+  entries. It says which files it changed. Give the account access to the job folders yourself.
+- The log goes to `<data-dir>\watermelon.log` unless `--log-file` says otherwise. If the service
+  can't open its log file, it writes why to `<data-dir>\watermelon.log` and doesn't start.
 - `Stop-Service watermelon` lets running jobs finish their current file before the service
-  stops. `sc.exe control watermelon paramchange` reloads the TLS certificate.
+  stops. While jobs make progress, the service keeps telling Windows it is stopping; after
+  90 seconds without progress it stops doing so, and Windows can treat it as hung. At Windows
+  shutdown it gets up to 5 minutes. `sc.exe control watermelon paramchange` reloads the TLS
+  certificate.
 - To change a setting, uninstall and install again.
 - The master key must be in a file: `install` refuses `WATERMELON_MASTER_KEY`.
 
 ### `service uninstall`
 
-Stop the service if it runs, waiting while jobs finish their current file, then remove it. Takes
+Stop the service if it runs, waiting while jobs finish their current file (giving up if the
+service stops making progress, or after 30 minutes), then remove it. Takes
 `--name`. The data directory and master key stay as they are, accessible to Administrators.
 
 ## Customers

@@ -38,8 +38,8 @@ config export/import, Windows as a first-class platform.
   the TLS certificate.
 - On Windows, `watermelon service install` registers `serve` as a native service (the
   `windows-service` crate) running as the virtual account `NT SERVICE\watermelon`, which it
-  makes the owner of the data directory and master key. Stop and Shutdown take the same path
-  as SIGTERM; the ParamChange control reloads the TLS certificate. Settings go into the
+  makes the owner of the data directory and master key. Stop, Preshutdown and Shutdown take
+  the same path as SIGTERM; the ParamChange control reloads the TLS certificate. Settings go into the
   service's command line as flags, so there is still one configuration mechanism.
 - License: MIT OR Apache-2.0.
 
@@ -77,6 +77,9 @@ config export/import, Windows as a first-class platform.
   an environment variable. Jobs therefore run unattended across restarts; stealing the DB alone
   yields nothing. Sealed mode and OS keyring / KMS backends can come later behind the same
   abstraction.
+  On Windows a keyfile counts as private when its owner is the current user, LocalSystem,
+  Administrators or a Windows service account (`NT SERVICE\…`), and its access list allows
+  no one else: any other owner could change the access list.
 - **Imported secret keys:** the passphrase is asked once, the key is unlocked and re-wrapped under
   the master key. Their passphrase is not stored.
 - **Export:** public keys freely. Secret-key export requires choosing a new passphrase and is audited.

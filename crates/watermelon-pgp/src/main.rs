@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsString,
     io::Write,
     path::{Path, PathBuf},
     sync::{
@@ -15,14 +14,13 @@ use tokio::sync::{mpsc, oneshot};
 use watermelon_pgp_core::{
     audit::Actor,
     crypto::{self, Algorithm, Container, RevocationReason},
-    envelope::{self, MasterKey},
+    envelope::MasterKey,
     jobs::{Job, JobKind, JobSpec, VerifyPolicy},
     store::{KeyOwner, KeyRecord},
     vault::{self, Vault},
 };
 use watermelon_pgp_jobs::{Engine, PassReport, scan::Scanner};
 
-#[cfg(windows)]
 mod service;
 
 /// Manage OpenPGP keys and folder encrypt/decrypt jobs.
@@ -129,7 +127,7 @@ enum ServiceCommand {
     /// master keyfile are handed over to the service's account.
     Install {
         /// Service name; the service runs as NT SERVICE\<name>.
-        #[arg(long, default_value = DEFAULT_SERVICE)]
+        #[arg(long, default_value = service::DEFAULT_NAME)]
         name: String,
         #[command(flatten)]
         serve: ServeArgs,
@@ -138,20 +136,19 @@ enum ServiceCommand {
     /// directory and master key are kept.
     Uninstall {
         /// Service name.
-        #[arg(long, default_value = DEFAULT_SERVICE)]
+        #[arg(long, default_value = service::DEFAULT_NAME)]
         name: String,
     },
     /// The service's entry point, started by Windows.
     #[command(hide = true)]
     Run {
-        #[arg(long, default_value = DEFAULT_SERVICE)]
+        #[arg(long, default_value = service::DEFAULT_NAME)]
         name: String,
         #[command(flatten)]
         serve: ServeArgs,
     },
 }
 
-const DEFAULT_SERVICE: &str = "watermelon";
 const LOG_FILE: &str = "watermelon.log";
 
 /// What a running `serve` is asked to do: by signals in a console, by the service manager in a
@@ -381,31 +378,40 @@ fn main() -> Result<()> {
 
     let command = match command {
         Command::Init => return init(&data_dir, &master_key_path, prompt),
-        Command::Service(_) if !cfg!(windows) => bail!(NOT_WINDOWS),
+        Command::Service(_) if !cfg!(windows) => bail!(service::NOT_WINDOWS),
         Command::Service(command) => {
             let log_file = log_file.unwrap_or_else(|| data_dir.join(LOG_FILE));
             return match command {
-                ServiceCommand::Install { name, serve } => {
-                    let arguments = service_arguments(
-                        &data_dir,
-                        &master_key_path,
+                ServiceCommand::Install { name, serve } => service::install(
+                    &name,
+                    &service::Settings {
+                        data_dir: &data_dir,
+                        master_key: &master_key_path,
                         log_format,
-                        &log_file,
-                        &name,
-                        &serve,
-                    )?;
-                    install_service(&name, arguments, &data_dir, &master_key_path)
-                }
-                ServiceCommand::Uninstall { name } => uninstall_service(&name),
+                        log_file: &log_file,
+                        serve: &serve,
+                    },
+                ),
+                ServiceCommand::Uninstall { name } => service::uninstall(&name),
                 ServiceCommand::Run { name, serve } => {
                     let work = move |controls, ready: &dyn Fn()| {
-                        init_logging(log_format, Some(&log_file))?;
+                        if let Err(e) = init_logging(log_format, Some(&log_file)) {
+                            // Leave a trace where an administrator will look: the default log
+                            // in the data directory.
+                            let fallback = data_dir.join(LOG_FILE);
+                            if fallback != log_file
+                                && init_logging(log_format, Some(&fallback)).is_ok()
+                            {
+                                tracing::error!(error = format!("{e:#}"), "not starting");
+                            }
+                            return Err(e);
+                        }
                         let vault = open_vault(&data_dir, &master_key_path)?;
                         let runtime =
                             tokio::runtime::Runtime::new().context("starting the async runtime")?;
                         serve_with(&runtime, vault, serve, controls, ready)
                     };
-                    run_service(name, work)
+                    service::run(name, work)
                 }
             };
         }
@@ -565,11 +571,11 @@ fn serve_with(
              put a TLS-terminating reverse proxy in front and pass --secure-cookies"
         );
     }
-    let (stopped, stop_requested) = oneshot::channel();
+    let (request_stop, stop_requested) = oneshot::channel();
     runtime.spawn(handle_controls(
         controls,
         tls.clone().zip(tls_files),
-        stopped,
+        request_stop,
     ));
     let state = watermelon_pgp_web::AppState::new(
         Arc::clone(&vault),
@@ -592,11 +598,11 @@ fn serve_with(
     Ok(served?)
 }
 
-/// Act on `controls` until told to stop, then signal `stopped`.
+/// Act on `controls` until told to stop, then fire `request_stop`.
 async fn handle_controls(
     mut controls: mpsc::UnboundedReceiver<Control>,
     tls: Option<(watermelon_pgp_web::Tls, (PathBuf, PathBuf))>,
-    stopped: oneshot::Sender<()>,
+    request_stop: oneshot::Sender<()>,
 ) {
     while let Some(control) = controls.recv().await {
         match control {
@@ -615,7 +621,7 @@ async fn handle_controls(
             }
         }
     }
-    let _ = stopped.send(());
+    let _ = request_stop.send(());
 }
 
 /// Ctrl-C, or SIGTERM (systemd, Docker), stop; SIGHUP (systemctl reload) reloads the TLS
@@ -659,135 +665,6 @@ async fn shutdown_signal() {
         () = term => {}
     }
 }
-
-/// The service's command line after the executable: absolute paths, every setting spelled out,
-/// so the service doesn't depend on the installer's working directory or environment.
-fn service_arguments(
-    data_dir: &Path,
-    master_key: &Path,
-    log_format: LogFormat,
-    log_file: &Path,
-    name: &str,
-    serve: &ServeArgs,
-) -> Result<Vec<OsString>> {
-    let absolute = |path: &Path| -> Result<OsString> {
-        Ok(std::path::absolute(path)
-            .with_context(|| format!("resolving {}", path.display()))?
-            .into_os_string())
-    };
-    let format = log_format
-        .to_possible_value()
-        .expect("no skipped values")
-        .get_name()
-        .to_owned();
-    let mut arguments: Vec<OsString> = vec![
-        "--data-dir".into(),
-        absolute(data_dir)?,
-        "--master-key".into(),
-        absolute(master_key)?,
-        "--log-format".into(),
-        format.into(),
-        "--log-file".into(),
-        absolute(log_file)?,
-        "service".into(),
-        "run".into(),
-        "--name".into(),
-        name.into(),
-        "--bind".into(),
-        serve.bind.to_string().into(),
-    ];
-    if let Some(workers) = serve.workers {
-        arguments.extend(["--workers".into(), workers.to_string().into()]);
-    }
-    if serve.secure_cookies {
-        arguments.push("--secure-cookies".into());
-    }
-    if let (Some(cert), Some(key)) = (&serve.tls_cert, &serve.tls_key) {
-        arguments.extend([
-            "--tls-cert".into(),
-            absolute(cert)?,
-            "--tls-key".into(),
-            absolute(key)?,
-        ]);
-    }
-    Ok(arguments)
-}
-
-fn install_service(
-    name: &str,
-    arguments: Vec<OsString>,
-    data_dir: &Path,
-    master_key: &Path,
-) -> Result<()> {
-    if std::env::var_os(envelope::ENV_VAR).is_some() {
-        bail!(
-            "the service reads the master key from its file; unset {} and use --master-key",
-            envelope::ENV_VAR
-        );
-    }
-    for (what, path) in [
-        ("database", data_dir.join(vault::DB_FILE)),
-        ("master keyfile", master_key.to_owned()),
-    ] {
-        if !path.is_file() {
-            bail!(
-                "no {what} at {}: run `watermelon init` first",
-                path.display()
-            );
-        }
-    }
-    #[cfg(windows)]
-    {
-        let account = service::account(name);
-        service::install(name, arguments, &[data_dir, master_key])?;
-        println!("Installed the service {name}, running as {account}.");
-        println!(
-            "{} and the master key are now private to it.",
-            data_dir.display()
-        );
-        println!("Start it with `Start-Service {name}`.");
-        eprintln!();
-        eprintln!("Give {account} access to the job folders and to any TLS certificate and key.");
-        Ok(())
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (name, arguments);
-        bail!(NOT_WINDOWS)
-    }
-}
-
-fn uninstall_service(name: &str) -> Result<()> {
-    #[cfg(windows)]
-    {
-        service::uninstall(name)?;
-        println!("Removed the service {name}. Its data directory and master key are kept.");
-        Ok(())
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = name;
-        bail!(NOT_WINDOWS)
-    }
-}
-
-fn run_service(
-    name: String,
-    work: impl FnOnce(mpsc::UnboundedReceiver<Control>, &dyn Fn()) -> Result<()> + Send + 'static,
-) -> Result<()> {
-    #[cfg(windows)]
-    {
-        service::run(name, Box::new(work))
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = (name, work);
-        bail!(NOT_WINDOWS)
-    }
-}
-
-const NOT_WINDOWS: &str = "`watermelon service` installs a Windows service; elsewhere, run \
-                           `watermelon serve` under systemd or Docker (docs/deployment.md)";
 
 fn run_once(vault: Vault, query: &str, settle: u64) -> Result<()> {
     let job = vault.find_job(query)?;
@@ -1214,13 +1091,15 @@ mod tests {
             tls_cert: Some("certs/cert pem".into()),
             tls_key: Some("certs/key.pem".into()),
         };
-        let arguments = service_arguments(
-            Path::new("data dir"),
-            Path::new("keys/master.key"),
-            LogFormat::Json,
-            Path::new("data dir/watermelon.log"),
+        let arguments = service::arguments(
             "wm-test",
-            &serve,
+            &service::Settings {
+                data_dir: Path::new("data dir"),
+                master_key: Path::new("keys/master.key"),
+                log_format: LogFormat::Json,
+                log_file: Path::new("data dir/watermelon.log"),
+                serve: &serve,
+            },
         )
         .unwrap();
         let cli =
@@ -1258,13 +1137,15 @@ mod tests {
             tls_cert: None,
             tls_key: None,
         };
-        let arguments = service_arguments(
-            Path::new("/data"),
-            Path::new("/data/master.key"),
-            LogFormat::Text,
-            Path::new("/data/watermelon.log"),
-            DEFAULT_SERVICE,
-            &serve,
+        let arguments = service::arguments(
+            service::DEFAULT_NAME,
+            &service::Settings {
+                data_dir: Path::new("/data"),
+                master_key: Path::new("/data/master.key"),
+                log_format: LogFormat::Text,
+                log_file: Path::new("/data/watermelon.log"),
+                serve: &serve,
+            },
         )
         .unwrap();
         for absent in ["--workers", "--secure-cookies", "--tls-cert", "--tls-key"] {
@@ -1276,16 +1157,16 @@ mod tests {
     #[tokio::test]
     async fn controls_stop_serving() {
         let (controls, received) = mpsc::unbounded_channel();
-        let (stopped, stop_requested) = oneshot::channel();
-        let handler = tokio::spawn(handle_controls(received, None, stopped));
+        let (request_stop, stop_requested) = oneshot::channel();
+        let handler = tokio::spawn(handle_controls(received, None, request_stop));
         controls.send(Control::ReloadTls).unwrap();
         controls.send(Control::Stop).unwrap();
         stop_requested.await.unwrap();
         handler.await.unwrap();
 
         let (controls, received) = mpsc::unbounded_channel::<Control>();
-        let (stopped, stop_requested) = oneshot::channel();
-        tokio::spawn(handle_controls(received, None, stopped));
+        let (request_stop, stop_requested) = oneshot::channel();
+        tokio::spawn(handle_controls(received, None, request_stop));
         drop(controls);
         stop_requested.await.unwrap();
     }

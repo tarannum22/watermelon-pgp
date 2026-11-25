@@ -7,11 +7,16 @@
 //!
 //! LocalSystem and the Administrators group are trusted the way root is on Unix: they can
 //! take ownership of any file anyway, so an access entry for them does not make a file
-//! readable by others. So is the file's owner, like the owner bits of a Unix mode: an owner
-//! can always change the access list, so an entry for it gives nothing away.
+//! readable by others.
 //!
-//! [`give_to_account`] makes files private to another account instead, such as the virtual
-//! account a Windows service runs as.
+//! The owner can always change a file's access list. So an owner that isn't trusted counts as
+//! access by others, even without an entry. The trusted owners are the current user, the
+//! accounts above, and Windows service accounts (`NT SERVICE\…`, SIDs `S-1-5-80-…`), so that
+//! an administrator can use a service's files. This matches the owner bits of a Unix mode.
+//!
+//! [`set_owner_and_restrict_to`] makes files private to another account instead, such as
+//! the virtual account a Windows service runs as. [`allow_account`] adds an entry for an
+//! account and keeps the others.
 
 use std::{
     ffi::c_void,
@@ -31,12 +36,14 @@ use windows_sys::Win32::{
         ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION, AddAccessAllowedAceEx,
         AdjustTokenPrivileges,
         Authorization::{
-            ConvertSidToStringSidW, GetNamedSecurityInfoW, SE_FILE_OBJECT, SetNamedSecurityInfoW,
+            ConvertSidToStringSidW, EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW,
+            SE_FILE_OBJECT, SetEntriesInAclW, SetNamedSecurityInfoW, TRUSTEE_IS_SID,
+            TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
         },
         CONTAINER_INHERIT_ACE, CopySid, CreateWellKnownSid, DACL_SECURITY_INFORMATION, EqualSid,
         GetAce, GetLengthSid, GetTokenInformation, INHERIT_ONLY_ACE, INHERITED_ACE, InitializeAcl,
         InitializeSecurityDescriptor, LUID_AND_ATTRIBUTES, LookupAccountNameW, LookupAccountSidW,
-        LookupPrivilegeValueW, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION,
+        LookupPrivilegeValueW, NO_INHERITANCE, OBJECT_INHERIT_ACE, OWNER_SECURITY_INFORMATION,
         PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED,
         SE_PRIVILEGE_ENABLED, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE,
         SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_ADJUST_PRIVILEGES,
@@ -45,7 +52,8 @@ use windows_sys::Win32::{
     },
     Storage::FileSystem::{
         CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL,
-        FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE,
     },
     System::{
         SystemServices::{
@@ -123,21 +131,21 @@ pub fn make_private(path: &Path) -> io::Result<()> {
     set_security(path, None, &acl)
 }
 
-/// Make `path` private to `account` (`DOMAIN\name`) instead of the current user: `account`
-/// becomes its owner, and only it, LocalSystem and Administrators can access it. For a
-/// directory, the same goes for everything inside it, now and created later.
+/// Make `account` (`DOMAIN\name`) the owner of `path` and replace its access list so that
+/// only `account`, LocalSystem and Administrators can access it. For a directory, the same goes
+/// for everything inside it, now and created later.
 ///
 /// Making another account the owner needs the restore privilege, which elevated
 /// administrators have.
-pub fn give_to_account(path: &Path, account: &str) -> io::Result<()> {
+pub fn set_owner_and_restrict_to(path: &Path, account: &str) -> io::Result<()> {
     let account = Sid::of_account(account)?;
     enable_restore_privilege()?;
     let system = well_known(WinLocalSystemSid)?;
     let admins = well_known(WinBuiltinAdministratorsSid)?;
-    give(path, &account, &[&account, &system, &admins])
+    set_owner_and_acl_recursively(path, &account, &[&account, &system, &admins])
 }
 
-fn give(path: &Path, owner: &Sid, allowed: &[&Sid]) -> io::Result<()> {
+fn set_owner_and_acl_recursively(path: &Path, owner: &Sid, allowed: &[&Sid]) -> io::Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     // Links and junctions are left alone: they may point outside the data directory.
     if metadata.is_symlink() {
@@ -146,7 +154,7 @@ fn give(path: &Path, owner: &Sid, allowed: &[&Sid]) -> io::Result<()> {
     set_security(path, Some(owner), &private_acl(allowed, metadata.is_dir())?)?;
     if metadata.is_dir() {
         for entry in fs::read_dir(path)? {
-            give(&entry?.path(), owner, allowed)?;
+            set_owner_and_acl_recursively(&entry?.path(), owner, allowed)?;
         }
     }
     Ok(())
@@ -172,6 +180,53 @@ fn set_security(path: &Path, owner: Option<&Sid>, acl: &[u64]) -> io::Result<()>
         )
     };
     check_status(status)
+}
+
+/// Add an entry to `path`'s access list allowing `account` to read it, or to read and write
+/// it. Keeps the existing entries and the owner, so it suits files watermelon doesn't own, such
+/// as a TLS certificate.
+pub fn allow_account(path: &Path, account: &str, write: bool) -> io::Result<()> {
+    let account = Sid::of_account(account)?;
+    let access = if write {
+        FILE_GENERIC_READ | FILE_GENERIC_WRITE
+    } else {
+        FILE_GENERIC_READ
+    };
+    add_allow_entry(path, &account, access, NO_INHERITANCE)
+}
+
+/// Add an allow entry for `sid` to `path`'s access list, keeping the others.
+fn add_allow_entry(path: &Path, sid: &Sid, access: u32, inheritance: u32) -> io::Result<()> {
+    let old = Dacl::of(path)?;
+    let entry = EXPLICIT_ACCESS_W {
+        grfAccessPermissions: access,
+        grfAccessMode: GRANT_ACCESS,
+        grfInheritance: inheritance,
+        Trustee: TRUSTEE_W {
+            pMultipleTrustee: ptr::null_mut(),
+            MultipleTrusteeOperation: 0,
+            TrusteeForm: TRUSTEE_IS_SID,
+            TrusteeType: TRUSTEE_IS_UNKNOWN,
+            ptstrName: sid.as_psid().cast(),
+        },
+    };
+    let mut new: *mut ACL = ptr::null_mut();
+    let wide = wide(path);
+    // SAFETY: `entry` names a valid SID and `old.acl` is valid (or null); `new` is freed below.
+    unsafe {
+        check_status(SetEntriesInAclW(1, &entry, old.acl, &mut new))?;
+        let status = SetNamedSecurityInfoW(
+            wide.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            new,
+            ptr::null(),
+        );
+        LocalFree(new.cast());
+        check_status(status)
+    }
 }
 
 /// Enable SeRestorePrivilege for this process, which lets it make any account a file's owner.
@@ -207,7 +262,7 @@ fn enable_restore_privilege() -> io::Result<()> {
         if last == ERROR_NOT_ALL_ASSIGNED {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
-                "giving files to another account needs an elevated administrator",
+                "making another account the owner needs an elevated administrator",
             ));
         }
     }
@@ -228,9 +283,14 @@ pub fn how_to_restrict(path: &Path) -> String {
     let mut advice = format!(
         "restrict it to {account} with `icacls \"{shown}\" /inheritance:r /grant:r \"{account}:F\"`"
     );
-    let explicit = Others::of(path)
-        .map(|others| others.explicit)
-        .unwrap_or_default();
+    let others = Others::of(path).unwrap_or_default();
+    if let Some(owner) = &others.owner {
+        advice = format!(
+            "it is owned by {}; make {account} the owner with `icacls \"{shown}\" /setowner \"{account}\"`, then {advice}",
+            owner.account_name()
+        );
+    }
+    let explicit = others.explicit;
     if !explicit.is_empty() {
         let names: Vec<String> = explicit
             .iter()
@@ -250,6 +310,8 @@ struct Others {
     explicit: Vec<Sid>,
     /// Whether any access comes from an entry inherited from a parent.
     inherited: bool,
+    /// An owner that isn't trusted: it can change the access list.
+    owner: Option<Sid>,
 }
 
 impl Others {
@@ -263,14 +325,19 @@ impl Others {
             // creates them: that is us.
             well_known(WinCreatorOwnerSid)?,
         ];
+        let mut others = Self::default();
         if !dacl.owner.is_null() {
             // SAFETY: a valid SID inside the descriptor `dacl` owns.
-            trusted.push(unsafe { Sid::copy(dacl.owner)? });
+            let owner = unsafe { Sid::copy(dacl.owner)? };
+            if owner.is_service() {
+                trusted.push(owner);
+            } else if !trusted.iter().any(|t| t.equals(owner.as_psid())) {
+                others.owner = Some(owner);
+            }
         }
         // An entry that applies only to what is created inside a directory doesn't grant
         // access to the directory itself, but it does to SQLite's -wal and -shm files.
         let is_dir = fs::metadata(path)?.is_dir();
-        let mut others = Self::default();
         if dacl.acl.is_null() {
             others.unknown = true;
             return Ok(others);
@@ -314,7 +381,7 @@ impl Others {
     }
 
     fn is_empty(&self) -> bool {
-        !self.unknown && !self.inherited && self.explicit.is_empty()
+        !self.unknown && !self.inherited && self.explicit.is_empty() && self.owner.is_none()
     }
 }
 
@@ -437,6 +504,11 @@ impl Sid {
         }
         // SAFETY: LookupAccountNameW wrote a valid SID.
         unsafe { Self::copy(sid.as_mut_ptr().cast()) }
+    }
+
+    /// A Windows service's account (`NT SERVICE\…`): SID `S-1-5-80-…`.
+    fn is_service(&self) -> bool {
+        self.to_sid_string().starts_with("S-1-5-80-")
     }
 
     fn as_psid(&self) -> PSID {
@@ -603,14 +675,7 @@ pub mod testing {
     //! Give the local Users group access, the way `C:\ProgramData` does.
 
     use super::*;
-    use windows_sys::Win32::Security::{
-        Authorization::{
-            EXPLICIT_ACCESS_W, GRANT_ACCESS, SetEntriesInAclW, TRUSTEE_IS_GROUP, TRUSTEE_IS_SID,
-            TRUSTEE_W,
-        },
-        NO_INHERITANCE, SUB_CONTAINERS_AND_OBJECTS_INHERIT, WinBuiltinUsersSid,
-    };
-    use windows_sys::Win32::Storage::FileSystem::FILE_GENERIC_READ;
+    use windows_sys::Win32::Security::{SUB_CONTAINERS_AND_OBJECTS_INHERIT, WinBuiltinUsersSid};
 
     /// Let the local Users group read `path` (and, for a directory, what is created inside
     /// it), keeping the entries it already has.
@@ -653,35 +718,6 @@ pub mod testing {
 
     fn grant_users(path: &Path, inheritance: u32) {
         let users = well_known(WinBuiltinUsersSid).unwrap();
-        let old = Dacl::of(path).unwrap();
-        let entry = EXPLICIT_ACCESS_W {
-            grfAccessPermissions: FILE_GENERIC_READ,
-            grfAccessMode: GRANT_ACCESS,
-            grfInheritance: inheritance,
-            Trustee: TRUSTEE_W {
-                pMultipleTrustee: ptr::null_mut(),
-                MultipleTrusteeOperation: 0,
-                TrusteeForm: TRUSTEE_IS_SID,
-                TrusteeType: TRUSTEE_IS_GROUP,
-                ptstrName: users.as_psid().cast(),
-            },
-        };
-        let mut new: *mut ACL = ptr::null_mut();
-        let wide = wide(path);
-        // SAFETY: `entry` names a valid SID; `new` is freed below.
-        unsafe {
-            check_status(SetEntriesInAclW(1, &entry, old.acl, &mut new)).unwrap();
-            let status = SetNamedSecurityInfoW(
-                wide.as_ptr(),
-                SE_FILE_OBJECT,
-                DACL_SECURITY_INFORMATION,
-                ptr::null_mut(),
-                ptr::null_mut(),
-                new,
-                ptr::null(),
-            );
-            LocalFree(new.cast());
-            check_status(status).unwrap();
-        }
+        add_allow_entry(path, &users, FILE_GENERIC_READ, inheritance).unwrap();
     }
 }
