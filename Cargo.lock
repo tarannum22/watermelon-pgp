@@ -3202,7 +3202,7 @@ dependencies = [
 
 [[package]]
 name = "watermelon-pgp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3219,7 +3219,7 @@ dependencies = [
 
 [[package]]
 name = "watermelon-pgp-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argon2",
  "bytes",
@@ -3238,7 +3238,7 @@ dependencies = [
 
 [[package]]
 name = "watermelon-pgp-jobs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hex",
  "sha2",
@@ -3248,7 +3248,7 @@ dependencies = [
 
 [[package]]
 name = "watermelon-pgp-web"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "axum-server",
