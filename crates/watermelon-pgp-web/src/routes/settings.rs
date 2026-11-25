@@ -89,7 +89,12 @@ fn local_path(url: &str) -> Option<&str> {
         Some((_, rest)) => &rest[rest.find('/')?..],
         None => url,
     };
-    (path.starts_with('/') && !path.starts_with("//") && !path.contains('\\')).then_some(path)
+    // Browsers drop tabs and newlines from URLs, so `/\t/evil.com` would mean `//evil.com`.
+    (path.starts_with('/')
+        && !path.starts_with("//")
+        && !path.contains('\\')
+        && !path.contains(|c: char| c.is_control()))
+    .then_some(path)
 }
 
 #[derive(Deserialize)]
@@ -153,5 +158,7 @@ mod tests {
         assert_eq!(local_path("https://example.com//evil.com/"), None);
         assert_eq!(local_path("/audit"), Some("/audit"));
         assert_eq!(local_path("/\\evil.com"), None);
+        assert_eq!(local_path("/\t/evil.com"), None);
+        assert_eq!(local_path("/\n/evil.com"), None);
     }
 }

@@ -590,6 +590,10 @@ async fn import_upload(
     }
     let imported = state
         .vault(move |vault| {
+            // An unknown customer is a 404, not a foreign key error from the database.
+            if let Some(id) = customer_id {
+                vault.customer_by_id(id)?;
+            }
             let passphrase = Some(passphrase.as_str()).filter(|p| !p.is_empty());
             vault.import_keys(Actor::Admin, customer_id, &data, passphrase)
         })

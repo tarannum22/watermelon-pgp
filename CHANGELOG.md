@@ -12,8 +12,9 @@ All notable changes to this project are documented here. The format follows
   `key gen` / `key import` without `--customer`. They show as "anonymous" and have their own
   filter on the Keys page.
 - Keys can be generated and imported from the Keys page, choosing the customer in the dialog.
-- The database is upgraded automatically on first start (schema v4). Back it up first
-  (`watermelon backup`): 0.1.0 can't open the upgraded database.
+- The database is upgraded automatically on first start (schema v4), and 0.1.0 can't open the
+  upgraded one. Before upgrading, the old database is copied to `watermelon.db.schema-v3.bak`
+  next to it (mode 0600); to go back to 0.1.0, stop the service and restore that copy.
 
 ### Web UI
 - New look, built on a design system: design tokens (colour roles, type, spacing) in one file,

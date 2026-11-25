@@ -581,6 +581,70 @@ async fn keys_can_be_imported_by_upload() {
 }
 
 #[tokio::test]
+async fn keys_can_be_imported_from_the_keys_page() {
+    let app = App::new();
+    let session = app.login().await;
+    let partner = crypto::generate("Partner <p@example.com>", Algorithm::Curve25519).unwrap();
+    let armored = crypto::armor_public(&partner.to_public_key()).unwrap();
+
+    let multipart = |csrf: &str, customer: &str| {
+        let boundary = "XBOUNDARY";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"_csrf\"\r\n\r\n{csrf}\r\n\
+             --{boundary}\r\nContent-Disposition: form-data; name=\"customer\"\r\n\r\n{customer}\r\n\
+             --{boundary}\r\nContent-Disposition: form-data; name=\"armored\"\r\n\r\n{armored}\r\n\
+             --{boundary}--\r\n"
+        );
+        Request::post("/keys/import")
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .header(header::COOKIE, &session.cookie)
+            .body(Body::from(body))
+            .unwrap()
+    };
+
+    // Without the CSRF token nothing is imported.
+    let reply = app.send(multipart("wrong", "none")).await;
+    assert_eq!(reply.status, StatusCode::FORBIDDEN);
+    assert!(app.vault().keys(None).unwrap().is_empty());
+
+    // An unknown customer is reported as such, not as an internal error.
+    let unknown = app
+        .follow(app.send(multipart(&session.csrf, "999")).await, &session)
+        .await;
+    assert!(
+        unknown.body.contains("not found: customer 999"),
+        "{}",
+        unknown.body
+    );
+    assert!(app.vault().keys(None).unwrap().is_empty());
+
+    // The customer must be chosen, even if the choice is none.
+    let unpicked = app
+        .follow(app.send(multipart(&session.csrf, "")).await, &session)
+        .await;
+    assert!(
+        unpicked.body.contains("choose a customer"),
+        "{}",
+        unpicked.body
+    );
+
+    let ok = app
+        .follow(app.send(multipart(&session.csrf, "none")).await, &session)
+        .await;
+    assert!(
+        ok.body.contains("Imported or updated Partner"),
+        "{}",
+        ok.body
+    );
+    let keys = app.vault().keys(None).unwrap();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0].owner.customer_id(), None);
+}
+
+#[tokio::test]
 async fn jobs_are_created_edited_and_controlled_from_forms() {
     let app = App::new();
     let session = app.login().await;

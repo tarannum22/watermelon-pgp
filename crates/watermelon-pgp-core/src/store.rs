@@ -205,23 +205,25 @@ const KEY_COLUMNS: &str = "k.id, k.customer_id, c.name, k.fingerprint, k.user_id
 
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
-        Self::init(Connection::open(path)?)
+        Self::init(Connection::open(path)?, Some(path))
     }
 
     pub fn open_in_memory() -> Result<Self> {
-        Self::init(Connection::open_in_memory()?)
+        Self::init(Connection::open_in_memory()?, None)
     }
 
-    fn init(conn: Connection) -> Result<Self> {
+    fn init(conn: Connection, path: Option<&Path>) -> Result<Self> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let store = Self { conn };
-        store.migrate()?;
+        store.migrate(path)?;
         Ok(store)
     }
 
-    fn migrate(&self) -> Result<()> {
+    /// Bring the schema up to date. Before changing an existing database file, keep a copy of
+    /// it as it was ([`snapshot_path`]): older builds can't open the upgraded one.
+    fn migrate(&self, path: Option<&Path>) -> Result<()> {
         let applied: i64 = self
             .conn
             .pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -234,6 +236,11 @@ impl Store {
         }
         if applied == MIGRATIONS.len() {
             return Ok(());
+        }
+        if applied > 0
+            && let Some(path) = path
+        {
+            self.snapshot_before_upgrade(&snapshot_path(path, applied))?;
         }
         // Rebuilding a table other tables refer to needs foreign keys off (they can only be
         // switched outside a transaction); check them all before switching them back on.
@@ -259,6 +266,24 @@ impl Store {
         })();
         self.conn.pragma_update(None, "foreign_keys", "ON")?;
         result
+    }
+
+    /// Copy the database to `dest`, readable only by us. An existing copy is kept: it is the
+    /// same schema version, taken by an earlier upgrade attempt.
+    fn snapshot_before_upgrade(&self, dest: &Path) -> Result<()> {
+        if dest.exists() {
+            return Ok(());
+        }
+        let name = dest
+            .to_str()
+            .ok_or_else(|| Error::Invalid("database path must be valid UTF-8".into()))?;
+        // VACUUM INTO accepts an empty file, so create it private first.
+        crate::platform::write_private_file(dest, &[])?;
+        if let Err(e) = self.conn.execute("VACUUM INTO ?1", [name]) {
+            let _ = std::fs::remove_file(dest);
+            return Err(e.into());
+        }
+        Ok(())
     }
 
     /// Run `f` inside a transaction that commits only if `f` succeeds.
@@ -287,6 +312,14 @@ impl Store {
         self.conn.execute("VACUUM INTO ?1", [dest])?;
         Ok(())
     }
+}
+
+/// Where [`Store::open`] keeps the database as it was before upgrading it from schema `version`:
+/// `watermelon.db` → `watermelon.db.schema-v3.bak`.
+pub fn snapshot_path(db: &Path, version: usize) -> std::path::PathBuf {
+    let mut name = db.as_os_str().to_owned();
+    name.push(format!(".schema-v{version}.bak"));
+    name.into()
 }
 
 pub fn get_setting(conn: &Connection, name: &str) -> Result<Option<String>> {
@@ -511,8 +544,55 @@ mod tests {
     }
 
     #[test]
+    fn upgrading_a_database_file_keeps_a_copy_older_builds_can_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("watermelon.db");
+        v3_database()
+            .execute("VACUUM INTO ?1", [db.to_str().unwrap()])
+            .unwrap();
+        Store::open(&db).unwrap();
+
+        let copy = snapshot_path(&db, 3);
+        let old = Connection::open(&copy).unwrap();
+        let version: i64 = old
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 3);
+        let keys: i64 = old
+            .query_row("SELECT count(*) FROM keys", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(keys, 1);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&copy).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+
+        // Up to date: opening again neither fails nor takes another copy.
+        std::fs::remove_file(&copy).unwrap();
+        Store::open(&db).unwrap();
+        assert!(!copy.exists());
+    }
+
+    #[test]
+    fn a_new_database_file_has_no_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("watermelon.db");
+        Store::open(&db).unwrap();
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert!(
+            names.iter().all(|name| !name.ends_with(".bak")),
+            "{names:?}"
+        );
+    }
+
+    #[test]
     fn upgrading_from_0_1_0_keeps_keys_and_allows_anonymous_ones() {
-        let store = Store::init(v3_database()).unwrap();
+        let store = Store::init(v3_database(), None).unwrap();
         let conn = store.conn();
         let version: i64 = conn
             .pragma_query_value(None, "user_version", |row| row.get(0))
