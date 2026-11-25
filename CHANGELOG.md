@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0] - 2026-11-25
 
 ### Keys
 - Anonymous keys: a key can belong to no customer, for example your own signing key used by
@@ -44,6 +44,8 @@ All notable changes to this project are documented here. The format follows
   (remembered per browser in a cookie).
 - Geist and JetBrains Mono fonts and Lucide icons, served from the binary.
 - Form hints are no longer read out as part of a field's name by screen readers.
+- The new look needs a browser from 2024 or later (`light-dark()`, `:has()`, popovers); older
+  browsers get the light theme. Confirmation dialogs without JavaScript need one from 2025.
 
 ### Tests
 - End-to-end tests of the core flows in a real browser (Playwright): logging in and out,
