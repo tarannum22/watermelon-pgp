@@ -22,6 +22,8 @@ env:
 jobs:
   build:
     strategy:
+      # A failed target fails the release, the Windows preview included: the zip is in the
+      # release notes and SHA256SUMS, and the dry run on the release branch catches it first.
       fail-fast: true
       matrix:
         include:
@@ -61,10 +63,12 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "TAG=$tag" >> "$GITHUB_ENV"
-      # Saves on every ref: a release branch's repeated dry runs, or a re-run on the tag, reuse it.
+      # Saved by dry runs only: repeated dry runs on a release branch reuse it. A tag run can't
+      # restore a branch's cache, and nothing reuses a tag's, so it doesn't save one.
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+          save-if: ${{ github.event_name == 'workflow_dispatch' }}
       - run: cargo build --release --locked --bin watermelon --target ${{ matrix.target }}
         env:
           # Windows: link the C runtime statically, so no Visual C++ redistributable is needed.
@@ -92,7 +96,12 @@ jobs:
         run: |
           $name = "watermelon-pgp-$env:TAG-${{ matrix.target }}"
           Expand-Archive "dist\$name.zip" "$env:RUNNER_TEMP\unpacked"
-          $exe = "$env:RUNNER_TEMP\unpacked\$name\watermelon.exe"
+          $root = "$env:RUNNER_TEMP\unpacked\$name"
+          $exe = "$root\watermelon.exe"
+          foreach ($entry in "watermelon.exe", "README.md", "CHANGELOG.md", "LICENSE-MIT", "LICENSE-APACHE", "contrib", "docs") {
+            if (-not (Test-Path "$root\$entry")) { throw "the zip has no $name\$entry" }
+          }
+          Get-ChildItem $root | Select-Object -ExpandProperty Name
 
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $dumpbin = & $vswhere -latest -products * -find "VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
@@ -100,12 +109,15 @@ jobs:
           $deps = & $dumpbin /nologo /dependents $exe
           $deps
           if ($LASTEXITCODE -ne 0) { throw "dumpbin failed" }
+          # Every Windows program imports KERNEL32.dll: without it the output isn't a list.
+          if (-not ($deps | Select-String -Pattern '^\s+KERNEL32\.dll\s*$')) { throw "no dependency list from dumpbin" }
           $crt = $deps | Select-String -Pattern '^\s+(vcruntime|msvcp|api-ms-win-crt|ucrtbase)\S*\.dll\s*$'
           if ($crt) { throw "watermelon.exe needs the C runtime DLLs: $crt" }
 
           $version = & $exe --version
           $version
-          if ($version -notmatch [regex]::Escape($env:TAG.TrimStart('v'))) { throw "--version does not match $env:TAG" }
+          if ($LASTEXITCODE -ne 0) { throw "--version failed" }
+          if ($version -cne "watermelon-pgp $($env:TAG.TrimStart('v'))") { throw "--version does not match $env:TAG" }
 
           $data = "$env:RUNNER_TEMP\wm-data"
           "release smoke test password" | & $exe --data-dir $data --passphrase-stdin init
@@ -135,6 +147,7 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
     env:
@@ -172,6 +185,7 @@ jobs:
   image:
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -182,6 +196,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
+          pattern: "*-linux-gnu"
           merge-multiple: true
       - name: Unpack the Linux binaries
         run: |
@@ -218,6 +233,7 @@ jobs:
     needs: release
     if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - name: Formula
