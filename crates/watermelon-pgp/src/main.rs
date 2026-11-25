@@ -450,8 +450,19 @@ fn check_legacy_env(vars: impl IntoIterator<Item = (OsString, OsString)>) -> Res
         .into_iter()
         .filter_map(|(name, _)| {
             let name = name.into_string().ok()?;
-            let rest = name.strip_prefix(LEGACY_ENV_PREFIX)?;
-            Some(format!("{name} is now {ENV_PREFIX}{rest}"))
+            // Windows reads environment variables in any case.
+            let matches = if cfg!(windows) {
+                name.get(..LEGACY_ENV_PREFIX.len())
+                    .is_some_and(|p| p.eq_ignore_ascii_case(LEGACY_ENV_PREFIX))
+            } else {
+                name.starts_with(LEGACY_ENV_PREFIX)
+            };
+            matches.then(|| {
+                format!(
+                    "{name} is now {ENV_PREFIX}{}",
+                    &name[LEGACY_ENV_PREFIX.len()..]
+                )
+            })
         })
         .collect();
     if renamed.is_empty() {

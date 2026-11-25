@@ -20,9 +20,9 @@ if ($legacy) {
   throw @"
 The Windows service $names runs $legacyExe. The program is now watermelonpgp.exe, so
 the service has to be installed again. Remove it with the old program first (its data
-directory and master key stay), then upgrade and install it again with watermelonpgp:
+directory and master key stay), then install this package and the service again with watermelonpgp:
   watermelon service uninstall$(if ($names -ne 'watermelon') { ' --name <name>' })
-  choco upgrade watermelon-pgp
+  choco install watermelon-pgp
 See https://github.com/@REPO@/blob/v$version/docs/deployment.md#from-03-watermelon-is-now-watermelonpgp
 "@
 }
@@ -46,11 +46,14 @@ try {
   # Fail before changing anything if another program (a `watermelonpgp` outside a service) still
   # runs the old watermelonpgp.exe: Windows doesn't let a running program be replaced. A service
   # that just stopped may take a moment to exit.
-  for ($i = 1; Test-Path $exe; $i++) {
-    try { [IO.File]::Open($exe, 'Open', 'ReadWrite', 'None').Close(); break }
-    catch {
-      if ($i -ge 10) { throw "$exe is in use. Stop the watermelonpgp process running it and try again." }
-      Start-Sleep 1
+  # The same for 0.3's watermelon.exe, which is removed below.
+  foreach ($program in $exe, $legacyExe) {
+    for ($i = 1; Test-Path $program; $i++) {
+      try { [IO.File]::Open($program, 'Open', 'ReadWrite', 'None').Close(); break }
+      catch {
+        if ($i -ge 10) { throw "$program is in use. Stop the program running it and try again." }
+        Start-Sleep 1
+      }
     }
   }
   New-Item -ItemType Directory -Force $installDir | Out-Null

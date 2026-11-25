@@ -18,7 +18,7 @@ use crate::{
     store::{self, Customer, KeyOwner, KeyRecord, KeyRow, Store},
 };
 
-pub const DB_FILE: &str = "watermelonpgp.db";
+const DB_FILE: &str = "watermelonpgp.db";
 /// The database's name up to 0.3, when the command was still `watermelon`.
 const LEGACY_DB_FILE: &str = "watermelon.db";
 /// The files SQLite keeps next to the database, which move with it.

@@ -149,4 +149,7 @@ Merge only once the release has its tarballs, or the install commands point at n
 - [ ] If the dashboard changed: `site/img/social-card.png` (1200×630, the link preview) shows the
       new one.
 - [ ] Features and FAQ on the site mention what's new.
+- [ ] The first release with the `watermelonpgp` command (#46): every command example in
+      `site/index.html` uses `watermelonpgp`, `WATERMELONPGP_*` and `NT SERVICE\watermelonpgp`
+      (`git grep -nwP 'watermelon(?!-pgp)|WATERMELON_' site` finds nothing). Then drop this item.
 - [ ] `python3 .github/scripts/check-branding.py site` passes.

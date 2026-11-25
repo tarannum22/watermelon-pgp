@@ -212,11 +212,11 @@ sudo rm /usr/local/bin/watermelon /etc/systemd/system/watermelon.service
 sudo mv /var/lib/watermelon /var/lib/watermelonpgp
 sudo mv /etc/watermelon /etc/watermelonpgp
 sudo mv /etc/watermelonpgp/watermelon.env /etc/watermelonpgp/watermelonpgp.env
-sudo sed -i 's/WATERMELON_/WATERMELONPGP_/g; s#/etc/watermelon/#/etc/watermelonpgp/#g' \
+sudo sed -i 's/WATERMELON_/WATERMELONPGP_/g; s#/etc/watermelon/#/etc/watermelonpgp/#g; s#/var/lib/watermelon\b#/var/lib/watermelonpgp#g' \
     /etc/watermelonpgp/watermelonpgp.env
 sudo groupmod -n watermelonpgp watermelon
 sudo usermod -l watermelonpgp -d /var/lib/watermelonpgp watermelon
-# Your ReadWritePaths= drop-in, if any:
+# Your ReadWritePaths= drop-in, if any (check it for /var/lib/watermelon and /etc/watermelon too):
 sudo mv /etc/systemd/system/watermelon.service.d /etc/systemd/system/watermelonpgp.service.d
 sudo install -m 0644 contrib/systemd/watermelonpgp.service /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -226,8 +226,9 @@ sudo systemctl enable --now watermelonpgp
 The renamed user keeps its uid, so job folders shared through a group or owned by it need no
 change. Check your own unit overrides and scripts for `watermelon` paths.
 
-**Docker.** Same image, same volume: the user keeps uid `10001`. Rename the `-e WATERMELON_*`
-variables to `WATERMELONPGP_*`.
+**Docker.** Same image, and keep your existing volume (the examples above now call a new one
+`watermelonpgp-data`; the name is yours to choose): the user keeps uid `10001`. Rename the
+`-e WATERMELON_*` variables to `WATERMELONPGP_*`.
 
 **Homebrew.** Move the data directory before starting the upgraded service:
 
@@ -238,6 +239,9 @@ mv "$(brew --prefix)/var/watermelon" "$(brew --prefix)/var/watermelonpgp"
 brew services start watermelon-pgp
 ```
 
+The log is now `$(brew --prefix)/var/log/watermelonpgp.log`; delete the old `watermelon.log` when
+you no longer need it.
+
 **Windows.** A service keeps running the program it was installed with, so remove the old
 service with the *old* program first, then install the new one with the same options (your
 `--bind`, TLS and log settings) and grant the new account your job folders and anything else you
@@ -245,8 +249,13 @@ granted `NT SERVICE\watermelon`:
 
 ```powershell
 watermelon service uninstall               # 0.3's watermelon.exe; data and key stay
-# Upgrade: choco upgrade watermelon-pgp, or replace watermelon.exe with watermelonpgp.exe
-[Environment]::SetEnvironmentVariable('WATERMELON_DATA_DIR', $null, 'Machine')   # if you set it
+# Install: choco install watermelon-pgp, or replace watermelon.exe with watermelonpgp.exe
+# watermelonpgp refuses to start while a WATERMELON_* variable is set: clear them for good
+# (if you set them machine-wide) and in this shell.
+Get-ChildItem Env:WATERMELON_* | ForEach-Object {
+  [Environment]::SetEnvironmentVariable($_.Name, $null, 'Machine')
+  Remove-Item "Env:$($_.Name)"
+}
 $env:WATERMELONPGP_DATA_DIR = "C:\ProgramData\WatermelonPGP"
 watermelonpgp service install --bind 127.0.0.1:8080
 icacls D:\sftp /grant "NT SERVICE\watermelonpgp:(OI)(CI)M"
@@ -254,7 +263,7 @@ Start-Service watermelonpgp
 ```
 
 `service install` hands the data directory and master key over to the new account. The
-Chocolatey package refuses to upgrade while a service still runs `watermelon.exe`, and removes
+Chocolatey package refuses to install while a service still runs `watermelon.exe`, and removes
 `watermelon.exe` once nothing does. The old `watermelon.log` stays in the data directory.
 
 ## Windows Server
