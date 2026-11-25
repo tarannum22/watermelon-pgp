@@ -6,6 +6,12 @@ on:
     tags: ["v*"]
   pull_request:
 
+# A new push to a pull request cancels its older, now pointless run. Runs on main and tags
+# always finish.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
@@ -20,6 +26,7 @@ jobs:
   # checked by pages.yml.
   changes:
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
@@ -50,11 +57,15 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --release -- -D warnings
       # Debug builds add the /styleguide page.
@@ -71,29 +82,51 @@ jobs:
       matrix:
         os: [ubuntu-24.04, ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install GnuPG (macOS)
         if: runner.os == 'macOS'
         run: brew install gnupg
-      # Put Gpg4win's gpg ahead of the one bundled with Git for Windows. Gpg4win 4 installs
-      # to Program Files (x86), 5 to Program Files. The Chocolatey feed sometimes times out
-      # (504) and choco then exits 0 having installed nothing, so look for gpg.exe and retry.
+      # Gpg4win straight from gpg4win.org: Chocolatey's feed timed out or hung for 25+ minutes.
+      # The installer is cached, so most runs don't download it. To update: download the new
+      # gpg4win-X.exe and .sig from files.gpg4win.org, check the signature against a GnuPG
+      # release key from gnupg.org/signature_key.html, and pin its SHA-256 here.
+      - name: Cache the Gpg4win installer
+        if: runner.os == 'Windows'
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/gpg4win
+          key: gpg4win-5.1.2
       - name: Install GnuPG (Windows)
         if: runner.os == 'Windows'
+        timeout-minutes: 5
         shell: pwsh
+        env:
+          GPG4WIN_VERSION: "5.1.2"
+          GPG4WIN_SHA256: 6bd36865f951c299e559ecb891f22e19b6fa0f4dfedc596f73d259f8365408eb
         run: |
-          $dirs = @("$env:ProgramFiles\GnuPG\bin", "${env:ProgramFiles(x86)}\GnuPG\bin")
-          foreach ($attempt in 1..4) {
-            choco install gpg4win --yes --no-progress
-            $bin = $dirs | Where-Object { Test-Path "$_\gpg.exe" } | Select-Object -First 1
-            if ($bin) { break }
-            Write-Warning "gpg.exe not found after attempt $attempt; retrying"
-            Start-Sleep -Seconds (15 * $attempt)
+          $dir = "$env:RUNNER_TEMP\gpg4win"
+          $exe = "$dir\gpg4win-$env:GPG4WIN_VERSION.exe"
+          if (-not (Test-Path $exe)) {
+            New-Item -ItemType Directory -Force $dir | Out-Null
+            Invoke-WebRequest "https://files.gpg4win.org/gpg4win-$env:GPG4WIN_VERSION.exe" `
+              -OutFile $exe -MaximumRetryCount 3 -RetryIntervalSec 5
           }
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash
+          if ($hash -ne $env:GPG4WIN_SHA256) { throw "gpg4win installer SHA-256 mismatch: $hash" }
+          $p = Start-Process $exe -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "gpg4win installer exited with $($p.ExitCode)" }
+          # Put it ahead of the gpg bundled with Git for Windows.
+          $bin = @("$env:ProgramFiles\GnuPG\bin", "${env:ProgramFiles(x86)}\GnuPG\bin") |
+            Where-Object { Test-Path "$_\gpg.exe" } | Select-Object -First 1
           if (-not $bin) { throw "gpg.exe not found after installing Gpg4win" }
           Add-Content $env:GITHUB_PATH $bin
       - run: gpg --version
@@ -112,6 +145,7 @@ jobs:
       matrix:
         image: ["debian:bookworm", "debian:testing"]
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     container: ${{ matrix.image }}
     steps:
       - name: Install build tools and GnuPG
@@ -120,6 +154,10 @@ jobs:
           apt-get install -y --no-install-recommends ca-certificates curl build-essential git gnupg gpg-agent
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.image }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: gpg --version
       - run: cargo test --release
 
@@ -129,12 +167,16 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: e2e
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build
       - uses: actions/setup-node@v7
         with:
@@ -159,9 +201,13 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.89
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --workspace --all-targets --locked
 
   # Known vulnerabilities in dependencies (RustSec advisory database).
@@ -169,6 +215,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: taiki-e/install-action@v2
@@ -180,6 +227,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - run: docker build -t watermelon-pgp:ci .
@@ -201,6 +249,7 @@ jobs:
     needs: [changes, lint, test, test-gnupg, e2e, msrv, audit, docker]
     if: always()
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Fail if a job failed or was cancelled
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
