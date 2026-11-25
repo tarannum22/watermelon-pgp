@@ -60,7 +60,7 @@ impl Vault {
                 master_key_path.display()
             )));
         }
-        platform::create_private_dir(data_dir)?;
+        platform::secure_data_dir(data_dir)?;
         if let Some(parent) = master_key_path.parent() {
             platform::create_private_dir(parent)?;
         }
