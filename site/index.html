@@ -157,6 +157,10 @@ h2 { font-size: clamp(28px, 3.6vw, 40px); letter-spacing: -0.02em; line-height: 
 .gallery figure .shot { margin: 0; }
 .gallery figcaption { margin-top: 12px; color: var(--muted); font-size: 15px; }
 .gallery figcaption strong { color: var(--text); }
+.gallery figure.wide { grid-column: 1 / -1; }
+.split { position: relative; }
+.split img { display: block; }
+.split img + img { position: absolute; inset: 0; clip-path: polygon(58% 0, 100% 0, 100% 100%, 42% 100%); }
 
 /* Security */
 .two { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: start; }
@@ -238,7 +242,7 @@ footer a { color: var(--muted); }
       <div class="chrome"><i></i><i></i><i></i></div>
       <picture>
         <source srcset="img/dashboard-dark.png" media="(prefers-color-scheme: dark)">
-        <img src="img/dashboard.png" alt="The WatermelonPGP dashboard: running jobs, files processed and failed in the last 24 hours, keys, and recent activity" width="1600" height="1012">
+        <img src="img/dashboard.png" alt="The WatermelonPGP dashboard: running and paused jobs, files processed and failed in the last 24 hours, keys that need attention, and recent activity" width="1600" height="1011">
       </picture>
     </div>
   </div>
@@ -336,7 +340,8 @@ footer a { color: var(--muted); }
         <p>A clear dashboard for daily work, a full command line for scripting.</p>
         <ul>
           <li>Dashboard with running and paused jobs, failures and expiring keys</li>
-          <li>Works without JavaScript; light and dark mode</li>
+          <li>Light and dark mode, following your system or your choice</li>
+          <li>Works without JavaScript</li>
           <li>Everything also available on the command line (<code>watermelon</code>)</li>
         </ul>
       </div>
@@ -362,20 +367,24 @@ footer a { color: var(--muted); }
     <p class="section-lead">No more guessing whether last night's export went out.</p>
     <div class="gallery">
       <figure>
-        <div class="shot"><div class="chrome"><i></i><i></i><i></i></div><img src="img/jobs.png" alt="List of jobs per customer with their state and folders" loading="lazy" width="1600" height="1012"></div>
+        <div class="shot"><div class="chrome"><i></i><i></i><i></i></div><picture><source srcset="img/jobs-dark.png" media="(prefers-color-scheme: dark)"><img src="img/jobs.png" alt="List of jobs per customer with their state and folders" loading="lazy" width="1600" height="1011"></picture></div>
         <figcaption><strong>Jobs.</strong> Every customer's jobs, their folders and when they last ran.</figcaption>
       </figure>
       <figure>
-        <div class="shot"><div class="chrome"><i></i><i></i><i></i></div><img src="img/job.png" alt="A job's page: live status, failed files, settings and keys" loading="lazy" width="1600" height="1012"></div>
+        <div class="shot"><div class="chrome"><i></i><i></i><i></i></div><picture><source srcset="img/job-dark.png" media="(prefers-color-scheme: dark)"><img src="img/job.png" alt="A job's page: live status, failed files, settings and keys" loading="lazy" width="1600" height="1011"></picture></div>
         <figcaption><strong>Job details.</strong> Live status, failed files with a retry button, all settings.</figcaption>
       </figure>
       <figure>
-        <div class="shot"><div class="chrome"><i></i><i></i><i></i></div><img src="img/audit-search.png" alt="The audit log filtered by a text search" loading="lazy" width="1600" height="1012"></div>
+        <div class="shot"><div class="chrome"><i></i><i></i><i></i></div><picture><source srcset="img/audit-search-dark.png" media="(prefers-color-scheme: dark)"><img src="img/audit-search.png" alt="The audit log filtered by a text search" loading="lazy" width="1600" height="1011"></picture></div>
         <figcaption><strong>Audit log.</strong> Search and filter everything that happened, then export it.</figcaption>
       </figure>
       <figure>
-        <div class="shot"><div class="chrome"><i></i><i></i><i></i></div><img src="img/keys.png" alt="All keys with their customer, algorithm, capabilities and expiry" loading="lazy" width="1600" height="1012"></div>
+        <div class="shot"><div class="chrome"><i></i><i></i><i></i></div><picture><source srcset="img/keys-dark.png" media="(prefers-color-scheme: dark)"><img src="img/keys.png" alt="All keys with their customer, algorithm, capabilities and expiry" loading="lazy" width="1600" height="1011"></picture></div>
         <figcaption><strong>Keys.</strong> Whose key it is, what it can do and when it expires.</figcaption>
+      </figure>
+      <figure class="wide">
+        <div class="shot"><div class="chrome"><i></i><i></i><i></i></div><div class="split"><img src="img/job.png" alt="A job's page, half in the light theme and half in the dark theme" loading="lazy" width="1600" height="1011"><img src="img/job-dark.png" alt="" loading="lazy" width="1600" height="1011"></div></div>
+        <figcaption><strong>Light and dark mode.</strong> The web UI follows your system's setting, or pick light or dark in the sidebar; each browser remembers its choice. Screenshots on this page follow your setting too.</figcaption>
       </figure>
     </div>
   </div>
