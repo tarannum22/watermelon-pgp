@@ -10,9 +10,9 @@ from and write to.
 
 **Website: [tarannum22.github.io/watermelon-pgp](https://tarannum22.github.io/watermelon-pgp/)**
 
-> **Status: 0.2.0.** Everything planned for v1 works and is tested, including against GnuPG
-> 2.2–2.5; expect rough edges. 0.2.0 adds anonymous keys and a new web UI with light and dark
-> themes; upgrading from 0.1.0 upgrades the database and keeps a copy of the old one. See
+> **Status: 0.3.0.** Everything planned for v1 works and is tested, including against GnuPG
+> 2.2–2.5; expect rough edges. 0.3.0 adds Windows Server support: a Windows build that runs as
+> a native service, with its secrets protected by access lists. See
 > [DESIGN.md](DESIGN.md) for the decisions behind it and [CHANGELOG.md](CHANGELOG.md) for what's
 > in each release.
 
@@ -38,14 +38,16 @@ from and write to.
 - **Secure by default.** Secret keys encrypted at rest under a master key kept outside the
   database; loopback-only until you configure HTTPS; hardened sessions, CSRF protection, login
   rate limiting, strict CSP.
-- **Easy to run.** One process (`watermelon serve`), SQLite, a systemd unit and a Docker image.
+- **Easy to run.** One process (`watermelon serve`), SQLite, a systemd unit, a Docker image, and
+  a Windows service (`watermelon service install`).
 
 ## Install
 
 - **Homebrew** (macOS and Linux): `brew install tarannum22/tap/watermelon-pgp`, then
   `brew services start watermelon-pgp` to run it in the background (run `init` first, as the
   install message explains).
-- **Release binaries** for Linux (x86_64, arm64) and macOS (Apple silicon, Intel):
+- **Release binaries** for Linux (x86_64, arm64), macOS (Apple silicon, Intel) and Windows
+  Server (x86_64, a zip):
   [GitHub releases](https://github.com/tarannum22/watermelon-pgp/releases), with `SHA256SUMS`.
 - **Docker:** `docker pull ghcr.io/tarannum22/watermelon-pgp`, or `docker build -t watermelon-pgp .`
 - **From source:** Rust 1.89 or later, then `cargo build --release`; the binary is
@@ -118,6 +120,9 @@ For scripted setups, `--passphrase-stdin` reads passwords from stdin instead of 
 
 ## Known issues
 
+- **Windows:** x86_64 only, an unsigned exe, the service runs as its virtual account only, and
+  only Windows Server 2025 is tested. See
+  [Known limits](docs/deployment.md#known-limits) in the Windows deployment guide.
 - **Two dependency advisories without a fix yet**, both timing side channels inside rPGP's
   dependencies: [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071) (`rsa`,
   "Marvin attack", RSA keys) and [RUSTSEC-2026-0387](https://rustsec.org/advisories/RUSTSEC-2026-0387)
