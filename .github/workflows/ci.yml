@@ -80,14 +80,20 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install gnupg
       # Put Gpg4win's gpg ahead of the one bundled with Git for Windows. Gpg4win 4 installs
-      # to Program Files (x86), 5 to Program Files.
+      # to Program Files (x86), 5 to Program Files. The Chocolatey feed sometimes times out
+      # (504) and choco then exits 0 having installed nothing, so look for gpg.exe and retry.
       - name: Install GnuPG (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install gpg4win --yes --no-progress
-          $bin = @("$env:ProgramFiles\GnuPG\bin", "${env:ProgramFiles(x86)}\GnuPG\bin") |
-            Where-Object { Test-Path "$_\gpg.exe" } | Select-Object -First 1
+          $dirs = @("$env:ProgramFiles\GnuPG\bin", "${env:ProgramFiles(x86)}\GnuPG\bin")
+          foreach ($attempt in 1..4) {
+            choco install gpg4win --yes --no-progress
+            $bin = $dirs | Where-Object { Test-Path "$_\gpg.exe" } | Select-Object -First 1
+            if ($bin) { break }
+            Write-Warning "gpg.exe not found after attempt $attempt; retrying"
+            Start-Sleep -Seconds (15 * $attempt)
+          }
           if (-not $bin) { throw "gpg.exe not found after installing Gpg4win" }
           Add-Content $env:GITHUB_PATH $bin
       - run: gpg --version
