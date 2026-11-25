@@ -266,21 +266,21 @@ fn form_page(
                     div.form {
                         div.form-row {
                             (ui::form_field("Input folder (watched)", html! {
-                                input type="text" name="input" value=(form.input) required placeholder="/srv/sftp/acme/outbound"
+                                input type="text" name="input" value=(form.input) required placeholder=(jobs::FOLDER_EXAMPLES.input)
                                     aria-invalid=[invalid("input")] aria-describedby=[described("input")];
                             }).error("input", problem("input")))
                             (ui::form_field("Output folder", html! {
-                                input type="text" name="output" value=(form.output) required placeholder="/srv/sftp/acme/upload"
+                                input type="text" name="output" value=(form.output) required placeholder=(jobs::FOLDER_EXAMPLES.output)
                                     aria-invalid=[invalid("output")] aria-describedby=[described("output")];
                             }).error("output", problem("output")))
                         }
                         div.form-row {
                             (ui::form_field("Processed files go to", html! {
-                                input type="text" name="processed" value=(form.processed) placeholder="<input>/processed"
+                                input type="text" name="processed" value=(form.processed) placeholder=(jobs::FOLDER_EXAMPLES.processed)
                                     aria-invalid=[invalid("processed")] aria-describedby=[described("processed")];
                             }).optional().error("processed", problem("processed")))
                             (ui::form_field("Failed files go to", html! {
-                                input type="text" name="failed" value=(form.failed) placeholder="<input>/failed"
+                                input type="text" name="failed" value=(form.failed) placeholder=(jobs::FOLDER_EXAMPLES.failed)
                                     aria-invalid=[invalid("failed")] aria-describedby=[described("failed")];
                             }).optional().error("failed", problem("failed")))
                         }

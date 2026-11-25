@@ -46,7 +46,7 @@ pub fn list(job: &Job) -> io::Result<Vec<FailedFile>> {
 
 /// Move a failed file back into the input folder, where the next pass picks it up again.
 pub fn retry(vault: &Vault, actor: Actor, job: &Job, name: &str) -> Result<PathBuf, String> {
-    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\']) {
+    if !is_plain_name(name) {
         return Err(format!("invalid file name {name:?}"));
     }
     let source = job.spec.failed_dir.join(name);
@@ -68,6 +68,40 @@ pub fn retry(vault: &Vault, actor: Actor, job: &Job, name: &str) -> Result<PathB
     Ok(target)
 }
 
+/// A bare file name that stays inside the folder it's joined to.
+fn is_plain_name(name: &str) -> bool {
+    !(name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains(crate::platform::NOT_IN_A_FILE_NAME))
+}
+
 fn exists(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_plain_names_can_be_retried() {
+        for name in ["", ".", "..", "../x", "a/b", "a\\b"] {
+            assert!(!is_plain_name(name), "{name:?}");
+        }
+        assert!(is_plain_name("report.csv.pgp"));
+        // Drive-relative and alternate-data-stream names would leave the failed folder.
+        assert_eq!(is_plain_name("C:secret.txt"), !cfg!(windows));
+        assert_eq!(is_plain_name("report.csv:stream"), !cfg!(windows));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn drive_relative_names_replace_the_folder_in_join() {
+        // Why `:` is refused: joining keeps nothing of the failed folder.
+        assert_eq!(
+            Path::new(r"D:\sftp\failed").join("C:secret.txt"),
+            Path::new("C:secret.txt")
+        );
+    }
 }

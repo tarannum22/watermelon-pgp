@@ -104,6 +104,52 @@ pub fn how_to_restrict(path: &Path) -> String {
     }
 }
 
+/// Whether two folder paths name the same folder as written. Windows paths are
+/// case-insensitive, and `/` and `\` are the same separator there. Doesn't resolve links,
+/// short names, or a drive path and a UNC path to the same place.
+pub fn same_folder(a: &Path, b: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let folded = |path: &Path| -> Vec<String> {
+            path.components()
+                .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+                .collect()
+        };
+        folded(a) == folded(b)
+    }
+    #[cfg(not(windows))]
+    {
+        a == b
+    }
+}
+
+/// Example job folders in this platform's path style, for the job form and error messages.
+pub struct FolderExamples {
+    pub input: &'static str,
+    pub output: &'static str,
+    pub processed: &'static str,
+    pub failed: &'static str,
+    /// Appended to "must be an absolute path".
+    pub absolute_path_hint: &'static str,
+}
+
+#[cfg(windows)]
+pub const FOLDER_EXAMPLES: FolderExamples = FolderExamples {
+    input: r"D:\sftp\acme\outbound",
+    output: r"D:\sftp\acme\upload",
+    processed: r"<input>\processed",
+    failed: r"<input>\failed",
+    absolute_path_hint: r" (like D:\sftp\acme\in or \\server\share\acme\in)",
+};
+#[cfg(not(windows))]
+pub const FOLDER_EXAMPLES: FolderExamples = FolderExamples {
+    input: "/srv/sftp/acme/outbound",
+    output: "/srv/sftp/acme/upload",
+    processed: "<input>/processed",
+    failed: "<input>/failed",
+    absolute_path_hint: "",
+};
+
 #[cfg(test)]
 pub(crate) mod testing {
     /// Give someone other than the current user read access to `path`, the way a default

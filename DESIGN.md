@@ -104,13 +104,19 @@ config export/import, Windows as a first-class platform.
   `ignore` / `warn` / `require`. Strips a trailing `.pgp` / `.gpg` / `.asc`, otherwise keeps the name.
 - **Detection:** polling, per-job interval (default 30 s, minimum 5 s). A file is only picked up
   when it is stable — size and mtime unchanged across two scans — and does not match ignore
-  patterns (`*.part`, `*.filepart`, `*.tmp`, `*.crdownload`, `*.partial`, dotfiles). Only regular
-  files directly in the input folder are considered; subfolders and symlinks are skipped.
+  patterns (`*.part`, `*.filepart`, `*.tmp`, `*.crdownload`, `*.partial`, dotfiles; on Windows
+  also files with the hidden or system attribute). Only regular files directly in the input
+  folder are considered; subfolders and symlinks are skipped. On Windows a file another process
+  still has open for writing (an SFTP upload that stalled) is skipped when processing would
+  start, without an audit entry, and tried again later; while a file is processed, others can
+  read it but not change or delete it.
 - **Processing:** streamed (bounded memory, multi-GB files). Output is written to a hidden temp file
   inside the output folder, fsynced, verified, then atomically renamed into place. SEIPD v1 input
   uses rPGP's streaming read mode; unauthenticated plaintext only ever lands in the temp file, which
   is deleted if the integrity check or signature verification fails.
 - **After success:** source moves to the job's `processed/` folder (default) or is deleted.
+  Moves never replace an existing file (a numbered name is used instead) and work across
+  filesystems; on Windows the no-replace move is a single atomic call.
 - **After failure:** source moves to the job's `failed/` folder; the error is in the audit log and on
   the job page. No automatic retries; retry is a button or moving the file back.
 - **Crash recovery:** a crash mid-file leaves at most a hidden `.<name>.<pid>-<n>.watermelon-tmp`

@@ -19,6 +19,16 @@ All notable changes to this project are documented here. The format follows
   files created in it (SQLite's `-wal` and `-shm`) are private. A master keyfile other users
   can access is refused, as on Unix, with the `icacls` commands that fix it; LocalSystem and
   Administrators don't count, like root.
+- Jobs leave a file alone while another process still has it open for writing, such as an
+  SFTP upload that stalled, and pick it up once it's released, without logging it as failed.
+  While a file is processed, others can read it but not change or delete it.
+- Moving sources to `processed/` or `failed/` and publishing outputs never replace an
+  existing file, also on filesystems without hard links, and work across drives.
+- Files marked hidden or system (`Thumbs.db`, `desktop.ini`) are ignored like dotfiles.
+- Job folders: drive-letter and UNC paths; folders that differ only in case count as the
+  same folder; the job form shows Windows examples.
+- Retrying a failed file refuses names with `:`, which on Windows could point outside the
+  failed folder (`C:name`) or at an alternate data stream.
 
 ## [0.2.0] - 2026-11-25
 

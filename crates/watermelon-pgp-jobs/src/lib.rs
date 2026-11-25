@@ -2,6 +2,7 @@
 
 pub mod engine;
 pub mod failed;
+mod platform;
 pub mod process;
 pub mod scan;
 

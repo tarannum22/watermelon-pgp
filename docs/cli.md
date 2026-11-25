@@ -193,7 +193,9 @@ A job watches an **input** folder. Every file that lands there is encrypted or d
 **output** folder; the original then moves to the **processed** folder (or is deleted), or to the
 **failed** folder if it couldn't be processed. A file is only picked up once it has stopped
 changing, and names ending in `.part`, `.filepart`, `.tmp`, `.crdownload` or `.partial`, as well as
-hidden files, are ignored, so half-uploaded files are left alone.
+hidden files (a leading dot; on Windows also the hidden or system attribute), are ignored, so
+half-uploaded files are left alone. On Windows a file that another program still has open for
+writing waits until it's closed.
 
 ### `job add encrypt` / `job add decrypt`
 
@@ -210,7 +212,9 @@ Options for both kinds:
 | `--failed <folder>` | `<input>/failed` | Where files go that couldn't be processed. Created if missing. |
 | `--interval <seconds>` | `30` | How often the input folder is checked (at least 5). A file is processed once it is unchanged across two checks, so expect up to two intervals of delay. |
 
-Relative folder paths are turned into absolute ones. All four folders must be different.
+Relative folder paths are turned into absolute ones. All four folders must be different (on
+Windows regardless of case). On Windows, folders can be drive paths (`D:\sftp\acme\in`) or UNC
+paths (`\\server\share\acme\in`).
 
 **Encrypt jobs** encrypt each file so the recipients can read it, and add `.pgp` to its name.
 
