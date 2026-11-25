@@ -4,7 +4,7 @@ The version lives in more places than `Cargo.toml`, and some steps happen only a
 exists. Copy this list into the release PR (or an issue) and tick it off. `X.Y.Z` is the new
 version; `A.B.C` the previous one.
 
-A release takes three PRs and one tag:
+A release takes two PRs (three if the UI changed) and one tag:
 
 ```
 release-X.Y.Z    "Release X.Y.Z"          version, CHANGELOG, README
@@ -20,8 +20,9 @@ website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands (after the rel
 - [ ] `Cargo.lock`: `cargo update --workspace`, then check that only the workspace crates
       changed (`git diff Cargo.lock`). The release builds with `--locked`, so a stale lock
       file fails it.
-- [ ] `CHANGELOG.md`: `## [Unreleased]` → `## [X.Y.Z] - YYYY-MM-DD`. `release.yml` uses this
-      section as the release notes and fails if it can't find `## [X.Y.Z]`.
+- [ ] `CHANGELOG.md`: a `## [X.Y.Z] - YYYY-MM-DD` section above the previous release (rename
+      `## [Unreleased]` if there is one). `release.yml` uses this section as the release notes
+      and fails if it can't find `## [X.Y.Z]`.
 - [ ] A database schema change is called out in the CHANGELOG (what happens on upgrade, how to
       go back) and in the PR's **Merge Danger** as a one-way door.
 - [ ] `README.md`: the status line (`> **Status: X.Y.Z.** …`), and Features, Install and Known
@@ -30,15 +31,27 @@ website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands (after the rel
       upgrade steps.
 - [ ] Nothing else still names the old version:
       `git grep -nF A.B.C -- ':!CHANGELOG.md' ':!Cargo.lock'` (the website is updated later).
+- [ ] The release dry run passes on the release branch. It builds and packages every target,
+      writes the release notes and the Homebrew formula, and builds the image, but publishes
+      nothing:
+
+  ```sh
+  gh workflow run release.yml --ref release-X.Y.Z
+  gh run watch "$(gh run list --workflow release.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId')"
+  ```
 
 ## 2. Tag
 
-- [ ] The merge commit's CI run is green:
-      `gh run list --workflow ci.yml --branch main --limit 1`.
-- [ ] Tag it (annotated, like the earlier tags) and push the tag:
+- [ ] The merge commit's CI run is green (its `ci-ok` job passed):
 
   ```sh
   git switch main && git pull --ff-only
+  gh run list --workflow ci.yml --commit "$(git rev-parse HEAD)"
+  ```
+
+- [ ] Tag it (annotated, like the earlier tags) and push the tag:
+
+  ```sh
   git tag -a vX.Y.Z -m "WatermelonPGP X.Y.Z"
   git push origin vX.Y.Z
   ```
@@ -47,7 +60,8 @@ website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands (after the rel
 
 ## 3. Check what `release.yml` published
 
-- [ ] The run succeeded: `gh run list --workflow release.yml --limit 1`, `gh run watch <id>`.
+- [ ] The run succeeded: `gh run list --workflow release.yml --event push --limit 1`,
+      `gh run watch <id>`. (CI also runs on the tag.)
 - [ ] `gh release view vX.Y.Z`: four tarballs, `watermelon-pgp-vX.Y.Z-<target>.tar.gz` for
       `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin` and
       `x86_64-apple-darwin`, plus `SHA256SUMS`; the notes are the CHANGELOG section.
@@ -77,14 +91,15 @@ the tap is updated by hand:
 - [ ] Generate the formula from the release's checksums and push it to the tap:
 
   ```sh
+  test -d ../homebrew-tap || git clone https://github.com/tarannum22/homebrew-tap ../homebrew-tap
   gh release download vX.Y.Z --pattern SHA256SUMS --dir /tmp/wm-X.Y.Z
   packaging/homebrew/formula.sh X.Y.Z /tmp/wm-X.Y.Z/SHA256SUMS \
       > ../homebrew-tap/Formula/watermelon-pgp.rb
   cd ../homebrew-tap && git commit -am "watermelon-pgp X.Y.Z" && git push
   ```
 
-- [ ] It installs: `brew update && brew upgrade watermelon-pgp && watermelon --version`
-      (`brew test watermelon-pgp`, `brew audit --strict watermelon-pgp` for formula changes).
+- [ ] It installs: `brew update && brew upgrade tarannum22/tap/watermelon-pgp && watermelon --version`
+      (`brew test` and `brew audit --strict tarannum22/tap/watermelon-pgp` for formula changes).
 
 ## 5. Website
 

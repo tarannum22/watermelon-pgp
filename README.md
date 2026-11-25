@@ -31,6 +31,7 @@ from and write to.
 - **Web UI.** Dashboard, customers, keys, jobs and a filterable audit log, in one binary with no
   external assets. Light and dark themes, following your system or your choice. Every page
   works without JavaScript. Needs a browser from 2024 or later; older ones get the light theme.
+  Confirmation dialogs without JavaScript need one from 2025.
 - **Audit log.** Every change, login, export and processed file (with its SHA-256), append-only.
   Filter by time, who did it, action, customer or job, search names, keys and details, and export
   the result as CSV.
