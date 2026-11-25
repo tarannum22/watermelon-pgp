@@ -129,7 +129,10 @@ Start-Service watermelon
   and to write a `--log-file` outside the data directory (creating it), keeping their other
   entries. It says which files it changed. Give the account access to the job folders yourself.
 - The log goes to `<data-dir>\watermelon.log` unless `--log-file` says otherwise. If the service
-  can't open its log file, it writes why to `<data-dir>\watermelon.log` and doesn't start.
+  can't open its log file, it doesn't start; when that file is a `--log-file` other than the
+  default, it writes why to `<data-dir>\watermelon.log` if it can. Otherwise only Windows
+  records the failure: the exit code in `sc.exe query <name>` and the Service Control Manager
+  entries in the System event log.
 - `Stop-Service watermelon` lets running jobs finish their current file before the service
   stops. While jobs make progress, the service keeps telling Windows it is stopping; after
   90 seconds without progress it stops doing so, and Windows can treat it as hung. At Windows
