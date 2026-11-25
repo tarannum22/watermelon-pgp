@@ -5,6 +5,8 @@ mod jobs;
 mod keys;
 mod session;
 mod settings;
+#[cfg(debug_assertions)]
+mod styleguide;
 
 use std::collections::HashMap;
 
@@ -19,14 +21,14 @@ use serde::Deserialize;
 use watermelon_pgp_core::{jobs::Job, store::Customer};
 
 use crate::{
-    AppState,
+    AppState, assets,
     auth::{Authed, Flash},
     error::AppError,
     views::{AuditNames, Nav, Page},
 };
 
 pub fn router() -> Router<AppState> {
-    Router::new()
+    let router = Router::new()
         .route("/", get(dashboard::show))
         .route("/dashboard/live", get(dashboard::live))
         .route("/login", get(session::login_form).post(session::login))
@@ -35,9 +37,17 @@ pub fn router() -> Router<AppState> {
         .route("/static/{file}", get(static_file))
         .route("/customers", get(customers::list).post(customers::create))
         .route("/customers/{id}", get(customers::show))
-        .route("/customers/{id}/keys/generate", post(keys::generate))
-        .route("/customers/{id}/keys/import", post(keys::import))
+        .route(
+            "/customers/{id}/keys/generate",
+            post(keys::generate_for_customer),
+        )
+        .route(
+            "/customers/{id}/keys/import",
+            post(keys::import_for_customer),
+        )
         .route("/keys", get(keys::list))
+        .route("/keys/generate", post(keys::generate))
+        .route("/keys/import", post(keys::import))
         .route("/keys/{fpr}", get(keys::show))
         .route("/keys/{fpr}/public", post(keys::export_public))
         .route("/keys/{fpr}/secret", post(keys::export_secret))
@@ -56,7 +66,10 @@ pub fn router() -> Router<AppState> {
         .route("/audit.csv", get(audit::export))
         .route("/settings", get(settings::show))
         .route("/settings/password", post(settings::change_password))
-        .fallback(|| async { AppError::not_found("no such page") })
+        .route("/theme", post(settings::set_theme));
+    #[cfg(debug_assertions)]
+    let router = router.route("/styleguide", get(styleguide::show));
+    router.fallback(|| async { AppError::not_found("no such page") })
 }
 
 impl AppState {
@@ -65,6 +78,7 @@ impl AppState {
             title,
             nav,
             csrf: &auth.csrf,
+            theme: auth.theme,
             flash: self.sessions().take_flash(auth.key),
         }
     }
@@ -84,7 +98,7 @@ impl AppState {
 #[derive(Deserialize)]
 pub struct Empty {}
 
-/// A form guarded by [`crate::views::confirm_box`].
+/// A form guarded by [`crate::ui::confirm`].
 #[derive(Deserialize)]
 pub struct Confirmed {
     #[serde(default)]
@@ -143,28 +157,19 @@ async fn health(state: axum::extract::State<AppState>) -> Response {
     }
 }
 
-/// Assets are embedded in the binary. URLs carry the version, so they can be cached forever.
+/// Static files. URLs carry a hash of the content (see `assets`), so they can be cached forever.
 async fn static_file(Path(file): Path<String>) -> Response {
-    let (content_type, body): (&str, &'static [u8]) = match file.as_str() {
-        "htmx.min.js" => (
-            "text/javascript; charset=utf-8",
-            include_bytes!("../../assets/htmx.min.js"),
-        ),
-        "app.css" => (
-            "text/css; charset=utf-8",
-            include_bytes!("../../assets/app.css"),
-        ),
-        "logo.svg" => ("image/svg+xml", include_bytes!("../../assets/logo.svg")),
-        _ => return AppError::not_found("no such file").into_response(),
-    };
-    (
-        [
-            (header::CONTENT_TYPE, content_type),
-            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
-        ],
-        body,
-    )
-        .into_response()
+    match assets::get(&file) {
+        Some((content_type, body)) => (
+            [
+                (header::CONTENT_TYPE, content_type),
+                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+            ],
+            body,
+        )
+            .into_response(),
+        None => AppError::not_found("no such file").into_response(),
+    }
 }
 
 /// `?customer=` style query values: blank means "not set".

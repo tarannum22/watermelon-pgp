@@ -1,0 +1,121 @@
+/* Design tokens: the only place colours, type, spacing and shapes are defined.
+ *
+ * Components use these variables, never raw values, so the look can be reworked here.
+ * Colours are roles, not hues ("danger", not "red"). Each holds its light and dark value
+ * via light-dark(): the theme is the OS setting, or the user's choice in data-theme on <html>.
+ */
+
+/* Fonts are vendored (SIL OFL, see assets/fonts); the file name carries the version because
+ * they are cached forever. */
+@font-face {
+  font-family: "Geist";
+  src: url("geist-1.9.0.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("jetbrains-mono-5.3.0.woff2") format("woff2");
+  font-weight: 100 800;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light dark;
+
+  /* Surfaces, from the page background up to raised elements. */
+  --color-bg: light-dark(#f5f7fa, #0d1218);
+  --color-surface: light-dark(#ffffff, #141b23);
+  --color-surface-sunken: light-dark(#eef2f7, #19212b);
+  --color-surface-muted: light-dark(#e6ecf4, #202a35);
+  --color-surface-strong: light-dark(#dbe3ee, #2a3542);
+  --color-overlay: light-dark(rgb(255 255 255 / 0.85), rgb(13 18 24 / 0.85));
+  --color-backdrop: light-dark(rgb(13 18 24 / 0.45), rgb(0 0 0 / 0.6)); /* behind dialogs */
+
+  /* Text. */
+  --color-text: light-dark(#101c29, #e6edf5);
+  --color-text-muted: light-dark(#4b5868, #a3b0bf);
+  --color-text-subtle: light-dark(#6b7787, #7d8a99);
+
+  /* Lines. */
+  --color-border: light-dark(#d9e0ea, #27313d);
+  --color-border-strong: light-dark(#aab5c3, #3d4958);
+
+  /* Brand and actions: watermelon green. */
+  --color-primary: light-dark(#006030, #4cc47d);
+  --color-primary-hover: light-dark(#1b7a43, #80d998);
+  --color-on-primary: light-dark(#ffffff, #00210d);
+  --color-primary-soft: light-dark(#dff4e6, #12301f);
+  --color-primary-soft-text: light-dark(#005228, #9bf6b2);
+  --color-focus: light-dark(#1b7a43, #80d998);
+
+  /* Status. "good" is the brand green; "bad" the watermelon red. */
+  --color-good: var(--color-primary);
+  --color-good-soft: var(--color-primary-soft);
+  --color-good-text: var(--color-primary-soft-text);
+  --color-warn: light-dark(#8a5a00, #fabb61);
+  --color-warn-soft: light-dark(#fff1d9, #33260f);
+  --color-warn-text: light-dark(#633f00, #ffddb4);
+  --color-bad: light-dark(#ba0526, #ff8a8f);
+  --color-on-bad: light-dark(#ffffff, #410006);
+  --color-bad-soft: light-dark(#ffe4e3, #3a1519);
+  --color-bad-text: light-dark(#93001b, #ffdad8);
+  --color-info: light-dark(#2f5f9e, #9cc3ff);
+  --color-info-soft: light-dark(#e3edfb, #172638);
+
+  /* Dark panels for commands and armored keys, the same in both themes. */
+  --color-code-bg: light-dark(#eef2f7, #19212b);
+  --color-terminal-bg: #1b2532;
+  --color-terminal-text: #e9f1ff;
+  --color-terminal-comment: #8b9bb0;
+
+  /* Type. */
+  --font-sans: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --text-xs: 11px;   /* labels, badges (mono, uppercase) */
+  --text-sm: 13px;   /* secondary text, tables */
+  --text-md: 14px;   /* body */
+  --text-lg: 16px;   /* card titles */
+  --text-xl: 20px;   /* section titles */
+  --text-2xl: 28px;  /* page titles */
+  --text-stat: 30px; /* numbers on stat cards */
+  --text-mono: 12.5px;    /* monospace within text: times, fingerprints, code */
+  --text-mono-lg: 15px;   /* the fingerprint on a key's page */
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --tracking-tight: -0.015em;
+  --tracking-label: 0.06em;
+
+  /* Spacing, on a 4px grid. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  /* Shapes. */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-pill: 999px;
+  --shadow-sm: 0 1px 2px light-dark(rgb(16 28 41 / 0.06), rgb(0 0 0 / 0.4));
+  --shadow-md: 0 1px 2px light-dark(rgb(16 28 41 / 0.06), rgb(0 0 0 / 0.4)),
+    0 6px 18px light-dark(rgb(16 28 41 / 0.07), rgb(0 0 0 / 0.35));
+  --shadow-lg: 0 24px 60px light-dark(rgb(16 28 41 / 0.2), rgb(0 0 0 / 0.5)); /* dialogs, toasts */
+
+  /* Layout. */
+  --sidebar-width: 248px;
+  --topbar-height: 60px;
+  --content-max: 1180px;
+
+  --transition: 120ms ease;
+}
+
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }

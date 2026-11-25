@@ -160,4 +160,13 @@ matches the database and refuses to start otherwise.
 ## Upgrading
 
 Stop the service, replace the binary (or pull the new image), start it again. Database schema
-migrations run automatically at startup. Take a backup first.
+migrations run automatically at startup.
+
+Before migrating, watermelon copies the database as it was to
+`<data dir>/watermelon.db.schema-v<N>.bak`, where N is the old schema version. Older releases
+can't open a migrated database, so to go back: stop the service, put the old binary back, and
+restore that copy as described above. Delete the copy once you're happy with the new version;
+like the database, it contains your keys (sealed under the master key).
+
+`watermelon backup` run with the *new* binary migrates the database before it copies it, so
+for a backup the old release can read, run it with the old binary, before replacing it.

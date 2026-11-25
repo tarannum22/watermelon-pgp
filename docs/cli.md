@@ -94,7 +94,8 @@ Users already logged in to the web UI stay logged in until they log out or their
 
 ## Customers
 
-Every key and job belongs to a customer.
+Every job belongs to a customer. Keys usually do too, but a key can also be **anonymous**:
+it belongs to no customer (for example your own signing key that several customers' jobs use).
 
 ### `customer add <name>`
 
@@ -112,22 +113,25 @@ All customers with their number of keys.
 
 ### `key gen`
 
-Generate a new key pair for one of your customers.
+Generate a new key pair, for one of your customers or as an anonymous key.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--customer <name>` | required | The customer the key belongs to. |
+| `--customer <name>` | none: anonymous | The customer the key belongs to. Leave it out for an anonymous key. |
 | `--uid <user ID>` | required | Name and e-mail shown to partners, e.g. `"ACME Exports <exports@acme.example>"`. |
 | `--algorithm <curve25519\|rsa4096>` | `curve25519` | `curve25519` (Ed25519 for signing, Cv25519 for encryption) is recommended. `rsa4096` for partners whose software can't handle it; it takes a few seconds to generate. Both work with GnuPG 2.2 and later. |
 
 ```sh
 watermelon key gen --customer ACME --uid "ACME Exports <exports@acme.example>"
+watermelon key gen --uid "Our signing key <pgp@example.com>"   # anonymous
 ```
 
-### `key import --customer <name> <file>`
+### `key import [--customer <name>] <file>`
 
 Import keys from a file, armored (`-----BEGIN PGP ...`) or binary. A file may contain several
-keys; either all are imported or none.
+keys; either all are imported or none. Without `--customer` they are anonymous keys. A key has
+one owner: a key already imported for a customer can't be imported again as anonymous, or for
+another customer.
 
 - **Public keys** (a partner's key you encrypt to, or whose signatures you check) are stored as is.
 - **Secret keys** protected with a passphrase prompt for it once. They are then re-encrypted under

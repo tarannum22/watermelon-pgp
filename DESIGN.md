@@ -39,7 +39,8 @@ config export/import, Windows as a first-class platform.
 
 ## Domain
 
-- **Customer** — first-class grouping. Keys and jobs belong to a customer. A customer that still
+- **Customer** — first-class grouping. Jobs belong to a customer, and so do keys unless they are
+  *anonymous* (belong to no customer, e.g. our own signing key shared by jobs). A customer that still
   owns keys or jobs cannot be deleted.
 - **Key** — an OpenPGP certificate, public-only or with secret material.
 - **Job** — watches an input folder and processes files into an output folder.

@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
 };
-use maud::{Markup, html};
+use maud::{Markup, Render, html};
 use serde::Deserialize;
 use watermelon_pgp_core::{
     audit::{Actor, Filter},
@@ -20,6 +20,7 @@ use crate::{
     AppState,
     auth::{Authed, Posted, Watching},
     error::AppError,
+    ui::{self, Icon, Tone},
     views::{self, Nav, Page},
 };
 
@@ -91,7 +92,8 @@ impl JobForm {
     }
 
     fn customer_id(&self) -> Result<i64, AppError> {
-        parse_id(&self.customer).ok_or_else(|| AppError::bad_request("choose a customer"))
+        parse_id(&self.customer)
+            .ok_or_else(|| AppError::invalid_field("customer", "choose a customer"))
     }
 
     /// Turn the form into a spec. The vault does the real validation (folders, keys).
@@ -99,14 +101,15 @@ impl JobForm {
         let kind = match self.kind.as_str() {
             "encrypt" => JobKind::Encrypt,
             "decrypt" => JobKind::Decrypt,
-            _ => return Err(AppError::bad_request("choose encrypt or decrypt")),
+            _ => return Err(AppError::invalid_field("kind", "choose encrypt or decrypt")),
         };
-        let folder = |value: &str, label: &str| {
+        let folder = |value: &str, label: &'static str| {
             let value = value.trim();
             if value.is_empty() {
-                Err(AppError::bad_request(format!(
-                    "the {label} folder is required"
-                )))
+                Err(AppError::invalid_field(
+                    label,
+                    format!("the {label} folder is required"),
+                ))
             } else {
                 Ok(PathBuf::from(value))
             }
@@ -123,7 +126,10 @@ impl JobForm {
         }
         if !self.interval.trim().is_empty() {
             spec.poll_interval_secs = self.interval.trim().parse().map_err(|_| {
-                AppError::bad_request("the polling interval must be a whole number of seconds")
+                AppError::invalid_field(
+                    "interval",
+                    "the polling interval must be a whole number of seconds",
+                )
             })?;
         }
         match kind {
@@ -192,101 +198,159 @@ fn form_page(
     form: &JobForm,
     data: &FormData,
     target: FormTarget<'_>,
-    error: Option<&str>,
+    error: Option<&AppError>,
 ) -> Markup {
     let csrf = page.csrf.to_owned();
-    let (heading, action) = match &target {
-        FormTarget::Create => ("New job".to_owned(), "/jobs".to_owned()),
+    let (heading, action, back) = match &target {
+        FormTarget::Create => ("New job".to_owned(), "/jobs".to_owned(), "/jobs".to_owned()),
         FormTarget::Update(job) => (
             format!("Edit job {}", job.spec.name),
+            format!("/jobs/{}", job.id),
             format!("/jobs/{}", job.id),
         ),
     };
     let usable = |key: &KeyRecord| jobs::usable(key).is_ok();
+    let min_interval = jobs::MIN_POLL_INTERVAL_SECS.to_string();
+    // The server's complaint about one field, shown next to it.
+    let blamed = error.and_then(|e| e.field().map(|field| (field, e.message())));
+    let problem = |name: &str| blamed.filter(|(field, _)| *field == name).map(|(_, m)| m);
+    let invalid = |name: &str| problem(name).map(|_| "true");
+    let described = |name: &str| problem(name).map(|_| ui::error_id(name));
     views::layout(
         page,
         html! {
-            p.crumbs { a href="/jobs" { "Jobs" } " /" }
-            h1 { (heading) }
+            (ui::page_header(&heading)
+                .crumb("Jobs", "/jobs")
+                .subtitle(html! { "A job watches an input folder and encrypts or decrypts every file that arrives into the output folder." }))
             @if let Some(error) = error {
-                p.flash.error role="alert" { (error) }
+                (ui::alert(Tone::Bad, Some("The job was not saved"), html! {
+                    @match blamed {
+                        Some((field, message)) => a href={ "#" (ui::error_id(field)) } { (message) },
+                        None => (error.message()),
+                    }
+                }))
             }
-            form.job method="post" action=(action) {
+            form.form.job-form method="post" action=(action) {
                 (views::csrf_field(&csrf))
-                fieldset {
-                    legend { "Job" }
-                    @match &target {
-                        FormTarget::Create => {
-                            label {
-                                "Customer"
-                                select name="customer" required {
-                                    option value="" { "Choose…" }
-                                    @for customer in &data.customers {
-                                        option value=(customer.id) selected[form.customer == customer.id.to_string()] { (customer.name) }
+                (ui::panel(html! {
+                    div.form {
+                        @match &target {
+                            FormTarget::Create => {
+                                (ui::form_field("Customer", html! {
+                                    select name="customer" required aria-invalid=[invalid("customer")] aria-describedby=[described("customer")] {
+                                        option value="" { "Choose…" }
+                                        @for customer in &data.customers {
+                                            option value=(customer.id) selected[form.customer == customer.id.to_string()] { (customer.name) }
+                                        }
+                                    }
+                                }).error("customer", problem("customer")))
+                            }
+                            FormTarget::Update(job) => {
+                                p { "Customer: " strong { (job.customer_name) } }
+                            }
+                        }
+                        (ui::form_field("Name", html! {
+                            input type="text" name="name" value=(form.name) required maxlength="200"
+                                aria-invalid=[invalid("name")] aria-describedby=[described("name")];
+                        }).hint(Some("Short and specific, like daily-orders.")).error("name", problem("name")))
+                        (ui::form_field("Kind of job", html! {
+                            div.choice-cards {
+                                (ui::choice_card("kind", "encrypt", form.kind != "decrypt", "Encrypt", "Files for partners: encrypt to their keys, optionally sign with ours."))
+                                (ui::choice_card("kind", "decrypt", form.kind == "decrypt", "Decrypt", "Files from partners: decrypt with our keys, optionally check their signature."))
+                            }
+                        }).group().error("kind", problem("kind")))
+                    }
+                }).title("Job").step(1))
+
+                (ui::panel(html! {
+                    div.form {
+                        div.form-row {
+                            (ui::form_field("Input folder (watched)", html! {
+                                input type="text" name="input" value=(form.input) required placeholder="/srv/sftp/acme/outbound"
+                                    aria-invalid=[invalid("input")] aria-describedby=[described("input")];
+                            }).error("input", problem("input")))
+                            (ui::form_field("Output folder", html! {
+                                input type="text" name="output" value=(form.output) required placeholder="/srv/sftp/acme/upload"
+                                    aria-invalid=[invalid("output")] aria-describedby=[described("output")];
+                            }).error("output", problem("output")))
+                        }
+                        div.form-row {
+                            (ui::form_field("Processed files go to", html! {
+                                input type="text" name="processed" value=(form.processed) placeholder="<input>/processed"
+                                    aria-invalid=[invalid("processed")] aria-describedby=[described("processed")];
+                            }).optional().error("processed", problem("processed")))
+                            (ui::form_field("Failed files go to", html! {
+                                input type="text" name="failed" value=(form.failed) placeholder="<input>/failed"
+                                    aria-invalid=[invalid("failed")] aria-describedby=[described("failed")];
+                            }).optional().error("failed", problem("failed")))
+                        }
+                        (ui::checkbox("delete_processed", form.delete_processed.is_some(), "Delete source files after processing instead of archiving them", None))
+                        div.form-row {
+                            (ui::form_field("Check every (seconds)", html! {
+                                input type="number" name="interval" value=(form.interval) min=(min_interval)
+                                    aria-invalid=[invalid("interval")] aria-describedby=[described("interval")];
+                            }).error("interval", problem("interval")))
+                        }
+                    }
+                })
+                .title("Folders")
+                .step(2)
+                .description(html! { "Absolute paths on this server. The input and output folders must exist." }))
+
+                div.encrypt-only {
+                    (ui::panel(html! {
+                        div.form {
+                            (ui::form_field("Recipients",
+                                key_choices("recipients", data.keys.iter().filter(|k| (k.can_encrypt && usable(k)) || form.recipients.contains(&k.fingerprint)), &form.recipients))
+                                .hint(Some("Every recipient can decrypt the output. Add one of your own keys to be able to read it yourself."))
+                                .group()
+                                .error("recipients", problem("recipients")))
+                            (ui::form_field("Sign with", html! {
+                                select name="signer" aria-invalid=[invalid("signer")] aria-describedby=[described("signer")] {
+                                    option value="" { "Don't sign" }
+                                    @for key in data.keys.iter().filter(|k| (k.has_secret && k.can_sign && usable(k)) || form.signer == k.fingerprint) {
+                                        option value=(key.fingerprint) selected[form.signer == key.fingerprint] {
+                                            (key.label()) " — " (views::owner_name(key)) " — " (views::key_id(&key.fingerprint))
+                                        }
                                     }
                                 }
+                            }).error("signer", problem("signer")))
+                            div.form-row {
+                                (ui::form_field("Output extension", html! {
+                                    input type="text" name="extension" value=(form.extension) placeholder=".pgp, or .asc when armored" maxlength="20"
+                                        aria-invalid=[invalid("extension")] aria-describedby=[described("extension")];
+                                }).optional().error("extension", problem("extension")))
                             }
+                            (ui::checkbox("armor", form.armor.is_some(), "ASCII-armored output (.asc)", None))
+                            (ui::checkbox("seipd_v2", form.seipd_v2.is_some(), "Use SEIPD v2 (RFC 9580)",
+                                Some("Only for partners known to support it; GnuPG 2.4 and older cannot read it.")))
                         }
-                        FormTarget::Update(job) => {
-                            p { "Customer: " strong { (job.customer_name) } }
-                        }
-                    }
-                    label { "Name" input type="text" name="name" value=(form.name) required maxlength="200"; }
-                    div.radios {
-                        label { input type="radio" name="kind" value="encrypt" checked[form.kind != "decrypt"]; " Encrypt files for partners" }
-                        label { input type="radio" name="kind" value="decrypt" checked[form.kind == "decrypt"]; " Decrypt files from partners" }
-                    }
+                    }).title("Encryption").step(3))
                 }
-                fieldset {
-                    legend { "Folders" }
-                    p.hint { "Absolute paths on this server. The input and output folders must exist." }
-                    label { "Input folder (watched)" input type="text" name="input" value=(form.input) required placeholder="/srv/sftp/acme/outbound"; }
-                    label { "Output folder" input type="text" name="output" value=(form.output) required; }
-                    label { "Processed files go to" input type="text" name="processed" value=(form.processed) placeholder="<input>/processed"; }
-                    label.check { input type="checkbox" name="delete_processed" checked[form.delete_processed.is_some()]; " Delete source files after processing instead" }
-                    label { "Failed files go to" input type="text" name="failed" value=(form.failed) placeholder="<input>/failed"; }
-                    label { "Check every (seconds)" input type="number" name="interval" value=(form.interval) min=(jobs::MIN_POLL_INTERVAL_SECS); }
-                }
-                fieldset.encrypt-only {
-                    legend { "Encryption" }
-                    p { "Recipients" }
-                    p.hint { "Every recipient can decrypt the output. Add one of your own keys to be able to read it yourself." }
-                    (key_choices("recipients", data.keys.iter().filter(|k| (k.can_encrypt && usable(k)) || form.recipients.contains(&k.fingerprint)), &form.recipients))
-                    label {
-                        "Sign with"
-                        select name="signer" {
-                            option value="" { "Don't sign" }
-                            @for key in data.keys.iter().filter(|k| (k.has_secret && k.can_sign && usable(k)) || form.signer == k.fingerprint) {
-                                option value=(key.fingerprint) selected[form.signer == key.fingerprint] {
-                                    (key.label()) " — " (key.customer_name) " — " (views::key_id(&key.fingerprint))
+                div.decrypt-only {
+                    (ui::panel(html! {
+                        div.form {
+                            (ui::form_field("Decrypt with",
+                                key_choices("decrypt_keys", data.keys.iter().filter(|k| k.has_secret || form.decrypt_keys.contains(&k.fingerprint)), &form.decrypt_keys))
+                                .group()
+                                .error("decrypt_keys", problem("decrypt_keys")))
+                            (ui::form_field("Accept signatures from",
+                                key_choices("verifiers", data.keys.iter().filter(|k| !k.revoked || form.verifiers.contains(&k.fingerprint)), &form.verifiers))
+                                .group()
+                                .error("verifiers", problem("verifiers")))
+                            (ui::field("Signatures", None, html! {
+                                select name="verify" {
+                                    option value="ignore" selected[form.verify == "ignore"] { "Ignore" }
+                                    option value="warn" selected[form.verify == "warn"] { "Warn about unsigned or unverified files" }
+                                    option value="require" selected[form.verify == "require"] { "Require a valid signature (fail otherwise)" }
                                 }
-                            }
+                            }))
                         }
-                    }
-                    label.check { input type="checkbox" name="armor" checked[form.armor.is_some()]; " ASCII-armored output (.asc)" }
-                    label { "Output extension" input type="text" name="extension" value=(form.extension) placeholder=".pgp, or .asc when armored" maxlength="20"; }
-                    label.check {
-                        input type="checkbox" name="seipd_v2" checked[form.seipd_v2.is_some()];
-                        " Use SEIPD v2 (RFC 9580). Only for partners known to support it; GnuPG 2.4 and older cannot read it."
-                    }
+                    }).title("Decryption").step(3))
                 }
-                fieldset.decrypt-only {
-                    legend { "Decryption" }
-                    p { "Decrypt with" }
-                    (key_choices("decrypt_keys", data.keys.iter().filter(|k| k.has_secret || form.decrypt_keys.contains(&k.fingerprint)), &form.decrypt_keys))
-                    p { "Accept signatures from" }
-                    (key_choices("verifiers", data.keys.iter().filter(|k| !k.revoked || form.verifiers.contains(&k.fingerprint)), &form.verifiers))
-                    label {
-                        "Signatures"
-                        select name="verify" {
-                            option value="ignore" selected[form.verify == "ignore"] { "Ignore" }
-                            option value="warn" selected[form.verify == "warn"] { "Warn about unsigned or unverified files" }
-                            option value="require" selected[form.verify == "require"] { "Require a valid signature (fail otherwise)" }
-                        }
-                    }
-                }
-                button.primary type="submit" {
-                    @match target { FormTarget::Create => "Create job", FormTarget::Update(_) => "Save changes" }
+                div.btn-row {
+                    (ui::button(match target { FormTarget::Create => "Create job", FormTarget::Update(_) => "Save changes" }).primary().icon(Icon::Check).busy("Saving…"))
+                    (ui::button("Cancel").ghost().href(&back))
                 }
             }
         },
@@ -301,16 +365,18 @@ fn key_choices<'a>(
     let keys: Vec<&KeyRecord> = keys.collect();
     html! {
         @if keys.is_empty() {
-            p.muted { "No suitable keys. Add them on the customer's page." }
+            p.hint { "No suitable keys. Add them on the " a href="/keys" { "Keys" } " page." }
         } @else {
             div.choices {
                 @for key in keys {
-                    label.choice {
+                    label.check {
                         input type="checkbox" name=(name) value=(key.fingerprint) checked[selected.contains(&key.fingerprint)];
-                        " " strong { (key.label()) }
-                        " " span.muted { (key.customer_name) }
-                        " " code.muted { (views::key_id(&key.fingerprint)) }
-                        " " (views::key_status(key))
+                        span.check-body {
+                            strong { (key.label()) }
+                            span.muted { (views::owner_name(key)) }
+                            code { (views::key_id(&key.fingerprint)) }
+                            (views::key_status(key))
+                        }
                     }
                 }
             }
@@ -318,33 +384,56 @@ fn key_choices<'a>(
     }
 }
 
+/// Jobs as a table; `with_customer` adds the customer column.
+pub fn job_table(jobs: &[Job], with_customer: bool) -> Markup {
+    let mut columns = vec![ui::col("Job")];
+    if with_customer {
+        columns.push(ui::col("Customer"));
+    }
+    columns.extend([
+        ui::col("Kind"),
+        ui::col("State"),
+        ui::col("Input → output"),
+        ui::col("Last check"),
+    ]);
+    ui::table(
+        "",
+        &columns,
+        html! {
+            @for job in jobs {
+                tr {
+                    td { a.strong href={ "/jobs/" (job.id) } { (job.spec.name) } }
+                    @if with_customer {
+                        td { a href={ "/customers/" (job.customer_id) } { (job.customer_name) } }
+                    }
+                    td { (views::kind_tag(job)) }
+                    td { (views::job_state(job)) }
+                    td.paths { code { (job.spec.input_dir.display()) } " → " code { (job.spec.output_dir.display()) } }
+                    td.nowrap { @match job.last_run_at { Some(at) => (views::timestamp(at)), None => span.muted { "never" } } }
+                }
+            }
+        },
+    )
+}
+
 pub async fn list(State(state): State<AppState>, auth: Authed) -> Result<Markup, AppError> {
     let jobs = state.vault(|vault| vault.jobs()).await?;
     let page = state.page(&auth, "Jobs", Nav::Jobs);
+    let running = jobs.iter().filter(|j| j.is_active()).count();
     Ok(views::layout(
         page,
         html! {
-            h1 { "Jobs" }
-            @if jobs.is_empty() {
-                p.muted { "No jobs yet." }
-            } @else {
-                table {
-                    thead { tr { th { "Customer" } th { "Name" } th { "Kind" } th { "State" } th { "Input → output" } th { "Last run" } } }
-                    tbody {
-                        @for job in &jobs {
-                            tr {
-                                td { a href={ "/customers/" (job.customer_id) } { (job.customer_name) } }
-                                td { a href={ "/jobs/" (job.id) } { (job.spec.name) } }
-                                td { (views::kind_name(job)) }
-                                td { (views::job_state(job)) }
-                                td.paths { code { (job.spec.input_dir.display()) } " → " code { (job.spec.output_dir.display()) } }
-                                td.nowrap { @match job.last_run_at { Some(at) => (views::timestamp(at)), None => span.muted { "never" } } }
-                            }
-                        }
-                    }
+            (ui::page_header("Jobs")
+                .subtitle(html! { (running) " of " (jobs.len()) " running. Each job watches a folder and encrypts or decrypts what arrives." })
+                .actions(html! { (ui::button("New job").primary().icon(Icon::Plus).href("/jobs/new")) }))
+            (ui::panel(html! {
+                @if jobs.is_empty() {
+                    (ui::empty(Icon::Jobs, "No jobs yet", "Create a job to encrypt files for a partner, or decrypt the files they send.",
+                        Some(ui::button("New job").primary().icon(Icon::Plus).href("/jobs/new").render())))
+                } @else {
+                    (job_table(&jobs, true))
                 }
-            }
-            p { a.button href="/jobs/new" { "New job" } }
+            }).flush())
         },
     ))
 }
@@ -406,11 +495,7 @@ async fn rejected_form(
     } else {
         StatusCode::UNPROCESSABLE_ENTITY
     };
-    (
-        status,
-        form_page(page, form, &data, target, Some(error.message())),
-    )
-        .into_response()
+    (status, form_page(page, form, &data, target, Some(&error))).into_response()
 }
 
 pub async fn edit_form(
@@ -480,14 +565,20 @@ pub async fn show(
     auth: Authed,
     Path(id): Path<i64>,
 ) -> Result<Markup, AppError> {
-    let (job, events, customers, jobs) = state
+    let (job, events, customers, jobs, keys) = state
         .vault(move |vault| {
             let events = vault.query_audit(&Filter {
                 job_id: Some(id),
                 limit: 20,
                 ..Filter::default()
             })?;
-            Ok((vault.job(id)?, events, vault.customers()?, vault.jobs()?))
+            Ok((
+                vault.job(id)?,
+                events,
+                vault.customers()?,
+                vault.jobs()?,
+                vault.keys(None)?,
+            ))
         })
         .await?;
     let files = failed_files(&job).await?;
@@ -496,83 +587,99 @@ pub async fn show(
     let page = state.page(&auth, &job.spec.name, Nav::Jobs);
     let spec = &job.spec;
     let base = format!("/jobs/{}", job.id);
+    let edit = format!("{base}/edit");
+    let customer_url = format!("/customers/{}", job.customer_id);
+    let all_activity = format!("/audit?job={}", job.id);
+    let key = |fpr: &String| -> Markup {
+        match keys.iter().find(|k| k.fingerprint == *fpr) {
+            Some(k) => html! { div { (views::key_link(k)) " " (views::key_status(k)) } },
+            None => html! { div { code { (views::key_id(fpr)) } } },
+        }
+    };
     Ok(views::layout(
         page,
         html! {
-            p.crumbs { a href={ "/customers/" (job.customer_id) } { (job.customer_name) } " / jobs /" }
-            h1 { (spec.name) }
-            div.actions {
-                @if job.is_active() {
-                    form method="post" action={ (base) "/disable" } {
-                        (views::csrf_field(&csrf))
-                        button type="submit" { "Disable" }
+            (ui::page_header(&spec.name)
+                .crumb("Customers", "/customers")
+                .crumb(&job.customer_name, customer_url)
+                .status(views::kind_tag(&job))
+                .subtitle(html! {
+                    (if spec.kind == JobKind::Encrypt { "Encrypts" } else { "Decrypts" })
+                    " every file dropped into its input folder; checks every " (spec.poll_interval_secs) " seconds."
+                })
+                .actions(html! {
+                    @if job.is_active() {
+                        form method="post" action={ (base) "/disable" } {
+                            (views::csrf_field(&csrf))
+                            (ui::button("Disable").icon(Icon::Pause))
+                        }
+                    } @else {
+                        form method="post" action={ (base) "/enable" } {
+                            (views::csrf_field(&csrf))
+                            (ui::button(if job.paused_reason.is_some() { "Resume" } else { "Enable" }).primary().icon(Icon::Play))
+                        }
                     }
-                } @else {
-                    form method="post" action={ (base) "/enable" } {
-                        (views::csrf_field(&csrf))
-                        button.primary type="submit" { @if job.paused_reason.is_some() { "Resume" } @else { "Enable" } }
-                    }
-                }
-                a.button href={ (base) "/edit" } { "Edit" }
-            }
+                    (ui::button("Edit").icon(Icon::Edit).href(&edit))
+                }))
 
             (live_panel(&csrf, &job, &files))
 
-            section {
-                h2 { "Settings" }
-                dl.details {
-                    dt { "Kind" } dd { (views::kind_name(&job)) }
-                    dt { "Input" } dd { code { (spec.input_dir.display()) } }
-                    dt { "Output" } dd { code { (spec.output_dir.display()) } }
-                    dt { "Processed files" } dd {
-                        @match &spec.processed_dir { Some(dir) => code { (dir.display()) }, None => "deleted" }
+            div.grid-2 {
+                (ui::panel(html! {
+                    dl.kv {
+                        dt { "Input" } dd { code { (spec.input_dir.display()) } }
+                        dt { "Output" } dd { code { (spec.output_dir.display()) } }
+                        dt { "Processed files" } dd {
+                            @match &spec.processed_dir { Some(dir) => code { (dir.display()) }, None => "deleted" }
+                        }
+                        dt { "Failed files" } dd { code { (spec.failed_dir.display()) } }
+                        dt { "Checks every" } dd { (spec.poll_interval_secs) " s" }
+                        dt { "Created" } dd { (views::timestamp(job.created_at)) }
+                        dt { "Last changed" } dd { (views::timestamp(job.updated_at)) }
                     }
-                    dt { "Failed files" } dd { code { (spec.failed_dir.display()) } }
-                    dt { "Checks every" } dd { (spec.poll_interval_secs) " s" }
-                    @match spec.kind {
-                        JobKind::Encrypt => {
-                            dt { "Recipients" } dd { @for fpr in &spec.recipients { div { a href={ "/keys/" (fpr) } { (views::fingerprint(fpr)) } } } }
-                            dt { "Signed with" } dd {
-                                @match &spec.signer { Some(fpr) => a href={ "/keys/" (fpr) } { (views::fingerprint(fpr)) }, None => span.muted { "not signed" } }
+                }).title("Folders").icon(Icon::Jobs))
+                (ui::panel(html! {
+                    dl.kv {
+                        @match spec.kind {
+                            JobKind::Encrypt => {
+                                dt { "Recipients" } dd { @for fpr in &spec.recipients { (key(fpr)) } }
+                                dt { "Signed with" } dd {
+                                    @match &spec.signer { Some(fpr) => (key(fpr)), None => span.muted { "not signed" } }
+                                }
+                                dt { "Format" } dd {
+                                    (if spec.container == Container::SeipdV2 { "SEIPD v2" } else { "SEIPD v1" }) ", "
+                                    (if spec.armor { "armored" } else { "binary" }) ", "
+                                    code { "*" (spec.output_extension()) }
+                                }
                             }
-                            dt { "Format" } dd {
-                                (if spec.container == Container::SeipdV2 { "SEIPD v2" } else { "SEIPD v1" }) ", "
-                                (if spec.armor { "armored" } else { "binary" }) ", "
-                                code { "*" (spec.output_extension()) }
+                            JobKind::Decrypt => {
+                                dt { "Decrypt with" } dd { @for fpr in &spec.decrypt_keys { (key(fpr)) } }
+                                dt { "Signatures from" } dd {
+                                    @if spec.verifiers.is_empty() { span.muted { "nobody" } }
+                                    @for fpr in &spec.verifiers { (key(fpr)) }
+                                }
+                                dt { "Signatures" } dd { (policy_str(spec.verify_policy)) }
                             }
                         }
-                        JobKind::Decrypt => {
-                            dt { "Decrypt with" } dd { @for fpr in &spec.decrypt_keys { div { a href={ "/keys/" (fpr) } { (views::fingerprint(fpr)) } } } }
-                            dt { "Accept signatures from" } dd {
-                                @if spec.verifiers.is_empty() { span.muted { "nobody" } }
-                                @for fpr in &spec.verifiers { div { a href={ "/keys/" (fpr) } { (views::fingerprint(fpr)) } } }
-                            }
-                            dt { "Signatures" } dd { (policy_str(spec.verify_policy)) }
-                        }
                     }
-                    dt { "Created" } dd { (views::timestamp(job.created_at)) }
-                    dt { "Last changed" } dd { (views::timestamp(job.updated_at)) }
-                }
+                }).title("Keys").icon(Icon::Key))
             }
 
-            section {
-                div.title-row {
-                    h2 { "Recent activity" }
-                    (views::activity_search(Some(("job", job.id.to_string()))))
-                }
-                (views::audit_table(&events, &names))
-                p { a href={ "/audit?job=" (job.id) } { "All activity for this job →" } }
-            }
+            (ui::panel(views::audit_table(&events, &names))
+                .title("Recent activity")
+                .icon(Icon::Activity)
+                .actions(views::activity_search(Some(("job", job.id.to_string()))))
+                .flush()
+                .footer(ui::link_arrow(&all_activity, "All activity for this job")))
 
-            section.card.danger {
-                h2 { "Delete job" }
+            (ui::panel(html! {
                 p { "Stops the job. Files and folders are left alone; the audit log is kept." }
-                form.inline method="post" action={ (base) "/delete" } {
+                form.form method="post" action={ (base) "/delete" } data-confirm="The job stops for good. Its files, folders and audit log stay." {
                     (views::csrf_field(&csrf))
-                    (views::confirm_box("Delete this job"))
-                    button.danger type="submit" { "Delete" }
+                    (ui::confirm("Delete this job"))
+                    div.actions { (ui::button("Delete job").danger().icon(Icon::Trash)) }
                 }
-            }
+            }).title("Delete job").icon(Icon::Trash).tone(Tone::Bad))
         },
     ))
 }
@@ -589,49 +696,59 @@ pub async fn live(
 }
 
 fn live_panel(csrf: &str, job: &Job, files: &[FailedFile]) -> Markup {
-    html! {
-        section #live.card hx-get={ "/jobs/" (job.id) "/live" } hx-trigger="every 5s" hx-swap="outerHTML" {
-            h2 { "Status " (views::job_state(job)) }
+    let url = format!("/jobs/{}/live", job.id);
+    let retry = format!("/jobs/{}/retry", job.id);
+    let body = html! {
+        (ui::panel_section(html! {
             @if let Some(reason) = &job.paused_reason {
-                p.flash.error { "Paused: " (reason) ". Fix the cause, then resume the job." }
+                (ui::alert(Tone::Bad, Some("Paused"), html! { (reason) ". Fix the cause, then resume the job." }))
             }
-            dl.details {
+            dl.kv {
+                dt { "State" } dd { (views::job_state(job)) }
                 dt { "Last check" } dd { @match job.last_run_at { Some(at) => (views::timestamp(at)), None => span.muted { "never" } } }
                 @if let Some(error) = &job.last_error {
-                    dt { "Last error" } dd.error { (error) }
+                    dt { "Last error" } dd.error-text { (error) }
                 }
             }
-            h3 { "Failed files" }
-            @if files.is_empty() {
-                p.muted { "None." }
-            } @else {
-                p.hint { "The reason for each failure is in the activity log below. Retrying moves the file back into the input folder." }
-                table {
-                    thead { tr { th { "File" } th.num { "Size" } th { "Failed at" } th {} } }
-                    tbody {
-                        @for file in files {
-                            tr {
-                                td { code { (file.name) } }
-                                td.num { (views::bytes(file.size)) }
-                                td.nowrap {
-                                    @if let Some(at) = file.modified.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()) {
-                                        (views::timestamp(at.as_secs() as i64))
-                                    }
-                                }
-                                td {
-                                    form method="post" action={ "/jobs/" (job.id) "/retry" } {
-                                        (views::csrf_field(csrf))
-                                        input type="hidden" name="file" value=(file.name);
-                                        button.small type="submit" { "Retry" }
-                                    }
-                                }
+        }))
+        @if !files.is_empty() {
+            (ui::table("", &[ui::col("Failed file"), ui::num_col("Size"), ui::col("Failed at"), ui::num_col("")], html! {
+                @for file in files {
+                    tr.bad {
+                        td { code { (file.name) } }
+                        td.num { (views::bytes(file.size)) }
+                        td.nowrap {
+                            @if let Some(at) = file.modified.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()) {
+                                (views::timestamp(at.as_secs() as i64))
+                            }
+                        }
+                        td.num {
+                            form method="post" action=(retry) {
+                                (views::csrf_field(csrf))
+                                input type="hidden" name="file" value=(file.name);
+                                (ui::button("Retry").small().icon(Icon::Retry))
                             }
                         }
                     }
                 }
-            }
+            }))
         }
-    }
+    };
+    let footer = html! {
+        @if files.is_empty() {
+            span.btn-row { (ui::icon_with(Icon::Check, "icon sm")) "No failed files." }
+        } @else {
+            "The reason for each failure is in the activity below. Retrying moves the file back into the input folder."
+        }
+    };
+    ui::panel(body)
+        .title("Status")
+        .icon(Icon::Activity)
+        .flush()
+        .footer(footer)
+        .id("live")
+        .live(&url, 5)
+        .render()
 }
 
 pub async fn enable(

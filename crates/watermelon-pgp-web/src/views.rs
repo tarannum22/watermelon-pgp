@@ -1,10 +1,18 @@
 //! Page layout and small rendering helpers shared by the routes.
 
 use axum::http::StatusCode;
-use maud::{DOCTYPE, Markup, html};
-use watermelon_pgp_core::{audit::AuditEvent, jobs::Job, store::KeyRecord};
+use maud::{DOCTYPE, Markup, Render, html};
+use watermelon_pgp_core::{
+    audit::AuditEvent,
+    jobs::Job,
+    store::{KeyOwner, KeyRecord},
+};
 
-use crate::auth::{CSRF_FIELD, Flash};
+use crate::{
+    assets,
+    auth::{CSRF_FIELD, Flash},
+    ui::{self, Icon, Notice, Theme, Tone},
+};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -23,6 +31,8 @@ pub enum Nav {
     Jobs,
     Audit,
     Settings,
+    #[cfg(debug_assertions)]
+    Styleguide,
 }
 
 /// What every logged-in page needs besides its content.
@@ -30,11 +40,12 @@ pub struct Page<'a> {
     pub title: &'a str,
     pub nav: Nav,
     pub csrf: &'a str,
+    pub theme: Theme,
     pub flash: Option<Flash>,
 }
 
 pub fn asset(name: &str) -> String {
-    format!("/static/{name}?v={VERSION}")
+    assets::url(name)
 }
 
 fn head(title: &str) -> Markup {
@@ -42,67 +53,125 @@ fn head(title: &str) -> Markup {
         meta charset="utf-8";
         meta name="viewport" content="width=device-width, initial-scale=1";
         meta name="htmx-config" content=(HTMX_CONFIG);
-        title { (title) " · watermelon-pgp" }
+        title { (title) " · WatermelonPGP" }
         link rel="icon" href=(asset("logo.svg")) type="image/svg+xml";
+        link rel="preload" href="/static/geist-1.9.0.woff2" as="font" type="font/woff2" crossorigin;
         link rel="stylesheet" href=(asset("app.css"));
         script src=(asset("htmx.min.js")) defer {}
+        script src=(asset("app.js")) defer {}
     }
 }
 
-pub fn layout(page: Page<'_>, content: Markup) -> Markup {
-    let links = [
-        (Nav::Dashboard, "/", "Dashboard"),
-        (Nav::Customers, "/customers", "Customers"),
-        (Nav::Keys, "/keys", "Keys"),
-        (Nav::Jobs, "/jobs", "Jobs"),
-        (Nav::Audit, "/audit", "Audit log"),
-        (Nav::Settings, "/settings", "Settings"),
-    ];
+fn brand(version: bool) -> Markup {
     html! {
-        (DOCTYPE)
-        html lang="en" {
-            head { (head(page.title)) }
-            body hx-boost="true" {
-                header.top {
-                    a.brand href="/" {
-                        img src=(asset("logo.svg")) alt="" width="28" height="28";
-                        span { "watermelon-pgp" }
-                    }
-                    nav {
-                        @for (nav, href, label) in links {
-                            a href=(href) aria-current=[(nav == page.nav).then_some("page")] { (label) }
-                        }
-                    }
-                    form.logout method="post" action="/logout" {
-                        (csrf_field(page.csrf))
-                        button.link type="submit" { "Log out" }
-                    }
-                }
-                main {
-                    @if let Some(flash) = &page.flash {
-                        (flash_message(flash))
-                    }
-                    (content)
-                }
-                footer { "watermelon-pgp " (VERSION) }
+        a.brand href="/" {
+            img src=(asset("logo.svg")) alt="" width="32" height="32";
+            span.brand-name {
+                strong { "Watermelon" span { "PGP" } }
+                @if version { small { "v" (VERSION) } }
             }
         }
     }
 }
 
-/// A page outside the logged-in layout (login, errors).
-pub fn bare(title: &str, content: Markup) -> Markup {
+/// A main navigation entry: page, URL, label, icon.
+type NavItem = (Nav, &'static str, &'static str, Icon);
+
+/// Main navigation, in titled sections.
+const NAV_SECTIONS: &[(&str, &[NavItem])] = &[
+    (
+        "Operations",
+        &[
+            (Nav::Dashboard, "/", "Dashboard", Icon::Dashboard),
+            (Nav::Jobs, "/jobs", "Jobs", Icon::Jobs),
+            (Nav::Audit, "/audit", "Audit log", Icon::Audit),
+        ],
+    ),
+    (
+        "Key management",
+        &[
+            (Nav::Customers, "/customers", "Customers", Icon::Customers),
+            (Nav::Keys, "/keys", "Keys", Icon::Key),
+        ],
+    ),
+    (
+        "System",
+        &[
+            (Nav::Settings, "/settings", "Settings", Icon::Settings),
+            #[cfg(debug_assertions)]
+            (Nav::Styleguide, "/styleguide", "Style guide", Icon::Palette),
+        ],
+    ),
+];
+
+/// The logged-in shell: sidebar navigation, top bar with search, the page, a footer.
+pub fn layout(page: Page<'_>, content: Markup) -> Markup {
     html! {
         (DOCTYPE)
-        html lang="en" {
-            head { (head(title)) }
-            body.bare {
-                main.narrow {
-                    a.brand href="/" {
-                        img src=(asset("logo.svg")) alt="" width="40" height="40";
-                        span { "watermelon-pgp" }
+        html lang="en" data-theme=[page.theme.attribute()] {
+            head { (head(page.title)) }
+            body hx-boost="true" {
+                div.shell {
+                    aside.sidebar {
+                        (brand(true))
+                        nav.nav aria-label="Main" {
+                            @for (heading, items) in NAV_SECTIONS {
+                                span.nav-label { (heading) }
+                                @for (nav, href, label, svg) in *items {
+                                    a.nav-item href=(href) aria-current=[(*nav == page.nav).then_some("page")] {
+                                        (ui::icon(*svg)) span.label { (label) }
+                                    }
+                                }
+                            }
+                        }
+                        div.sidebar-foot {
+                            @if cfg!(debug_assertions) {
+                                a.dev-badge href="/styleguide" title="A debug build: not for production" {
+                                    (ui::icon(Icon::Palette)) "Development build"
+                                }
+                            }
+                            (ui::theme_switch(csrf_field(page.csrf), page.theme))
+                            form method="post" action="/logout" {
+                                (csrf_field(page.csrf))
+                                (ui::button("Log out").ghost().block().icon(Icon::Logout))
+                            }
+                        }
                     }
-                    (content)
+                    div.main-col {
+                        div.topbar {
+                            form method="get" action="/audit" role="search" {
+                                (ui::search_input("q", "", "Search activity: customer, job, key, file…", "Search activity"))
+                            }
+                            span.spacer {}
+                            span.hide-sm { (ui::button("New job").icon(Icon::Plus).href("/jobs/new")) }
+                        }
+                        main.content #main {
+                            (content)
+                        }
+                        footer.page-foot { "WatermelonPGP " (VERSION) }
+                    }
+                }
+                @if let Some(flash) = &page.flash {
+                    (flash_message(flash))
+                }
+                (ui::confirm_dialog())
+            }
+        }
+    }
+}
+
+/// A page outside the logged-in shell (login, errors).
+pub fn bare(title: &str, theme: Theme, content: Markup) -> Markup {
+    html! {
+        (DOCTYPE)
+        html lang="en" data-theme=[theme.attribute()] {
+            head { (head(title)) }
+            body {
+                main.bare {
+                    div.bare-card {
+                        (brand(false))
+                        (content)
+                    }
                 }
             }
         }
@@ -110,35 +179,29 @@ pub fn bare(title: &str, content: Markup) -> Markup {
 }
 
 pub fn error_page(status: StatusCode, message: &str) -> Markup {
+    let reason = status.canonical_reason().unwrap_or("Error");
     bare(
-        status.canonical_reason().unwrap_or("Error"),
-        html! {
-            h1 { (status.as_u16()) " " (status.canonical_reason().unwrap_or("Error")) }
-            p.flash.error { (message) }
-            p { a href="/" { "Back to the dashboard" } }
-        },
+        reason,
+        Theme::System,
+        ui::panel(html! {
+            h1 { (status.as_u16()) " " (reason) }
+            (ui::alert(Tone::Bad, None, html! { (message) }))
+            (ui::link_arrow("/", "Back to the dashboard"))
+        })
+        .render(),
     )
 }
 
+/// The outcome of the last form, as a toast.
 pub fn flash_message(flash: &Flash) -> Markup {
     match flash {
-        Flash::Success(message) => html! { p.flash.success role="status" { (message) } },
-        Flash::Error(message) => html! { p.flash.error role="alert" { (message) } },
+        Flash::Success(message) => ui::toast(Tone::Good, html! { (message) }),
+        Flash::Error(message) => ui::toast(Tone::Bad, html! { (message) }),
     }
 }
 
 pub fn csrf_field(csrf: &str) -> Markup {
     html! { input type="hidden" name=(CSRF_FIELD) value=(csrf); }
-}
-
-/// A required checkbox guarding destructive actions; works without JavaScript.
-pub fn confirm_box(label: &str) -> Markup {
-    html! {
-        label.confirm {
-            input type="checkbox" name="confirm" value="yes" required;
-            " " (label)
-        }
-    }
 }
 
 pub fn now() -> i64 {
@@ -172,16 +235,6 @@ pub fn date(unix: i64) -> Markup {
     }
 }
 
-/// A fingerprint in groups of four, as gpg prints it.
-pub fn fingerprint(fpr: &str) -> Markup {
-    let grouped: Vec<&str> = fpr
-        .as_bytes()
-        .chunks(4)
-        .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
-        .collect();
-    html! { code.fpr { (grouped.join(" ")) } }
-}
-
 /// The long key ID: the last 16 hex digits.
 pub fn key_id(fpr: &str) -> &str {
     &fpr[fpr.len().saturating_sub(16)..]
@@ -190,38 +243,56 @@ pub fn key_id(fpr: &str) -> &str {
 pub fn key_link(key: &KeyRecord) -> Markup {
     html! {
         a href={ "/keys/" (key.fingerprint) } { (key.label()) }
-        " " code.muted { (key_id(&key.fingerprint)) }
+        " " code { (key_id(&key.fingerprint)) }
     }
 }
 
-pub enum Tone {
-    Good,
-    Warn,
-    Bad,
-    Neutral,
+/// A user ID split into name and email: `Alpine <pgp@alpine.example>` →
+/// (`Alpine`, `pgp@alpine.example`). IDs without an email are all name.
+pub fn uid_parts(uid: &str) -> (&str, Option<&str>) {
+    match uid
+        .trim_end()
+        .strip_suffix('>')
+        .and_then(|rest| rest.rsplit_once('<'))
+    {
+        Some((name, email)) if !name.trim().is_empty() => (name.trim(), Some(email)),
+        Some((_, email)) => (email, None),
+        None => (uid, None),
+    }
 }
 
-pub fn badge(tone: Tone, text: &str) -> Markup {
-    let class = match tone {
-        Tone::Good => "badge good",
-        Tone::Warn => "badge warn",
-        Tone::Bad => "badge bad",
-        Tone::Neutral => "badge",
-    };
-    html! { span class=(class) { (text) } }
+/// Whose key it is: a link to the customer, or "anonymous" for a key that belongs to no one.
+pub fn key_owner(key: &KeyRecord) -> Markup {
+    match &key.owner {
+        KeyOwner::Customer { id, name } => html! { a href={ "/customers/" (id) } { (name) } },
+        KeyOwner::Anonymous => ui::tag("anonymous", "belongs to no customer", false),
+    }
+}
+
+/// The customer's name, or "Anonymous", as plain text.
+pub fn owner_name(key: &KeyRecord) -> &str {
+    match &key.owner {
+        KeyOwner::Customer { name, .. } => name,
+        KeyOwner::Anonymous => "Anonymous",
+    }
 }
 
 /// Revoked / expired / expiring soon / valid.
 pub fn key_status(key: &KeyRecord) -> Markup {
+    let (tone, text) = key_state(key);
+    ui::pill(tone, &text)
+}
+
+pub fn key_state(key: &KeyRecord) -> (Tone, String) {
     let now = now();
     match key.expires_at {
-        _ if key.revoked => badge(Tone::Bad, "revoked"),
-        Some(at) if at <= now => badge(Tone::Bad, "expired"),
-        Some(at) if at - now <= EXPIRY_WARNING_DAYS * 86_400 => badge(
+        _ if key.revoked => (Tone::Bad, "revoked".into()),
+        Some(at) if at <= now => (Tone::Bad, "expired".into()),
+        Some(at) if at - now <= EXPIRY_WARNING_DAYS * 86_400 => (
             Tone::Warn,
-            &format!("expires in {} days", (at - now) / 86_400),
+            format!("expires in {} days", (at - now) / 86_400),
         ),
-        _ => badge(Tone::Good, "valid"),
+        _ => (Tone::Good, "valid".into()),
     }
 }
 
@@ -235,18 +306,107 @@ pub fn key_needs_attention(key: &KeyRecord) -> bool {
 
 pub fn key_capabilities(key: &KeyRecord) -> Markup {
     html! {
-        @if key.can_encrypt { span.cap title="can encrypt" { "encrypt" } }
-        @if key.can_sign { span.cap title="can sign" { "sign" } }
-        @if key.has_secret { span.cap.secret title="we hold the secret key" { "secret" } }
+        span.tags {
+            @if key.can_encrypt { (ui::tag("encrypt", "can encrypt", false)) }
+            @if key.can_sign { (ui::tag("sign", "can sign", false)) }
+            @if key.has_secret { (ui::tag("secret", "we hold the secret key", true)) }
+        }
     }
+}
+
+/// Keys as rich rows: who, status, fingerprint, what they can do, expiry. Callers show an
+/// empty state instead of an empty list, since only they know what to suggest.
+pub fn key_list(keys: &[&KeyRecord], with_customer: bool) -> Markup {
+    html! {
+        div.key-list {
+            @for key in keys {
+                (key_row(key, with_customer))
+            }
+        }
+    }
+}
+
+fn key_row(key: &KeyRecord, with_customer: bool) -> Markup {
+    let (tone, state) = key_state(key);
+    let avatar_tone = match tone {
+        Tone::Good if key.has_secret => Tone::Good,
+        Tone::Good => Tone::Neutral,
+        other => other,
+    };
+    let other_ids = key.user_ids.len().saturating_sub(1);
+    let (name, email) = uid_parts(key.label());
+    html! {
+        div.key-row.revoked[key.revoked] {
+            (ui::avatar(name, avatar_tone))
+            div.key-main {
+                div.key-title {
+                    a.key-name href={ "/keys/" (key.fingerprint) } { (name) }
+                    (ui::pill(tone, &state))
+                    @if key.has_secret { (ui::tag("key pair", "we hold the secret key", true)) } @else { (ui::tag("public", "public key only", false)) }
+                }
+                @if email.is_some() || other_ids > 0 {
+                    span.key-sub {
+                        @if let Some(email) = email { (email) }
+                        @if other_ids > 0 { " " span.subtle { "+" (other_ids) " more user IDs" } }
+                    }
+                }
+                div.key-meta {
+                    (ui::fingerprint(&key.fingerprint, true))
+                    (ui::tag(&key.algorithm, "algorithm", false))
+                    (key_capabilities(key))
+                    @if with_customer {
+                        span { (ui::icon_with(Icon::Customers, "icon sm")) }
+                        (key_owner(key))
+                    }
+                }
+            }
+            div.key-side {
+                span { "Expires " @match key.expires_at { Some(at) => (date(at)), None => "never" } }
+                span.subtle { "Created " (date(key.created_at)) }
+            }
+        }
+    }
+}
+
+/// What needs the operator, most urgent first: paused jobs, jobs with errors, keys revoked or
+/// about to expire.
+pub fn attention(jobs: &[Job], keys: &[KeyRecord]) -> Vec<Notice> {
+    let paused = jobs.iter().filter_map(|job| {
+        job.paused_reason.as_ref().map(|reason| Notice {
+            tone: Tone::Bad,
+            icon: Icon::Pause,
+            what: html! { a href={ "/jobs/" (job.id) } { "Job " (job.spec.name) } " is paused" },
+            why: reason.clone(),
+        })
+    });
+    let erroring = jobs.iter().filter(|job| job.is_active()).filter_map(|job| {
+        job.last_error.as_ref().map(|error| Notice {
+            tone: Tone::Warn,
+            icon: Icon::Warning,
+            what: html! { a href={ "/jobs/" (job.id) } { "Job " (job.spec.name) } " has an error" },
+            why: error.clone(),
+        })
+    });
+    let keys = keys
+        .iter()
+        .filter(|key| key_needs_attention(key))
+        .map(|key| Notice {
+            tone: if key.revoked { Tone::Bad } else { Tone::Warn },
+            icon: Icon::Key,
+            what: html! { "Key " (key_link(key)) " " (key_status(key)) },
+            why: owner_name(key).to_owned(),
+        });
+    paused.chain(erroring).chain(keys).collect()
 }
 
 pub fn job_state(job: &Job) -> Markup {
     match (&job.paused_reason, job.enabled) {
-        (Some(reason), _) => html! { span.badge.bad title=(reason) { "paused" } },
-        (None, true) if job.last_error.is_some() => badge(Tone::Warn, "error"),
-        (None, true) => badge(Tone::Good, "running"),
-        (None, false) => badge(Tone::Neutral, "disabled"),
+        (Some(reason), _) => ui::pill_titled(Tone::Bad, "paused", reason),
+        (None, true) => match &job.last_error {
+            Some(error) => ui::pill_titled(Tone::Warn, "error", error),
+            None => ui::pill(Tone::Good, "running"),
+        },
+        (None, false) => ui::pill(Tone::Neutral, "disabled"),
     }
 }
 
@@ -255,6 +415,15 @@ pub fn kind_name(job: &Job) -> &'static str {
         watermelon_pgp_core::jobs::JobKind::Encrypt => "encrypt",
         watermelon_pgp_core::jobs::JobKind::Decrypt => "decrypt",
     }
+}
+
+/// "encrypt" or "decrypt", with a lock icon.
+pub fn kind_tag(job: &Job) -> Markup {
+    let icon = match job.spec.kind {
+        watermelon_pgp_core::jobs::JobKind::Encrypt => Icon::Lock,
+        watermelon_pgp_core::jobs::JobKind::Decrypt => Icon::Unlock,
+    };
+    html! { span.tag.kind { (ui::icon_with(icon, "icon sm")) (kind_name(job)) } }
 }
 
 pub fn bytes(n: u64) -> String {
@@ -315,11 +484,11 @@ pub fn activity_search(scope: Option<(&str, String)>) -> Markup {
         None => "activity-search".to_owned(),
     };
     html! {
-        form.activity-search #(id) hx-preserve="true" method="get" action="/audit" role="search" {
+        form.inline-search #(id) hx-preserve="true" method="get" action="/audit" role="search" {
             @if let Some((name, value)) = &scope {
                 input type="hidden" name=(name) value=(value);
             }
-            input type="search" name="q" placeholder="Search activity…" aria-label="Search activity";
+            (ui::search_input("q", "", "Search activity…", "Search activity"))
             select name="period" aria-label="Time" {
                 @for (value, label, _) in PERIODS {
                     option value=(value) { (label) }
@@ -330,7 +499,7 @@ pub fn activity_search(scope: Option<(&str, String)>) -> Markup {
                     option value=(value) { (label) }
                 }
             }
-            button type="submit" { "Search" }
+            (ui::button("Search").small())
         }
     }
 }
@@ -341,48 +510,73 @@ pub trait AuditNames {
     fn job(&self, id: i64) -> Option<&str>;
 }
 
+/// Audit events as a table, for use inside a flush panel.
 pub fn audit_table(events: &[AuditEvent], names: &impl AuditNames) -> Markup {
-    html! {
-        @if events.is_empty() {
-            p.muted { "No events." }
-        } @else {
-            table.audit {
-                thead { tr { th { "Time" } th { "Actor" } th { "Action" } th { "Subject" } th { "Detail" } } }
-                tbody {
-                    @for event in events {
-                        tr class=(action_class(&event.action)) {
-                            td.nowrap { (timestamp(event.at)) }
-                            td { (event.actor) }
-                            td.nowrap { code { (event.action) } }
-                            td {
-                                @if let Some(id) = event.customer_id {
-                                    a href={ "/customers/" (id) } { (names.customer(id).unwrap_or("customer")) }
-                                    " "
-                                }
-                                @if let Some(id) = event.job_id {
-                                    @match names.job(id) {
-                                        Some(name) => a href={ "/jobs/" (id) } { "job " (name) },
-                                        None => span.muted { "job #" (id) },
-                                    }
-                                    " "
-                                }
-                                @if let Some(fpr) = &event.key_fingerprint {
-                                    a href={ "/keys/" (fpr) } { code { (key_id(fpr)) } }
-                                }
+    if events.is_empty() {
+        return ui::empty(Icon::Audit, "No events", "Nothing recorded matches.", None);
+    }
+    let columns = [
+        ui::col("Time"),
+        ui::col("Actor"),
+        ui::col("Action"),
+        ui::col("Subject"),
+        ui::col("Detail"),
+    ];
+    ui::table(
+        "audit",
+        &columns,
+        html! {
+            @for event in events {
+                tr class=(action_tone(&event.action).class()) {
+                    td.nowrap { (timestamp(event.at)) }
+                    td.mono { (event.actor) }
+                    td.nowrap { code { (event.action) } }
+                    td {
+                        @if let Some(id) = event.customer_id {
+                            a href={ "/customers/" (id) } { (names.customer(id).unwrap_or("customer")) }
+                            " "
+                        }
+                        @if let Some(id) = event.job_id {
+                            @match names.job(id) {
+                                Some(name) => a href={ "/jobs/" (id) } { "job " (name) },
+                                None => span.muted { "job #" (id) },
                             }
-                            td.detail { (event.detail) }
+                            " "
+                        }
+                        @if let Some(fpr) = &event.key_fingerprint {
+                            a href={ "/keys/" (fpr) } { code { (key_id(fpr)) } }
                         }
                     }
+                    td.detail { (ui::long_text(&event.detail)) }
                 }
             }
-        }
+        },
+    )
+}
+
+/// Rows worth noticing: failures in red, irreversible or sensitive actions in amber.
+fn action_tone(action: &str) -> Tone {
+    match action {
+        "file.failed" | "admin.login_failed" | "job.pause" => Tone::Bad,
+        "key.export_secret" | "key.delete" | "key.revoke" | "job.delete" => Tone::Warn,
+        _ => Tone::Neutral,
     }
 }
 
-fn action_class(action: &str) -> &'static str {
-    match action {
-        "file.failed" | "admin.login_failed" | "job.pause" => "row-bad",
-        "key.export_secret" | "key.delete" | "key.revoke" | "job.delete" => "row-warn",
-        _ => "",
+#[cfg(test)]
+mod tests {
+    use super::uid_parts;
+
+    #[test]
+    fn user_ids_split_into_name_and_email() {
+        assert_eq!(
+            uid_parts("Alpine <pgp@alpine.example>"),
+            ("Alpine", Some("pgp@alpine.example"))
+        );
+        assert_eq!(
+            uid_parts("<pgp@alpine.example>"),
+            ("pgp@alpine.example", None)
+        );
+        assert_eq!(uid_parts("Just a name"), ("Just a name", None));
     }
 }

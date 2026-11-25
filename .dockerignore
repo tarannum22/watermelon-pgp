@@ -6,3 +6,5 @@ data
 .DS_Store
 *.db
 *.db-*
+e2e
+site

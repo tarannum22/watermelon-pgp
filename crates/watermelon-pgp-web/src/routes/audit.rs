@@ -2,11 +2,11 @@
 //! export what matches as CSV.
 
 use axum::{
-    extract::{Query, State},
-    http::header,
-    response::{IntoResponse, Response},
+    extract::{Query, RawQuery, State},
+    http::{HeaderMap, HeaderValue, header},
+    response::{IntoResponse, Redirect, Response},
 };
-use maud::{Markup, html};
+use maud::html;
 use serde::{Deserialize, Serialize};
 use watermelon_pgp_core::audit::{AuditEvent, Filter};
 
@@ -15,6 +15,7 @@ use crate::{
     AppState,
     auth::Authed,
     error::AppError,
+    ui::{self, Icon, Tone},
     views::{self, Nav},
 };
 
@@ -194,11 +195,25 @@ fn chips(query: &AuditQuery, names: &Names) -> Vec<(String, String)> {
     chips
 }
 
+/// The audit log. Filter forms send every field, empty or not (`?q=x&period=&from=…`); the
+/// address bar shows only the filters in use: htmx is told which URL to push, and a plain form
+/// submission is redirected to it.
 pub async fn list(
     State(state): State<AppState>,
     auth: Authed,
     Query(query): Query<AuditQuery>,
-) -> Result<Markup, AppError> {
+    RawQuery(raw): RawQuery,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    let clean = query.url("/audit");
+    let has_empty = raw.as_deref().is_some_and(|raw| {
+        raw.split('&')
+            .any(|pair| pair.is_empty() || pair.ends_with('='))
+    });
+    let from_htmx = headers.contains_key("hx-request");
+    if has_empty && !from_htmx {
+        return Ok(Redirect::to(&clean).into_response());
+    }
     let (filter, problems) = query.filter(PAGE_SIZE);
     let (events, total, customers, jobs) = state
         .vault(move |vault| {
@@ -225,105 +240,115 @@ pub async fn list(
     let export = query.first_page().url("/audit.csv");
     let custom_range = !query.from.is_empty() || !query.to.is_empty();
     let page = state.page(&auth, "Audit log", Nav::Audit);
-    Ok(views::layout(
+    let newest = (!query.before.is_empty()).then(|| query.first_page().url("/audit"));
+    let page = views::layout(
         page,
         html! {
-            div.title-row {
-                h1 { "Audit log" }
-                a.button href=(export) hx-boost="false" download { "Export CSV" }
-            }
+            (ui::page_header("Audit log")
+                .subtitle(html! { "Everything that happened: logins, key and job changes, every file processed. Append-only." })
+                .actions(html! { (ui::button("Export CSV").icon(Icon::Download).href(&export).download()) }))
             // Live filtering with htmx: only the results are swapped, and the URL follows, so
             // a filtered view can be bookmarked. Without JavaScript the Filter button does it.
-            form.filters.audit-filters method="get" action="/audit"
-                hx-get="/audit" hx-target="#audit-results" hx-select="#audit-results"
-                hx-swap="outerHTML" hx-push-url="true" hx-sync="this:replace"
-                hx-trigger="submit, change, input delay:400ms from:input[name=q]" {
-                label.search {
-                    "Search"
-                    input type="search" name="q" value=(query.q) maxlength=(MAX_SEARCH_LEN)
-                        placeholder="Customer, job, key, user ID, details…" autocomplete="off";
-                }
-                label {
-                    "Time"
-                    select name="period" {
-                        @for (value, label, _) in views::PERIODS {
-                            option value=(value) selected[!custom_range && query.period == *value] { (label) }
-                        }
+            (ui::panel(html! {
+                form.toolbar method="get" action="/audit"
+                    hx-get="/audit" hx-target="#audit-results" hx-select="#audit-results"
+                    hx-swap="outerHTML" hx-push-url="true" hx-sync="this:replace"
+                    hx-trigger="submit, change, input delay:400ms from:input[name=q]" {
+                    div.wide {
+                        (ui::field("Search", None, html! {
+                            span.search {
+                                (ui::icon(Icon::Search))
+                                input type="search" name="q" value=(query.q) maxlength=(MAX_SEARCH_LEN)
+                                    placeholder="Customer, job, key, user ID, file name, details…" autocomplete="off";
+                            }
+                        }))
                     }
-                }
-                label { "From (UTC)" input type="date" name="from" value=(query.from); }
-                label { "To (UTC)" input type="date" name="to" value=(query.to); }
-                label {
-                    "Who"
-                    select name="actor" {
-                        @for (value, label) in views::ACTORS {
-                            option value=(value) selected[query.actor == *value] { (label) }
+                    (ui::field("Time", None, html! {
+                        select name="period" {
+                            @for (value, label, _) in views::PERIODS {
+                                option value=(value) selected[!custom_range && query.period == *value] { (label) }
+                            }
                         }
+                    }))
+                    (ui::field("From (UTC)", None, html! { input type="date" name="from" value=(query.from); }))
+                    (ui::field("To (UTC)", None, html! { input type="date" name="to" value=(query.to); }))
+                    (ui::field("Who", None, html! {
+                        select name="actor" {
+                            @for (value, label) in views::ACTORS {
+                                option value=(value) selected[query.actor == *value] { (label) }
+                            }
+                        }
+                    }))
+                    (ui::field("Action", None, html! {
+                        select name="action" {
+                            @for (value, label) in views::ACTIONS {
+                                option value=(value) selected[query.action == *value] { (label) }
+                            }
+                            @if !query.action.is_empty() && !views::ACTIONS.iter().any(|(v, _)| *v == query.action) {
+                                option value=(query.action) selected { (query.action) }
+                            }
+                        }
+                    }))
+                    (ui::field("Customer", None, html! {
+                        select name="customer" {
+                            option value="" { "All customers" }
+                            @for customer in &customers {
+                                option value=(customer.id) selected[parse_id(&query.customer) == Some(customer.id)] { (customer.name) }
+                            }
+                        }
+                    }))
+                    (ui::field("Job", None, html! {
+                        select name="job" {
+                            option value="" { "All jobs" }
+                            @for job in &jobs {
+                                option value=(job.id) selected[parse_id(&query.job) == Some(job.id)] { (job.customer_name) " / " (job.spec.name) }
+                            }
+                        }
+                    }))
+                    @if !query.key.is_empty() {
+                        input type="hidden" name="key" value=(query.key);
                     }
+                    div { (ui::button("Filter").icon(Icon::Filter)) }
                 }
-                label {
-                    "Action"
-                    select name="action" {
-                        @for (value, label) in views::ACTIONS {
-                            option value=(value) selected[query.action == *value] { (label) }
-                        }
-                        @if !query.action.is_empty() && !views::ACTIONS.iter().any(|(v, _)| *v == query.action) {
-                            option value=(query.action) selected { (query.action) }
-                        }
-                    }
-                }
-                label {
-                    "Customer"
-                    select name="customer" {
-                        option value="" { "All customers" }
-                        @for customer in &customers {
-                            option value=(customer.id) selected[parse_id(&query.customer) == Some(customer.id)] { (customer.name) }
-                        }
-                    }
-                }
-                label {
-                    "Job"
-                    select name="job" {
-                        option value="" { "All jobs" }
-                        @for job in &jobs {
-                            option value=(job.id) selected[parse_id(&query.job) == Some(job.id)] { (job.customer_name) " / " (job.spec.name) }
-                        }
-                    }
-                }
-                @if !query.key.is_empty() {
-                    input type="hidden" name="key" value=(query.key);
-                }
-                button type="submit" { "Filter" }
-            }
+            }).title("Filters").icon(Icon::Filter))
 
-            section #audit-results {
+            div #audit-results.stack {
                 @for problem in &problems {
-                    p.flash.error role="alert" { (problem) }
+                    (ui::alert(Tone::Bad, None, html! { (problem) }))
                 }
-                div.summary {
-                    strong { (total) " " (if total == 1 { "event" } else { "events" }) }
-                    @if !chips.is_empty() {
-                        " matching "
-                        @for (label, without) in &chips {
-                            a.chip href=(without) title="Remove this filter" { (label) " ×" }
+                (ui::panel(views::audit_table(&events, &names))
+                    .description(html! {
+                        span.summary {
+                            strong { (total) " " (if total == 1 { "event" } else { "events" }) }
+                            @if !chips.is_empty() {
+                                " matching "
+                                @for (label, without) in &chips {
+                                    (ui::removable_chip(without, label))
+                                }
+                            }
+                            @if query.is_filtered() {
+                                a href="/audit" { "Clear all" }
+                            }
                         }
-                    }
-                    @if query.is_filtered() {
-                        " " a href="/audit" { "Clear all" }
-                    }
-                }
-                (views::audit_table(&events, &names))
-                nav.paging {
-                    @if !query.before.is_empty() {
-                        a href=(query.first_page().url("/audit")) { "← Newest" }
-                    }
-                    @if let Some(href) = older {
-                        a href=(href) { "Older →" }
-                    }
-                }
+                    })
+                    .title("Events")
+                    .icon(Icon::Audit)
+                    .flush()
+                    .footer(html! {
+                        span { "Newest first, " (PAGE_SIZE) " per page" }
+                        nav.paging {
+                            @if let Some(href) = &newest { a href=(href) { "← Newest" } }
+                            @if let Some(href) = &older { a href=(href) { "Older →" } }
+                        }
+                    }))
             }
         },
-    ))
+    );
+    let mut response = page.into_response();
+    if from_htmx && let Ok(url) = HeaderValue::from_str(&clean) {
+        response.headers_mut().insert("hx-push-url", url);
+    }
+    Ok(response)
 }
 
 /// Everything matching the filter as CSV, oldest first, for audits and spreadsheets.

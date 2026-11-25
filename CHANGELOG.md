@@ -4,6 +4,53 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Keys
+- Anonymous keys: a key can belong to no customer, for example your own signing key used by
+  several customers' jobs. Generate or import them from the Keys page ("No customer") or with
+  `key gen` / `key import` without `--customer`. They show as "anonymous" and have their own
+  filter on the Keys page.
+- Keys can be generated and imported from the Keys page, choosing the customer in the dialog.
+- The database is upgraded automatically on first start (schema v4), and 0.1.0 can't open the
+  upgraded one. Before upgrading, the old database is copied to `watermelon.db.schema-v3.bak`
+  next to it (mode 0600); to go back to 0.1.0, stop the service and restore that copy.
+
+### Web UI
+- New look, built on a design system: design tokens (colour roles, type, spacing) in one file,
+  reusable components in `src/ui`, and a living style guide at `/styleguide` in debug builds
+  (release builds don't include it). See `docs/design-system.md`.
+- The stylesheet is bundled and minified at build time (lightningcss); every static file's URL
+  carries a hash of its content.
+- Sidebar navigation, a search box for the audit log on every page, and a dashboard with stat
+  cards, a "Needs attention" list and recent activity.
+- Keys as rich rows with the fingerprint, status and capabilities, filters (key pairs, public
+  only, needs attention, revoked) and search. A key's page shows the full fingerprint.
+- New customers, key generation and key import open in dialogs from the page or panel header.
+- Revoking or deleting a key and deleting a job ask in a dialog first. Without JavaScript, a
+  tick box does the same.
+- The outcome of a form shows as a toast in the corner. Slow actions such as generating an RSA
+  key show a spinner while they run.
+- The job form is in numbered steps, and a rejected job shows the reason next to the field to
+  blame.
+- Table headings stay in view while scrolling; long audit details show three lines and the rest
+  on demand.
+- The audit log's address leaves out empty filters (`/audit?q=acme`, not
+  `/audit?q=acme&period=&from=…`).
+- A key's page: details across the top, the public and secret exports side by side with their
+  buttons level, and revoke/delete below.
+- Copy buttons for fingerprints (where the browser allows clipboard access).
+- Light and dark themes: follows the system, or pick one in the sidebar or in Settings
+  (remembered per browser in a cookie).
+- Geist and JetBrains Mono fonts and Lucide icons, served from the binary.
+- Form hints are no longer read out as part of a field's name by screen readers.
+
+### Tests
+- End-to-end tests of the core flows in a real browser (Playwright): logging in and out,
+  customers, generating, importing and revoking keys, an encrypt and decrypt round trip with a
+  failed file and its retry, the audit log's filters and CSV export, the theme switch, and the
+  confirmation dialogs with and without JavaScript.
+
 ## [0.1.0] - 2026-11-24
 
 The first release: key management and folder encryption/decryption jobs with a web UI, as a

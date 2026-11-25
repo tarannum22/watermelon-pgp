@@ -13,6 +13,7 @@ use watermelon_pgp_core::{
     audit::Actor,
     crypto::{self, Algorithm},
     envelope::MasterKey,
+    store::KeyOwner,
     vault::{self, Vault},
 };
 use watermelon_pgp_web::{AppState, Config, SESSION_COOKIE, router};
@@ -159,7 +160,14 @@ async fn health_and_assets_are_public() {
     assert_eq!(health.status, StatusCode::OK);
     assert_eq!(health.body, r#"{"status":"ok"}"#);
 
-    for asset in ["htmx.min.js", "app.css", "logo.svg"] {
+    for asset in [
+        "htmx.min.js",
+        "app.js",
+        "app.css",
+        "logo.svg",
+        "geist-1.9.0.woff2",
+        "jetbrains-mono-5.3.0.woff2",
+    ] {
         let reply = app.get(&format!("/static/{asset}"), None).await;
         assert_eq!(reply.status, StatusCode::OK, "{asset}");
         assert!(
@@ -438,6 +446,95 @@ async fn customer_and_key_lifecycle() {
 }
 
 #[tokio::test]
+async fn keys_can_be_generated_from_the_keys_page() {
+    let app = App::new();
+    let session = app.login().await;
+    let acme = app.vault().create_customer(Actor::Cli, "Acme").unwrap();
+    let page = app.get("/keys", Some(&session)).await;
+    assert!(page.body.contains(r#"action="/keys/generate""#));
+    assert!(
+        page.body
+            .contains(r#"<option value="none">No customer (anonymous key)</option>"#)
+    );
+    assert!(
+        page.body
+            .contains(&format!(r#"<option value="{}">Acme</option>"#, acme.id))
+    );
+
+    // A choice must be made: a customer, or explicitly none.
+    for bad in ["", "999"] {
+        let reply = app
+            .submit(
+                "/keys/generate",
+                &session,
+                &format!("customer={bad}&user_id=X&algorithm=curve25519"),
+            )
+            .await;
+        assert_eq!(reply.location(), "/keys", "{bad:?}");
+    }
+    assert!(app.vault().keys(None).unwrap().is_empty());
+
+    // For a customer: the new key's page opens.
+    let reply = app
+        .submit(
+            "/keys/generate",
+            &session,
+            &format!(
+                "customer={}&user_id={}&algorithm=curve25519",
+                acme.id,
+                enc("Acme Exports <exports@acme.example>")
+            ),
+        )
+        .await;
+    let keys = app.vault().keys(Some(acme.id)).unwrap();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(reply.location(), format!("/keys/{}", keys[0].fingerprint));
+    let page = app.follow(reply, &session).await;
+    assert!(page.body.contains("Generated key Acme Exports"));
+
+    // Anonymous: no customer.
+    let reply = app
+        .submit(
+            "/keys/generate",
+            &session,
+            &format!(
+                "customer=none&user_id={}&algorithm=curve25519",
+                enc("Ops <ops@example.com>")
+            ),
+        )
+        .await;
+    let anonymous: Vec<_> = app
+        .vault()
+        .keys(None)
+        .unwrap()
+        .into_iter()
+        .filter(|k| k.owner == KeyOwner::Anonymous)
+        .collect();
+    assert_eq!(anonymous.len(), 1);
+    let page = app.follow(reply, &session).await;
+    assert!(
+        page.body
+            .contains(r#"title="belongs to no customer">anonymous</span>"#)
+    );
+    assert!(
+        page.body.contains(r#"<a href="/keys">Keys</a>"#),
+        "breadcrumb to the key list"
+    );
+    let list = app.get("/keys?show=anonymous", Some(&session)).await;
+    assert!(list.body.contains("Ops") && !list.body.contains("Acme Exports"));
+
+    // Like every form, it needs the CSRF token.
+    let reply = app
+        .post(
+            "/keys/generate",
+            Some(&session),
+            "customer=none&user_id=Y&algorithm=curve25519",
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn keys_can_be_imported_by_upload() {
     let app = App::new();
     let session = app.login().await;
@@ -484,6 +581,70 @@ async fn keys_can_be_imported_by_upload() {
 }
 
 #[tokio::test]
+async fn keys_can_be_imported_from_the_keys_page() {
+    let app = App::new();
+    let session = app.login().await;
+    let partner = crypto::generate("Partner <p@example.com>", Algorithm::Curve25519).unwrap();
+    let armored = crypto::armor_public(&partner.to_public_key()).unwrap();
+
+    let multipart = |csrf: &str, customer: &str| {
+        let boundary = "XBOUNDARY";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"_csrf\"\r\n\r\n{csrf}\r\n\
+             --{boundary}\r\nContent-Disposition: form-data; name=\"customer\"\r\n\r\n{customer}\r\n\
+             --{boundary}\r\nContent-Disposition: form-data; name=\"armored\"\r\n\r\n{armored}\r\n\
+             --{boundary}--\r\n"
+        );
+        Request::post("/keys/import")
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .header(header::COOKIE, &session.cookie)
+            .body(Body::from(body))
+            .unwrap()
+    };
+
+    // Without the CSRF token nothing is imported.
+    let reply = app.send(multipart("wrong", "none")).await;
+    assert_eq!(reply.status, StatusCode::FORBIDDEN);
+    assert!(app.vault().keys(None).unwrap().is_empty());
+
+    // An unknown customer is reported as such, not as an internal error.
+    let unknown = app
+        .follow(app.send(multipart(&session.csrf, "999")).await, &session)
+        .await;
+    assert!(
+        unknown.body.contains("not found: customer 999"),
+        "{}",
+        unknown.body
+    );
+    assert!(app.vault().keys(None).unwrap().is_empty());
+
+    // The customer must be chosen, even if the choice is none.
+    let unpicked = app
+        .follow(app.send(multipart(&session.csrf, "")).await, &session)
+        .await;
+    assert!(
+        unpicked.body.contains("choose a customer"),
+        "{}",
+        unpicked.body
+    );
+
+    let ok = app
+        .follow(app.send(multipart(&session.csrf, "none")).await, &session)
+        .await;
+    assert!(
+        ok.body.contains("Imported or updated Partner"),
+        "{}",
+        ok.body
+    );
+    let keys = app.vault().keys(None).unwrap();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0].owner.customer_id(), None);
+}
+
+#[tokio::test]
 async fn jobs_are_created_edited_and_controlled_from_forms() {
     let app = App::new();
     let session = app.login().await;
@@ -520,6 +681,34 @@ async fn jobs_are_created_edited_and_controlled_from_forms() {
     assert_eq!(rejected.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(rejected.body.contains("at least one recipient"));
     assert!(rejected.body.contains(r#"value="outbound""#), "values kept");
+    assert!(
+        rejected
+            .body
+            .contains(r#"<fieldset class="field invalid" aria-describedby="recipients-error">"#),
+        "the error sits at the field: {}",
+        rejected.body
+    );
+    assert!(rejected.body.contains(r##"<a href="#recipients-error">"##));
+
+    // A folder that doesn't exist is marked on the folder's field.
+    let missing = format!(
+        "customer={customer}&name=outbound&kind=encrypt&input={}&output={}&interval=30&recipients={partner}",
+        enc(&input),
+        enc("/does/not/exist")
+    );
+    let rejected = app.submit("/jobs", &session, &missing).await;
+    assert!(
+        rejected
+            .body
+            .contains(r#"aria-invalid="true" aria-describedby="output-error""#),
+        "{}",
+        rejected.body
+    );
+    assert!(
+        rejected
+            .body
+            .contains(r#"<p class="field-error" id="output-error">"#)
+    );
 
     let fields = format!("{fields}&recipients={partner}&recipients={ours}&armor=on");
     let created = app.submit("/jobs", &session, &fields).await;
@@ -558,7 +747,7 @@ async fn jobs_are_created_edited_and_controlled_from_forms() {
     let live = app
         .get(&format!("/jobs/{}/live", job.id), Some(&session))
         .await;
-    assert!(live.body.contains("Failed files"));
+    assert!(live.body.contains("No failed files."));
 
     // A failed file can be retried from the page.
     std::fs::create_dir_all(&job.spec.failed_dir).unwrap();
@@ -687,6 +876,201 @@ async fn admin_password_can_be_changed() {
 }
 
 #[tokio::test]
+async fn asset_urls_carry_a_hash_of_the_content() {
+    // Browsers cache assets forever, so a changed file must get a new URL, even when the
+    // version number doesn't change (a browser that saw an older build of the same version).
+    let app = App::new();
+    let login = app.get("/login", None).await.body;
+    for asset in ["app.css", "app.js", "htmx.min.js"] {
+        let prefix = format!("/static/{asset}?v=");
+        let start = login
+            .find(&prefix)
+            .unwrap_or_else(|| panic!("{asset} linked"))
+            + prefix.len();
+        let linked = &login[start..start + 12];
+        let served = app.get(&format!("/static/{asset}"), None).await;
+        let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+        sha2::Digest::update(&mut hasher, served.body.as_bytes());
+        let hash = hex::encode(sha2::Digest::finalize(hasher));
+        assert_eq!(linked, &hash[..12], "{asset}");
+    }
+}
+
+#[tokio::test]
+async fn the_stylesheet_points_at_served_fonts() {
+    let app = App::new();
+    let css = app.get("/static/app.css", None).await.body;
+    for font in ["geist-1.9.0.woff2", "jetbrains-mono-5.3.0.woff2"] {
+        assert!(css.contains(&format!("url({font})")), "{font}");
+    }
+    // All six layers are in it, tokens first, minified.
+    let at = |needle: &str| {
+        css.find(needle)
+            .unwrap_or_else(|| panic!("{needle} in the stylesheet"))
+    };
+    assert!(at("--color-bg:") < at(".shell{"));
+    assert!(at(".shell{") < at(".btn{"));
+    assert!(at(".btn{") < at(".key-row{"));
+    assert!(at(".key-row{") < at(".job-form{"));
+    assert!(!css.contains("/*") && !css.contains("\n  "), "minified");
+}
+
+#[tokio::test]
+async fn the_theme_choice_is_a_cookie_and_returns_to_the_page() {
+    let app = App::new();
+    let session = app.login().await;
+    let page = app.get("/settings", Some(&session)).await;
+    assert!(
+        page.body.contains("<html lang=\"en\">"),
+        "no theme until one is picked"
+    );
+
+    let request = Request::post("/theme")
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+        .header(header::HOST, "localhost:8080")
+        .header(header::ORIGIN, "http://localhost:8080")
+        .header(header::REFERER, "http://localhost:8080/jobs?x=1")
+        .header(header::COOKIE, &session.cookie);
+    let reply = app
+        .send(
+            request
+                .body(Body::from(format!("_csrf={}&theme=dark", session.csrf)))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER);
+    assert_eq!(reply.location(), "/jobs?x=1");
+    let cookie = reply.headers[header::SET_COOKIE].to_str().unwrap();
+    assert!(cookie.starts_with("watermelon_theme=dark;") && cookie.contains("SameSite=Strict"));
+
+    let themed = Session {
+        cookie: format!("{}; watermelon_theme=dark", session.cookie),
+        csrf: session.csrf.clone(),
+    };
+    let page = app.get("/settings", Some(&themed)).await;
+    assert!(page.body.contains(r#"<html lang="en" data-theme="dark">"#));
+    assert!(page.body.contains(r#"value="dark" aria-pressed="true""#));
+    let login = app
+        .get(
+            "/login",
+            Some(&Session {
+                cookie: "watermelon_theme=dark".into(),
+                csrf: String::new(),
+            }),
+        )
+        .await;
+    assert!(login.body.contains(r#"data-theme="dark""#));
+
+    // "system" forgets the choice; anything unknown counts as "system".
+    let reply = app.submit("/theme", &session, "theme=system").await;
+    assert_eq!(reply.location(), "/", "no Referer: back to the dashboard");
+    assert!(
+        reply.headers[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=0")
+    );
+    let reply = app.submit("/theme", &session, "theme=%3Cscript%3E").await;
+    assert!(
+        reply.headers[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=0")
+    );
+
+    // Like every form, it needs the CSRF token.
+    let reply = app.post("/theme", Some(&session), "theme=dark").await;
+    assert_eq!(reply.status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn the_style_guide_is_only_in_debug_builds() {
+    let app = App::new();
+    let session = app.login().await;
+    let guide = app.get("/styleguide", Some(&session)).await;
+    let dashboard = app.get("/", Some(&session)).await;
+    if cfg!(debug_assertions) {
+        assert_eq!(guide.status, StatusCode::OK);
+        assert!(dashboard.body.contains("Development build"));
+    } else {
+        assert_eq!(guide.status, StatusCode::NOT_FOUND);
+        assert!(
+            !dashboard.body.contains("Development build")
+                && !dashboard.body.contains("/styleguide")
+        );
+    }
+}
+
+#[tokio::test]
+async fn outcomes_are_toasts_and_irreversible_forms_ask_first() {
+    let app = App::new();
+    let session = app.login().await;
+    let created = app.submit("/customers", &session, "name=ACME").await;
+    let page = app.follow(created, &session).await;
+    assert!(
+        page.body
+            .contains(r#"<div class="toast good" role="status">"#),
+        "{}",
+        page.body
+    );
+    assert!(
+        page.body
+            .contains(r#"<dialog class="modal" id="confirm-dialog""#)
+    );
+
+    let customer = app.vault().customers().unwrap().remove(0).id;
+    let key = app
+        .vault()
+        .generate_key(Actor::Cli, customer, "ACME", Algorithm::Curve25519)
+        .unwrap();
+    let page = app
+        .get(&format!("/keys/{}", key.fingerprint), Some(&session))
+        .await;
+    for action in ["revoke", "delete"] {
+        let form = format!(
+            r#"action="/keys/{}/{action}" data-confirm=""#,
+            key.fingerprint
+        );
+        assert!(page.body.contains(&form), "{action} asks first");
+    }
+    assert!(
+        page.body
+            .contains(r#"<input type="checkbox" name="confirm" value="yes" required>"#),
+        "the tick box, for browsers without JavaScript"
+    );
+}
+
+#[tokio::test]
+async fn audit_urls_leave_out_empty_filters() {
+    let app = App::new();
+    let session = app.login().await;
+    // A plain form submission sends every field: redirected to the filters in use.
+    let reply = app
+        .get(
+            "/audit?q=acme&period=&from=&to=&actor=admin&action=",
+            Some(&session),
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER);
+    assert_eq!(reply.location(), "/audit?q=acme&actor=admin");
+    let reply = app.get("/audit?q=&period=", Some(&session)).await;
+    assert_eq!(reply.location(), "/audit");
+    // Links with only real filters are left alone, in any order.
+    let page = app
+        .get("/audit?action=file.processed&period=24h", Some(&session))
+        .await;
+    assert_eq!(page.status, StatusCode::OK);
+
+    // htmx pushes the URL into the address bar itself: it's told the clean one.
+    let request = Request::get("/audit?q=acme&period=&actor=")
+        .header("hx-request", "true")
+        .header(header::COOKIE, &session.cookie);
+    let reply = app.send(request.body(Body::empty()).unwrap()).await;
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(reply.headers["hx-push-url"], "/audit?q=acme");
+}
+
+#[tokio::test]
 async fn unknown_things_are_404() {
     let app = App::new();
     let session = app.login().await;
@@ -729,15 +1113,20 @@ async fn audit_log_search_time_actor_chips_and_csv() {
     let found = app.get("/audit?q=exports%40acme", Some(&session)).await;
     assert!(found.body.contains("1 event"), "{}", found.body);
     assert!(found.body.contains("key.generate"));
-    assert!(found.body.contains("“exports@acme” ×"), "chip shown");
+    assert!(
+        found
+            .body
+            .contains(r#"title="Remove this filter">“exports@acme”"#),
+        "chip shown"
+    );
     assert!(found.body.contains(r#"href="/audit">Clear all"#));
     let none = app.get("/audit?q=nothing+like+this", Some(&session)).await;
-    assert!(none.body.contains("0 events") && none.body.contains("No events."));
+    assert!(none.body.contains("0 events") && none.body.contains("No events"));
 
     // Who did it.
     let web = app.get("/audit?actor=admin", Some(&session)).await;
     assert!(web.body.contains("admin.login") && !web.body.contains("customer.create"));
-    assert!(web.body.contains("Web UI (admin) ×"));
+    assert!(web.body.contains(">Web UI (admin)<"));
 
     // Time: a period, a custom range, a bad date.
     let recent = app.get("/audit?period=1h", Some(&session)).await;
@@ -746,7 +1135,7 @@ async fn audit_log_search_time_actor_chips_and_csv() {
         .get("/audit?from=2001-01-01&to=2001-12-31", Some(&session))
         .await;
     assert!(past.body.contains("0 events"));
-    assert!(past.body.contains("2001-01-01 – 2001-12-31 ×"));
+    assert!(past.body.contains(">2001-01-01 – 2001-12-31<"));
     let bad = app.get("/audit?from=yesterday", Some(&session)).await;
     assert_eq!(bad.status, StatusCode::OK);
     assert!(bad.body.contains("Ignored the from date"));

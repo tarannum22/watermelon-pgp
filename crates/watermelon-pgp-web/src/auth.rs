@@ -21,10 +21,12 @@ use rand::{RngCore, rngs::OsRng};
 use serde::de::DeserializeOwned;
 use sha2::{Digest, Sha256};
 
-use crate::{AppState, error::AppError};
+use crate::{AppState, error::AppError, ui::Theme};
 
 pub const SESSION_COOKIE: &str = "watermelon_session";
 pub const CSRF_FIELD: &str = "_csrf";
+/// The colour scheme the user picked. Not a secret, but kept HttpOnly like the rest.
+pub const THEME_COOKIE: &str = "watermelon_theme";
 /// A session ends after this long without a request...
 const IDLE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// ...and in any case this long after login.
@@ -157,6 +159,33 @@ pub fn clear_cookie(secure: bool) -> HeaderValue {
     .expect("static cookie")
 }
 
+/// Remember the theme for a year; "system" forgets it.
+pub fn theme_cookie(theme: Theme, secure: bool) -> HeaderValue {
+    let secure = if secure { "; Secure" } else { "" };
+    let value = match theme.attribute() {
+        Some(value) => format!(
+            "{THEME_COOKIE}={value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000{secure}"
+        ),
+        None => format!("{THEME_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0{secure}"),
+    };
+    HeaderValue::from_str(&value).expect("static cookie")
+}
+
+fn theme(headers: &HeaderMap) -> Theme {
+    cookie(headers, THEME_COOKIE).map_or(Theme::System, Theme::from_value)
+}
+
+/// The theme the user picked, for pages without a login (the login page).
+pub struct ThemeChoice(pub Theme);
+
+impl<S: Send + Sync> FromRequestParts<S> for ThemeChoice {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        Ok(Self(theme(&parts.headers)))
+    }
+}
+
 fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers
         .get_all(header::COOKIE)
@@ -181,6 +210,7 @@ pub struct Authed {
     pub key: SessionKey,
     pub csrf: String,
     pub client: String,
+    pub theme: Theme,
 }
 
 impl Authed {
@@ -204,6 +234,7 @@ impl Authed {
             key,
             csrf,
             client: client(parts),
+            theme: theme(&parts.headers),
         })
     }
 }

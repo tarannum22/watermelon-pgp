@@ -1,4 +1,8 @@
-use axum::{extract::State, response::Redirect};
+use axum::{
+    extract::State,
+    http::{HeaderMap, header},
+    response::{IntoResponse, Redirect, Response},
+};
 use maud::{Markup, html};
 use serde::Deserialize;
 use watermelon_pgp_core::{audit::Actor, vault::MIN_ADMIN_PASSWORD_LEN};
@@ -6,38 +10,91 @@ use zeroize::Zeroizing;
 
 use crate::{
     AppState,
-    auth::{Authed, Posted},
+    auth::{self, Authed, Posted},
     error::AppError,
+    ui::{self, Icon, Theme, Tone},
     views::{self, Nav},
 };
 
 pub async fn show(State(state): State<AppState>, auth: Authed) -> Markup {
     let page = state.page(&auth, "Settings", Nav::Settings);
+    let min = MIN_ADMIN_PASSWORD_LEN.to_string();
+    let hint = format!(
+        "At least {MIN_ADMIN_PASSWORD_LEN} characters. Other open sessions are logged out."
+    );
     views::layout(
         page,
         html! {
-            h1 { "Settings" }
-            section.card {
-                h2 { "Admin password" }
-                form.stack method="post" action="/settings/password" {
-                    (views::csrf_field(&auth.csrf))
-                    label { "Current password" input type="password" name="current" required autocomplete="current-password"; }
-                    label { "New password" input type="password" name="new" required minlength=(MIN_ADMIN_PASSWORD_LEN) autocomplete="new-password"; }
-                    label { "Repeat new password" input type="password" name="repeat" required minlength=(MIN_ADMIN_PASSWORD_LEN) autocomplete="new-password"; }
-                    p.hint { "At least " (MIN_ADMIN_PASSWORD_LEN) " characters. Other open sessions are logged out." }
-                    button.primary type="submit" { "Change password" }
+            (ui::page_header("Settings").subtitle(html! { "WatermelonPGP " (views::VERSION) }))
+            div.grid-2 {
+                (ui::panel(html! {
+                    form.form method="post" action="/settings/password" {
+                        (views::csrf_field(&auth.csrf))
+                        (ui::field("Current password", None, html! { input type="password" name="current" required autocomplete="current-password"; }))
+                        (ui::field("New password", Some(&hint), html! { input type="password" name="new" required minlength=(min) autocomplete="new-password"; }))
+                        (ui::field("Repeat new password", None, html! { input type="password" name="repeat" required minlength=(min) autocomplete="new-password"; }))
+                        div.actions { (ui::button("Change password").primary()) }
+                    }
+                }).title("Admin password").icon(Icon::Lock))
+                div.stack {
+                    (ui::panel(html! {
+                        p { "Follow the system setting, or pick one. Remembered in this browser." }
+                        (ui::theme_switch(views::csrf_field(&auth.csrf), auth.theme))
+                    }).title("Appearance").icon(Icon::Sun))
+                    (ui::panel(html! {
+                        p { "Take a consistent snapshot of the database on the server:" }
+                        (ui::terminal(html! { "watermelon backup /backups/watermelon-$(date +%F).db" }))
+                        (ui::alert(Tone::Warn, None, html! {
+                            "The master key is not part of the backup. Keep a copy of it somewhere else, "
+                            "or the secret keys in the backup are unrecoverable."
+                        }))
+                    }).title("Backups").icon(Icon::Download))
                 }
             }
-            section.card {
-                h2 { "Backups" }
-                p {
-                    "Run " code { "watermelon backup <file>" } " on the server for a consistent snapshot of the database. "
-                    "The master key is not part of it: keep a copy of it somewhere else, or the secret keys in the backup are unrecoverable."
-                }
-            }
-            p.muted { "watermelon-pgp " (views::VERSION) }
         },
     )
+}
+
+#[derive(Deserialize)]
+pub struct ThemeForm {
+    theme: String,
+}
+
+/// Remember the chosen theme, then go back to the page the switch was on.
+pub async fn set_theme(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    posted: Posted<ThemeForm>,
+) -> Response {
+    let theme = Theme::from_value(&posted.form.theme);
+    let back = headers
+        .get(header::REFERER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(local_path)
+        .unwrap_or("/")
+        .to_owned();
+    (
+        [(
+            header::SET_COOKIE,
+            auth::theme_cookie(theme, state.config().secure_cookies),
+        )],
+        Redirect::to(&back),
+    )
+        .into_response()
+}
+
+/// The path and query of a URL, if it is safe to redirect to (same site, not `//host`).
+fn local_path(url: &str) -> Option<&str> {
+    let path = match url.split_once("://") {
+        Some((_, rest)) => &rest[rest.find('/')?..],
+        None => url,
+    };
+    // Browsers drop tabs and newlines from URLs, so `/\t/evil.com` would mean `//evil.com`.
+    (path.starts_with('/')
+        && !path.starts_with("//")
+        && !path.contains('\\')
+        && !path.contains(|c: char| c.is_control()))
+    .then_some(path)
 }
 
 #[derive(Deserialize)]
@@ -85,4 +142,23 @@ pub async fn change_password(
     }
     .await;
     state.done(&auth, "/settings", outcome)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_path;
+
+    #[test]
+    fn only_local_paths_are_redirect_targets() {
+        assert_eq!(
+            local_path("http://localhost:8080/jobs/3?x=1"),
+            Some("/jobs/3?x=1")
+        );
+        assert_eq!(local_path("https://example.com"), None);
+        assert_eq!(local_path("https://example.com//evil.com/"), None);
+        assert_eq!(local_path("/audit"), Some("/audit"));
+        assert_eq!(local_path("/\\evil.com"), None);
+        assert_eq!(local_path("/\t/evil.com"), None);
+        assert_eq!(local_path("/\n/evil.com"), None);
+    }
 }

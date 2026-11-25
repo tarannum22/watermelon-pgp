@@ -1,0 +1,47 @@
+/* Page-specific layout. Anything reusable belongs in components.css instead. */
+
+/* A main column with a narrower one beside it (customers list and its form). */
+.dashboard-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: var(--space-5); align-items: start; }
+@media (max-width: 1100px) { .dashboard-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* Forms read better at a limited width. */
+.job-form { max-width: 920px; }
+
+.getting-started { margin: 0; padding-left: var(--space-5); display: flex; flex-direction: column; gap: var(--space-2); }
+
+/* Job form: only the settings for the chosen kind of job. */
+form.job-form:has(input[name="kind"][value="decrypt"]:checked) .encrypt-only,
+form.job-form:has(input[name="kind"][value="encrypt"]:checked) .decrypt-only { display: none; }
+
+/* Key page: fingerprint, then the details in two columns. */
+.key-details { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-5) var(--space-8); align-items: start; }
+@media (max-width: 1100px) { .key-details { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .key-details .fpr-box { grid-column: 1 / -1; } }
+@media (max-width: 640px) { .key-details { grid-template-columns: minmax(0, 1fr); } }
+
+/* Audit log: the active filters line. */
+.summary { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--color-text-muted); }
+.summary strong { color: var(--color-text); }
+
+/* Style guide (debug builds). */
+.toast-demo .toasts { position: static; width: auto; }
+.toast-demo .toast.good { animation: none; }
+.swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--space-3); }
+.swatch { border: 1px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; font-size: var(--text-xs); font-family: var(--font-mono); }
+.swatch > span { display: block; height: 44px; border-bottom: 1px solid var(--color-border); }
+.swatch code { display: block; padding: var(--space-2); background: none; }
+.specimen { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.type-scale > * + * { margin-top: var(--space-3); }
+.sw-bg { background: var(--color-bg); }
+.sw-surface { background: var(--color-surface); }
+.sw-surface-sunken { background: var(--color-surface-sunken); }
+.sw-surface-muted { background: var(--color-surface-muted); }
+.sw-text { background: var(--color-text); }
+.sw-text-muted { background: var(--color-text-muted); }
+.sw-border { background: var(--color-border); }
+.sw-primary { background: var(--color-primary); }
+.sw-primary-soft { background: var(--color-primary-soft); }
+.sw-warn { background: var(--color-warn); }
+.sw-warn-soft { background: var(--color-warn-soft); }
+.sw-bad { background: var(--color-bad); }
+.sw-bad-soft { background: var(--color-bad-soft); }
+.sw-terminal-bg { background: var(--color-terminal-bg); }

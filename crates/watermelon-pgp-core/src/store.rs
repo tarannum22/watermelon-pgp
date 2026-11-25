@@ -95,6 +95,35 @@ CREATE INDEX audit_events_job ON audit_events (job_id, id);
 CREATE INDEX audit_events_key ON audit_events (key_fingerprint, id);
 CREATE INDEX audit_events_action ON audit_events (action, at);
 "#,
+    // v4: anonymous keys, which belong to no customer. SQLite can't drop a NOT NULL
+    // constraint, so the table is rebuilt (with foreign keys off, see `migrate`).
+    r#"
+CREATE TABLE keys_new (
+    id            INTEGER PRIMARY KEY,
+    customer_id   INTEGER REFERENCES customers(id),
+    fingerprint   TEXT NOT NULL UNIQUE,
+    user_ids      TEXT NOT NULL,
+    algorithm     TEXT NOT NULL,
+    created_at    INTEGER NOT NULL,
+    expires_at    INTEGER,
+    revoked       INTEGER NOT NULL,
+    can_encrypt   INTEGER NOT NULL,
+    can_sign      INTEGER NOT NULL,
+    public_cert   BLOB NOT NULL,
+    sealed_secret BLOB,
+    added_at      INTEGER NOT NULL,
+    deleted_at    INTEGER
+);
+INSERT INTO keys_new (id, customer_id, fingerprint, user_ids, algorithm, created_at, expires_at,
+                      revoked, can_encrypt, can_sign, public_cert, sealed_secret, added_at,
+                      deleted_at)
+    SELECT id, customer_id, fingerprint, user_ids, algorithm, created_at, expires_at, revoked,
+           can_encrypt, can_sign, public_cert, sealed_secret, added_at, deleted_at
+    FROM keys;
+DROP TABLE keys;
+ALTER TABLE keys_new RENAME TO keys;
+CREATE INDEX keys_customer ON keys(customer_id);
+"#,
 ];
 
 pub struct Store {
@@ -108,12 +137,31 @@ pub struct Customer {
     pub created_at: i64,
 }
 
+/// Whose key it is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyOwner {
+    Customer {
+        id: i64,
+        name: String,
+    },
+    /// An anonymous key, which belongs to no customer.
+    Anonymous,
+}
+
+impl KeyOwner {
+    pub fn customer_id(&self) -> Option<i64> {
+        match self {
+            KeyOwner::Customer { id, .. } => Some(*id),
+            KeyOwner::Anonymous => None,
+        }
+    }
+}
+
 /// A stored key, without its secret material.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyRecord {
     pub id: i64,
-    pub customer_id: i64,
-    pub customer_name: String,
+    pub owner: KeyOwner,
     pub fingerprint: String,
     pub user_ids: Vec<String>,
     pub algorithm: String,
@@ -138,7 +186,7 @@ impl KeyRecord {
 
 /// Everything needed to insert or replace a key row.
 pub struct KeyRow<'a> {
-    pub customer_id: i64,
+    pub customer_id: Option<i64>,
     pub fingerprint: &'a str,
     pub user_ids: &'a [String],
     pub algorithm: &'a str,
@@ -157,23 +205,25 @@ const KEY_COLUMNS: &str = "k.id, k.customer_id, c.name, k.fingerprint, k.user_id
 
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
-        Self::init(Connection::open(path)?)
+        Self::init(Connection::open(path)?, Some(path))
     }
 
     pub fn open_in_memory() -> Result<Self> {
-        Self::init(Connection::open_in_memory()?)
+        Self::init(Connection::open_in_memory()?, None)
     }
 
-    fn init(conn: Connection) -> Result<Self> {
+    fn init(conn: Connection, path: Option<&Path>) -> Result<Self> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(std::time::Duration::from_secs(5))?;
         let store = Self { conn };
-        store.migrate()?;
+        store.migrate(path)?;
         Ok(store)
     }
 
-    fn migrate(&self) -> Result<()> {
+    /// Bring the schema up to date. Before changing an existing database file, keep a copy of
+    /// it as it was ([`snapshot_path`]): older builds can't open the upgraded one.
+    fn migrate(&self, path: Option<&Path>) -> Result<()> {
         let applied: i64 = self
             .conn
             .pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -184,11 +234,54 @@ impl Store {
                 MIGRATIONS.len()
             )));
         }
-        for (version, sql) in MIGRATIONS.iter().enumerate().skip(applied) {
-            let tx = self.conn.unchecked_transaction()?;
-            tx.execute_batch(sql)?;
-            tx.pragma_update(None, "user_version", version as i64 + 1)?;
-            tx.commit()?;
+        if applied == MIGRATIONS.len() {
+            return Ok(());
+        }
+        if applied > 0
+            && let Some(path) = path
+        {
+            self.snapshot_before_upgrade(&snapshot_path(path, applied))?;
+        }
+        // Rebuilding a table other tables refer to needs foreign keys off (they can only be
+        // switched outside a transaction); check them all before switching them back on.
+        self.conn.pragma_update(None, "foreign_keys", "OFF")?;
+        let result = (|| {
+            for (version, sql) in MIGRATIONS.iter().enumerate().skip(applied) {
+                let tx = self.conn.unchecked_transaction()?;
+                tx.execute_batch(sql)?;
+                let broken: i64 =
+                    tx.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |row| {
+                        row.get(0)
+                    })?;
+                if broken > 0 {
+                    return Err(Error::Invalid(format!(
+                        "schema migration {} would break {broken} references",
+                        version + 1
+                    )));
+                }
+                tx.pragma_update(None, "user_version", version as i64 + 1)?;
+                tx.commit()?;
+            }
+            Ok(())
+        })();
+        self.conn.pragma_update(None, "foreign_keys", "ON")?;
+        result
+    }
+
+    /// Copy the database to `dest`, readable only by us. An existing copy is kept: it is the
+    /// same schema version, taken by an earlier upgrade attempt.
+    fn snapshot_before_upgrade(&self, dest: &Path) -> Result<()> {
+        if dest.exists() {
+            return Ok(());
+        }
+        let name = dest
+            .to_str()
+            .ok_or_else(|| Error::Invalid("database path must be valid UTF-8".into()))?;
+        // VACUUM INTO accepts an empty file, so create it private first.
+        crate::platform::write_private_file(dest, &[])?;
+        if let Err(e) = self.conn.execute("VACUUM INTO ?1", [name]) {
+            let _ = std::fs::remove_file(dest);
+            return Err(e.into());
         }
         Ok(())
     }
@@ -219,6 +312,14 @@ impl Store {
         self.conn.execute("VACUUM INTO ?1", [dest])?;
         Ok(())
     }
+}
+
+/// Where [`Store::open`] keeps the database as it was before upgrading it from schema `version`:
+/// `watermelon.db` → `watermelon.db.schema-v3.bak`.
+pub fn snapshot_path(db: &Path, version: usize) -> std::path::PathBuf {
+    let mut name = db.as_os_str().to_owned();
+    name.push(format!(".schema-v{version}.bak"));
+    name.into()
 }
 
 pub fn get_setting(conn: &Connection, name: &str) -> Result<Option<String>> {
@@ -334,7 +435,7 @@ pub fn key_by_fingerprint(conn: &Connection, fingerprint: &str) -> Result<Option
     Ok(conn
         .query_row(
             &format!(
-                "SELECT {KEY_COLUMNS} FROM keys k JOIN customers c ON c.id = k.customer_id
+                "SELECT {KEY_COLUMNS} FROM keys k LEFT JOIN customers c ON c.id = k.customer_id
                  WHERE k.fingerprint = ?1"
             ),
             [fingerprint],
@@ -343,12 +444,12 @@ pub fn key_by_fingerprint(conn: &Connection, fingerprint: &str) -> Result<Option
         .optional()?)
 }
 
-/// Active (not deleted) keys, optionally for one customer.
+/// Active (not deleted) keys, optionally for one customer. Anonymous keys come last.
 pub fn keys(conn: &Connection, customer_id: Option<i64>) -> Result<Vec<KeyRecord>> {
     let mut stmt = conn.prepare(&format!(
-        "SELECT {KEY_COLUMNS} FROM keys k JOIN customers c ON c.id = k.customer_id
+        "SELECT {KEY_COLUMNS} FROM keys k LEFT JOIN customers c ON c.id = k.customer_id
          WHERE k.deleted_at IS NULL AND (?1 IS NULL OR k.customer_id = ?1)
-         ORDER BY c.name, k.user_ids"
+         ORDER BY c.name IS NULL, c.name, k.user_ids"
     ))?;
     let rows = stmt.query_map([customer_id], key_from_row)?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -388,10 +489,13 @@ pub fn soft_delete_key(conn: &Connection, fingerprint: &str, now: i64) -> Result
 
 fn key_from_row(row: &Row<'_>) -> rusqlite::Result<KeyRecord> {
     let user_ids: String = row.get(4)?;
+    let owner = match (row.get(1)?, row.get(2)?) {
+        (Some(id), Some(name)) => KeyOwner::Customer { id, name },
+        _ => KeyOwner::Anonymous,
+    };
     Ok(KeyRecord {
         id: row.get(0)?,
-        customer_id: row.get(1)?,
-        customer_name: row.get(2)?,
+        owner,
         fingerprint: row.get(3)?,
         user_ids: user_ids
             .split('\n')
@@ -408,4 +512,133 @@ fn key_from_row(row: &Row<'_>) -> rusqlite::Result<KeyRecord> {
         added_at: row.get(12)?,
         deleted_at: row.get(13)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A database as 0.1.0 left it (schema v3), with a key a job uses.
+    fn v3_database() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for sql in &MIGRATIONS[..3] {
+            conn.execute_batch(sql).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 3).unwrap();
+        conn.execute_batch(
+            "INSERT INTO customers (id, name, created_at) VALUES (1, 'ACME', 0);
+             INSERT INTO keys (id, customer_id, fingerprint, user_ids, algorithm, created_at,
+                               revoked, can_encrypt, can_sign, public_cert, sealed_secret,
+                               added_at)
+                 VALUES (7, 1, 'ABCD', 'ACME', 'Ed25519', 0, 0, 1, 1, x'01', x'02', 0);
+             INSERT INTO jobs (id, customer_id, name, kind, input_dir, output_dir, failed_dir,
+                               poll_interval_secs, armor, container, verify_policy, enabled,
+                               created_at, updated_at)
+                 VALUES (3, 1, 'daily', 'encrypt', '/in', '/out', '/in/failed', 30, 0,
+                         'seipd-v1', 'ignore', 1, 0, 0);
+             INSERT INTO job_keys (job_id, fingerprint, role) VALUES (3, 'ABCD', 'recipient');",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn upgrading_a_database_file_keeps_a_copy_older_builds_can_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("watermelon.db");
+        v3_database()
+            .execute("VACUUM INTO ?1", [db.to_str().unwrap()])
+            .unwrap();
+        Store::open(&db).unwrap();
+
+        let copy = snapshot_path(&db, 3);
+        let old = Connection::open(&copy).unwrap();
+        let version: i64 = old
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 3);
+        let keys: i64 = old
+            .query_row("SELECT count(*) FROM keys", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(keys, 1);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&copy).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+
+        // Up to date: opening again neither fails nor takes another copy.
+        std::fs::remove_file(&copy).unwrap();
+        Store::open(&db).unwrap();
+        assert!(!copy.exists());
+    }
+
+    #[test]
+    fn a_new_database_file_has_no_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("watermelon.db");
+        Store::open(&db).unwrap();
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert!(
+            names.iter().all(|name| !name.ends_with(".bak")),
+            "{names:?}"
+        );
+    }
+
+    #[test]
+    fn upgrading_from_0_1_0_keeps_keys_and_allows_anonymous_ones() {
+        let store = Store::init(v3_database(), None).unwrap();
+        let conn = store.conn();
+        let version: i64 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version as usize, MIGRATIONS.len());
+
+        let key = key_by_fingerprint(conn, "ABCD").unwrap().unwrap();
+        assert_eq!(key.id, 7);
+        assert_eq!(
+            key.owner,
+            KeyOwner::Customer {
+                id: 1,
+                name: "ACME".into()
+            }
+        );
+        assert!(key.has_secret);
+
+        // Foreign keys are back on and still hold: the job's key reference, customers.
+        let on: i64 = conn
+            .pragma_query_value(None, "foreign_keys", |row| row.get(0))
+            .unwrap();
+        assert_eq!(on, 1);
+        assert!(
+            conn.execute("INSERT INTO job_keys VALUES (3, 'NOPE', 'recipient')", [])
+                .is_err()
+        );
+        let row = |customer_id, fingerprint| KeyRow {
+            customer_id,
+            fingerprint,
+            user_ids: &[],
+            algorithm: "Ed25519",
+            created_at: 0,
+            expires_at: None,
+            revoked: false,
+            can_encrypt: true,
+            can_sign: true,
+            public_cert: &[1],
+            sealed_secret: None,
+        };
+        assert!(upsert_key(conn, &row(Some(99), "BAD"), 0).is_err());
+
+        // A key without a customer.
+        upsert_key(conn, &row(None, "EF01"), 0).unwrap();
+        let anonymous = key_by_fingerprint(conn, "EF01").unwrap().unwrap();
+        assert_eq!(anonymous.owner, KeyOwner::Anonymous);
+        assert_eq!(keys(conn, None).unwrap().len(), 2);
+        assert_eq!(keys(conn, Some(1)).unwrap().len(), 1);
+    }
 }

@@ -15,7 +15,7 @@ use watermelon_pgp_core::{
     crypto::{self, Algorithm, Container, RevocationReason},
     envelope::MasterKey,
     jobs::{Job, JobKind, JobSpec, VerifyPolicy},
-    store::KeyRecord,
+    store::{KeyOwner, KeyRecord},
     vault::{self, Vault},
 };
 use watermelon_pgp_jobs::{Engine, PassReport, scan::Scanner};
@@ -233,9 +233,10 @@ enum CustomerCommand {
 enum KeyCommand {
     /// Generate a new key pair.
     Gen {
-        /// Customer the key belongs to.
+        /// Customer the key belongs to. Without it, the key is anonymous: it belongs to no
+        /// customer.
         #[arg(long)]
-        customer: String,
+        customer: Option<String>,
         /// User ID, e.g. "ACME Exports <exports@acme.example>".
         #[arg(long)]
         uid: String,
@@ -246,9 +247,9 @@ enum KeyCommand {
     },
     /// Import public and/or secret keys from a file (armored or binary).
     Import {
-        /// Customer the keys belong to.
+        /// Customer the keys belong to. Without it, they are anonymous keys.
         #[arg(long)]
-        customer: String,
+        customer: Option<String>,
         /// Key file. Protected secret keys prompt for their passphrase.
         file: PathBuf,
     },
@@ -581,16 +582,16 @@ fn run(vault: &Vault, command: Command, prompt: Prompt) -> Result<()> {
             uid,
             algorithm,
         }) => {
-            let customer = vault.customer(&customer)?;
+            let customer = customer.map(|name| vault.customer(&name)).transpose()?;
             let algorithm = match algorithm {
                 AlgorithmArg::Curve25519 => Algorithm::Curve25519,
                 AlgorithmArg::Rsa4096 => Algorithm::Rsa4096,
             };
-            let key = vault.generate_key(Actor::Cli, customer.id, &uid, algorithm)?;
+            let key = vault.generate_key(Actor::Cli, customer.map(|c| c.id), &uid, algorithm)?;
             println!("Generated {}", key.fingerprint);
         }
         Command::Key(KeyCommand::Import { customer, file }) => {
-            let customer = vault.customer(&customer)?;
+            let customer = customer.map(|name| vault.customer(&name)).transpose()?;
             let data =
                 std::fs::read(&file).with_context(|| format!("reading {}", file.display()))?;
             let locked = crypto::parse_certs(&data)?
@@ -601,7 +602,12 @@ fn run(vault: &Vault, command: Command, prompt: Prompt) -> Result<()> {
             } else {
                 None
             };
-            for key in vault.import_keys(Actor::Cli, customer.id, &data, passphrase.as_deref())? {
+            for key in vault.import_keys(
+                Actor::Cli,
+                customer.map(|c| c.id),
+                &data,
+                passphrase.as_deref(),
+            )? {
                 println!(
                     "Imported or updated {} {} ({})",
                     key.fingerprint,
@@ -850,7 +856,10 @@ fn print_keys(keys: &[KeyRecord]) {
             "{}  {:<10} {:<20} {}  [{}] {}",
             key.fingerprint,
             key.algorithm,
-            key.customer_name,
+            match &key.owner {
+                KeyOwner::Customer { name, .. } => name.as_str(),
+                KeyOwner::Anonymous => "(anonymous)",
+            },
             expires,
             flags.join(", "),
             key.label(),

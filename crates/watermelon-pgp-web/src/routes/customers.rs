@@ -2,7 +2,7 @@ use axum::{
     extract::{Path, State},
     response::Redirect,
 };
-use maud::{Markup, html};
+use maud::{Markup, Render, html};
 use serde::Deserialize;
 use watermelon_pgp_core::{audit::Actor, audit::Filter};
 
@@ -11,6 +11,7 @@ use crate::{
     AppState,
     auth::{Authed, Posted},
     error::AppError,
+    ui::{self, Icon},
     views::{self, Nav},
 };
 
@@ -22,32 +23,39 @@ pub async fn list(State(state): State<AppState>, auth: Authed) -> Result<Markup,
     Ok(views::layout(
         page,
         html! {
-            h1 { "Customers" }
-            @if customers.is_empty() {
-                p.muted { "No customers yet. Keys and jobs always belong to a customer." }
-            } @else {
-                table {
-                    thead { tr { th { "Name" } th.num { "Keys" } th.num { "Jobs" } th { "Created" } } }
-                    tbody {
+            (ui::page_header("Customers")
+                .subtitle(html! { "Every partner you exchange files with, with their keys and jobs." })
+                .actions(ui::button("New customer").primary().icon(Icon::Plus).opens("new-customer").render()))
+            (ui::panel(html! {
+                @if customers.is_empty() {
+                    (ui::empty(Icon::Customers, "No customers yet", "Create the first one to add its keys and jobs.",
+                        Some(ui::button("New customer").primary().icon(Icon::Plus).opens("new-customer").render())))
+                } @else {
+                    (ui::table("", &[ui::col("Name"), ui::num_col("Keys"), ui::num_col("Jobs"), ui::col("Created")], html! {
                         @for customer in &customers {
                             tr {
-                                td { a href={ "/customers/" (customer.id) } { (customer.name) } }
-                                td.num { (keys.iter().filter(|k| k.customer_id == customer.id).count()) }
+                                td {
+                                    a.strong href={ "/customers/" (customer.id) } { (customer.name) }
+                                }
+                                td.num { (keys.iter().filter(|k| k.owner.customer_id() == Some(customer.id)).count()) }
                                 td.num { (jobs.iter().filter(|j| j.customer_id == customer.id).count()) }
                                 td { (views::date(customer.created_at)) }
                             }
                         }
+                    }))
+                }
+            }).flush())
+            (ui::modal("new-customer", "New customer", html! {
+                form.form method="post" action="/customers" {
+                    (views::csrf_field(&auth.csrf))
+                    (ui::field("Name", Some("Usually the company, as you'd look for it later."), html! {
+                        input type="text" name="name" required maxlength="200" placeholder="Alpine Outdoor GmbH" autofocus;
+                    }))
+                    div.actions {
+                        (ui::button("Create customer").primary().icon(Icon::Plus))
                     }
                 }
-            }
-            section.card {
-                h2 { "New customer" }
-                form.inline method="post" action="/customers" {
-                    (views::csrf_field(&auth.csrf))
-                    label { "Name" input type="text" name="name" required maxlength="200"; }
-                    button.primary type="submit" { "Create" }
-                }
-            }
+            }))
         },
     ))
 }
@@ -101,51 +109,56 @@ pub async fn show(
         .await?;
     let names = Names::new(&customers, &jobs);
     let page = state.page(&auth, &customer.name, Nav::Customers);
+    let new_job = format!("/jobs/new?customer={}", customer.id);
+    let all_activity = format!("/audit?customer={}", customer.id);
     Ok(views::layout(
         page,
         html! {
-            p.crumbs { a href="/customers" { "Customers" } " /" }
-            h1 { (customer.name) }
+            (ui::page_header(&customer.name)
+                .crumb("Customers", "/customers")
+                .subtitle(html! { "Customer since " (views::date(customer.created_at)) })
+                .actions(html! {
+                    (ui::button("New job").primary().icon(Icon::Plus).href(&new_job))
+                }))
 
-            section {
-                h2 { "Keys" }
-                (keys::key_table(&keys, false))
-            }
-            div.columns {
-                (keys::generate_form(&auth.csrf, &customer))
-                (keys::import_form(&auth.csrf, &customer))
-            }
-
-            section {
-                h2 { "Jobs" }
-                @if jobs.is_empty() {
-                    p.muted { "No jobs yet." }
-                } @else {
-                    table {
-                        thead { tr { th { "Name" } th { "Kind" } th { "State" } th { "Input → output" } } }
-                        tbody {
-                            @for job in &jobs {
-                                tr {
-                                    td { a href={ "/jobs/" (job.id) } { (job.spec.name) } }
-                                    td { (views::kind_name(job)) }
-                                    td { (views::job_state(job)) }
-                                    td.paths { code { (job.spec.input_dir.display()) } " → " code { (job.spec.output_dir.display()) } }
-                                }
+            (ui::panel(html! {
+                @if keys.is_empty() {
+                    (ui::empty(Icon::Key, "No keys yet", "Generate a key pair, or import the public key the customer sent you.",
+                        Some(html! {
+                            div.btn-row {
+                                (ui::button("Generate key pair").primary().icon(Icon::Key).opens("generate-key"))
+                                (ui::button("Import keys").icon(Icon::Upload).opens("import-keys"))
                             }
-                        }
-                    }
+                        })))
+                } @else {
+                    (views::key_list(&keys.iter().collect::<Vec<_>>(), false))
                 }
-                p { a.button href={ "/jobs/new?customer=" (customer.id) } { "New job" } }
-            }
+            })
+            .title("Keys")
+            .icon(Icon::Key)
+            .actions(html! {
+                (ui::button("Import keys").small().icon(Icon::Upload).opens("import-keys"))
+                (ui::button("Generate key pair").small().icon(Icon::Key).opens("generate-key"))
+            })
+            .flush())
+            (keys::generate_modal(&auth.csrf, keys::Owner::Customer(&customer)))
+            (keys::import_modal(&auth.csrf, keys::Owner::Customer(&customer)))
 
-            section {
-                div.title-row {
-                    h2 { "Recent activity" }
-                    (views::activity_search(Some(("customer", customer.id.to_string()))))
+            (ui::panel(html! {
+                @if jobs.is_empty() {
+                    (ui::empty(Icon::Jobs, "No jobs yet", "A job watches a folder and encrypts or decrypts every file that arrives.",
+                        Some(ui::button("New job").icon(Icon::Plus).href(&new_job).render())))
+                } @else {
+                    (super::jobs::job_table(&jobs, false))
                 }
-                (views::audit_table(&events, &names))
-                p { a href={ "/audit?customer=" (customer.id) } { "All activity for " (customer.name) " →" } }
-            }
+            }).title("Jobs").icon(Icon::Jobs).flush())
+
+            (ui::panel(views::audit_table(&events, &names))
+                .title("Recent activity")
+                .icon(Icon::Activity)
+                .actions(views::activity_search(Some(("customer", customer.id.to_string()))))
+                .flush()
+                .footer(ui::link_arrow(&all_activity, &format!("All activity for {}", customer.name))))
         },
     ))
 }

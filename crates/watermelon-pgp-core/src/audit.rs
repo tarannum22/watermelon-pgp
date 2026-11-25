@@ -117,8 +117,9 @@ impl<'a> Entry<'a> {
         }
     }
 
-    pub fn customer(mut self, id: i64) -> Self {
-        self.customer_id = Some(id);
+    /// The customer concerned; `None` (an anonymous key) is allowed.
+    pub fn customer(mut self, id: impl Into<Option<i64>>) -> Self {
+        self.customer_id = id.into();
         self
     }
 
