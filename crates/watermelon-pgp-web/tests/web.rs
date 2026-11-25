@@ -984,7 +984,7 @@ async fn the_theme_choice_is_a_cookie_and_returns_to_the_page() {
 }
 
 #[tokio::test]
-async fn new_job_lives_in_page_headers_and_the_top_bar_is_search_only() {
+async fn the_top_bar_is_search_only_and_the_dashboard_has_one_new_job() {
     let app = App::new();
     let session = app.login().await;
     let dashboard = app.get("/", Some(&session)).await;
@@ -999,12 +999,11 @@ async fn new_job_lives_in_page_headers_and_the_top_bar_is_search_only() {
             page.body.contains("role=\"search\""),
             "{path} keeps the search"
         );
-        if path != "/" {
-            assert!(
-                !page.body.contains("New job"),
-                "{path} has no top-bar New job"
-            );
-        }
+    }
+    // These pages have no New job in their header, so none comes from the top bar either.
+    for path in ["/keys", "/audit", "/settings"] {
+        let page = app.get(path, Some(&session)).await;
+        assert!(!page.body.contains("New job"), "{path} has no New job");
     }
 }
 
