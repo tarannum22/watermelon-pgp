@@ -13,7 +13,7 @@ made for v1 and what is explicitly deferred.
 **Not v1:** SFTP transfer, multi-user / user management, notifications (webhooks are first after
 v1), keyserver/WKD lookup, web of trust, smartcards/HSM, sign-only / verify-only jobs,
 filesystem-event watching, sealed (passphrase-unlocked) master key, tamper-evident audit log,
-config export/import, Windows as a first-class platform.
+config export/import.
 
 ## Shape
 
@@ -22,9 +22,9 @@ config export/import, Windows as a first-class platform.
   - `watermelon-pgp-jobs` — polling job engine.
   - `watermelon-pgp-web` — the web UI (axum, maud templates, vendored htmx).
   - `watermelon-pgp` — the `watermelon` binary: CLI, and `serve` for web UI + job engine.
-- Single binary, embedded assets. Linux primary, macOS for development; Windows Server in
-  progress (issue #1), so
-  Unix-specific code stays behind a small `platform` module.
+- Single binary, embedded assets. Linux primary, Windows Server supported (x86_64), macOS for
+  development. What differs between them stays behind small `platform` modules (access lists,
+  file locking and attributes, moves).
 - Storage: SQLite in the data dir. Process-level settings (bind address, data dir, master key
   path, TLS cert/key, log format) are CLI flags, each with a `WATERMELON_*` environment variable.
   Everything else lives in the DB and is managed through the GUI.

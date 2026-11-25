@@ -11,12 +11,13 @@ All notable changes to this project are documented here. The format follows
   upgrade backup. It holds the sealed secret keys and the admin password hash; before, it got
   the default permissions.
 
-### Windows (preview for testing, not supported yet)
-- A Windows build is published with each release as a preview for testing:
-  `watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc.zip` (x86_64; the C runtime is linked in, so no
-  Visual C++ redistributable is needed), in `SHA256SUMS` with the other archives. Windows support
-  isn't finished (issue #1): no Windows service and no Windows deployment docs yet. Don't use
-  it in production.
+### Windows Server
+- Windows Server (x86_64) is supported, natively; WSL2 is no longer needed. Each release
+  publishes `watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc.zip` (the C runtime is linked in, so
+  no Visual C++ redistributable is needed), in `SHA256SUMS` with the other archives.
+  `docs/deployment.md` has a Windows Server section: install, the data directory and master
+  key, the service, job folder permissions (including network shares), HTTPS, backups,
+  upgrades and known limits.
 - Secrets are protected with access lists: the data directory, database, master keyfile,
   upgrade backups and exported secret keys are created so that only the account running
   watermelon can access them, ignoring permissive parents such as `C:\ProgramData`.
