@@ -287,8 +287,9 @@ jobs:
           $dir = "$env:ProgramFiles\WatermelonPGP"
           $source = "$PWD\choco\smoke-out"
           $data = "$env:ProgramData\WatermelonPGP"
-          function Choco {
-            & choco @args -y --no-progress
+          # Not named `choco`: function names ignore case, so it would call itself.
+          function Invoke-Choco {
+            & choco.exe @args -y --no-progress
             if ($LASTEXITCODE -ne 0) { throw "choco $args failed ($LASTEXITCODE)" }
           }
           # A new shell's Path: what the package wrote to the registry.
@@ -307,7 +308,7 @@ jobs:
           }
 
           # Install: checksum-verified, on the Path, nothing else set up.
-          Choco install watermelon-pgp --version $version --source $source
+          Invoke-Choco install watermelon-pgp --version $version --source $source
           Update-Path
           $wm = (Get-Command watermelon).Source
           if ($wm -ne "$dir\watermelon.exe") { throw "watermelon on the Path is $wm" }
@@ -324,7 +325,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "service install failed" }
           Start-Service watermelon
           Wait-Healthy
-          Choco install watermelon-pgp --version $version --source $source --force
+          Invoke-Choco install watermelon-pgp --version $version --source $source --force
           if ((Get-Service watermelon).Status -ne 'Running') { throw "the service is not running after the upgrade" }
           Wait-Healthy
           $stops = [regex]::Matches((Get-Content "$data\watermelon.log" -Raw), 'INFO stopped').Count
@@ -337,7 +338,7 @@ jobs:
           # ...and once the service is gone, removes the program and the Path entry, not the data.
           watermelon service uninstall
           if ($LASTEXITCODE -ne 0) { throw "service uninstall failed" }
-          Choco uninstall watermelon-pgp
+          Invoke-Choco uninstall watermelon-pgp
           if (Test-Path $dir) { throw "$dir is still there" }
           $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';'
           if ($machinePath | Where-Object { $_.TrimEnd('\') -ieq $dir }) { throw "$dir is still on the Path" }
