@@ -337,7 +337,8 @@ jobs:
   # because the change can't affect it, red when any job failed, was cancelled or timed out.
   # It reads every job of this run attempt from the API rather than `needs.<job>.result`:
   # that is one value per matrix job, and a cancelled leg (no macOS runner, say) didn't show
-  # there (#31). A re-run attempt lists the jobs it carried over too.
+  # there (#31). A re-run attempt lists the jobs it carried over too. `needs` only orders it
+  # after the others, so it must list every job: one left out could still be running.
   ci-ok:
     needs: [changes, lint, test, test-gnupg, e2e, msrv, audit, docker]
     if: always()
@@ -351,7 +352,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           jobs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
-            --paginate --jq '.jobs[] | select(.name != "ci-ok") | "\(.conclusion // .status)\t\(.name)"')
+            --paginate --jq ".jobs[] | select(.name != \"$GITHUB_JOB\") | \"\\(.conclusion // .status)\\t\\(.name)\"")
           printf '%s\n' "$jobs"
           test -n "$jobs" || { echo "No jobs listed for this run."; exit 1; }
           bad=$(printf '%s\n' "$jobs" | awk -F'\t' '$1 != "success" && $1 != "skipped"')
