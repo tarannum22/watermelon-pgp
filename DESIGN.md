@@ -23,8 +23,8 @@ config export/import.
   - `watermelon-pgp-web` — the web UI (axum, maud templates, vendored htmx).
   - `watermelon-pgp` — the `watermelon` binary: CLI, and `serve` for web UI + job engine.
 - Single binary, embedded assets. Linux primary, Windows Server (x86_64, as a native
-  service), macOS for development. What differs between them stays behind small `platform` modules (access lists,
-  file locking and attributes, moves).
+  service), macOS for development. What differs between them stays behind small `platform`
+  modules (access lists, file locking and attributes, moves).
 - Storage: SQLite in the data dir. Process-level settings (bind address, data dir, master key
   path, TLS cert/key, log format) are CLI flags, each with a `WATERMELON_*` environment variable.
   Everything else lives in the DB and is managed through the GUI.
