@@ -350,7 +350,7 @@ footer a { color: var(--muted); }
         <h3>Easy to run</h3>
         <p>One binary, one SQLite file, no external services.</p>
         <ul>
-          <li>Homebrew, Docker image, or Linux, macOS and Windows binaries</li>
+          <li>Homebrew, Docker image, or Linux, macOS and Windows Server binaries</li>
           <li>Hardened systemd unit, or a native Windows service</li>
           <li>Built-in HTTPS, or behind your reverse proxy</li>
           <li>JSON logs, health endpoint, online backups</li>
@@ -402,7 +402,7 @@ footer a { color: var(--muted); }
       <li><strong>Secret keys encrypted at rest</strong><span>XChaCha20-Poly1305 under a master key kept outside the database. A stolen database alone reveals nothing.</span></li>
       <li><strong>Private by default</strong><span>Listens on localhost only until you configure HTTPS or a reverse proxy.</span></li>
       <li><strong>Hardened web UI</strong><span>Argon2id password, strict session cookies, CSRF protection, login rate limiting, strict Content Security Policy.</span></li>
-      <li><strong>Interoperable and tested</strong><span>Every change is tested against GnuPG 2.2 to 2.5 in both directions, on Linux and macOS.</span></li>
+      <li><strong>Interoperable and tested</strong><span>Every change is tested against GnuPG 2.2 to 2.5 in both directions, on Linux, macOS and Windows Server.</span></li>
       <li><strong>Memory-safe and auditable</strong><span>Written in Rust on rPGP, an independently audited OpenPGP implementation. Open source under MIT or Apache-2.0.</span></li>
     </ul>
   </div>
@@ -437,7 +437,7 @@ docker run -d -p 127.0.0.1:8080:8080 \
 <div class="code"><pre><span class="c"># from the releases page:</span>
 tar xzf watermelon-pgp-v0.3.0-*.tar.gz
 ./watermelon-pgp-v0.3.0-*/watermelon --help
-<span class="c"># Windows: unzip watermelon-pgp-v0.3.0-x86_64-pc-windows-msvc.zip</span></pre></div>
+<span class="c"># Windows: Expand-Archive watermelon-pgp-v0.3.0-x86_64-pc-windows-msvc.zip</span></pre></div>
         <p style="margin:12px 0 0"><a href="https://github.com/tarannum22/watermelon-pgp/releases/latest">Download the latest release →</a></p>
       </div>
     </div>
@@ -477,7 +477,7 @@ watermelon --data-dir ~/watermelon serve   <span class="c"># open http://127.0.0
       </details>
       <details>
         <summary>What does it cost, and where does it run?</summary>
-        <p>It's free and open source under MIT or Apache-2.0. It runs on Linux, macOS and Windows Server: install with Homebrew, run the Docker image, or download the binary. On Windows it runs as a native service.</p>
+        <p>It's free and open source under MIT or Apache-2.0. It runs on Linux, macOS and Windows Server. On Linux and macOS, install with Homebrew, run the Docker image, or download the binary; on Windows Server, download the zip and run it as a native service.</p>
       </details>
     </div>
   </div>
