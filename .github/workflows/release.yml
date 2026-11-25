@@ -22,7 +22,7 @@ env:
 jobs:
   build:
     strategy:
-      # A failed target fails the release, Windows included: the zip is in the
+      # A failed target fails the release, the Windows preview included: the zip is in the
       # release notes and SHA256SUMS, and the dry run on the release branch catches it first.
       fail-fast: true
       matrix:
@@ -37,7 +37,7 @@ jobs:
           # Intel Macs, cross-compiled on Apple silicon.
           - target: x86_64-apple-darwin
             os: macos-latest
-          # A zip instead of a tarball.
+          # A zip instead of a tarball. A preview until Windows support (issue #1) is done.
           - target: x86_64-pc-windows-msvc
             os: windows-latest
     runs-on: ${{ matrix.os }}

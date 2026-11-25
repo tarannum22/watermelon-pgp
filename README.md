@@ -38,8 +38,7 @@ from and write to.
 - **Secure by default.** Secret keys encrypted at rest under a master key kept outside the
   database; loopback-only until you configure HTTPS; hardened sessions, CSRF protection, login
   rate limiting, strict CSP.
-- **Easy to run.** One process (`watermelon serve`), SQLite, a systemd unit, a Docker image and
-  a native Windows service.
+- **Easy to run.** One process (`watermelon serve`), SQLite, a systemd unit and a Docker image.
 
 ## Install
 
@@ -48,9 +47,6 @@ from and write to.
   install message explains).
 - **Release binaries** for Linux (x86_64, arm64) and macOS (Apple silicon, Intel):
   [GitHub releases](https://github.com/tarannum22/watermelon-pgp/releases), with `SHA256SUMS`.
-- **Windows Server** (x86_64): a zip with `watermelon.exe` on the same releases (from the first
-  release after 0.2.0), installed as a Windows service; see
-  [docs/deployment.md](docs/deployment.md#windows-server).
 - **Docker:** `docker pull ghcr.io/tarannum22/watermelon-pgp`, or `docker build -t watermelon-pgp .`
 - **From source:** Rust 1.89 or later, then `cargo build --release`; the binary is
   `target/release/watermelon`.
@@ -158,10 +154,10 @@ The web UI is built from a small design system (tokens, components and a living 
 debug builds): see [docs/design-system.md](docs/design-system.md). The end-to-end tests are
 described in [e2e/README.md](e2e/README.md).
 
-CI runs the tests on Linux and macOS against several GnuPG versions and on Windows Server,
-runs the end-to-end tests, checks formatting, clippy, the minimum Rust version and
-known-vulnerable dependencies, and smoke-tests the Docker image and the Windows service.
-Releases follow the checklist in [docs/releasing.md](docs/releasing.md).
+CI runs the tests on Linux and macOS against several GnuPG versions, runs the end-to-end tests,
+checks formatting, clippy, the minimum Rust version and known-vulnerable dependencies, and
+smoke-tests the Docker image. Releases follow the checklist in
+[docs/releasing.md](docs/releasing.md).
 
 ## License
 
