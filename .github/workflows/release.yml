@@ -42,7 +42,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - name: Check the tag matches the crate version
+      - name: Release tag (checked against the crate version)
         id: version
         shell: bash
         run: |
@@ -139,7 +139,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
       # The dry run builds both platforms without --push; the result stays in the build cache.
-      - name: Build and push
+      - name: Build the image (and push it, except in the dry run)
         run: |
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
           push=(--push)
