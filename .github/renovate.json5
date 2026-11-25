@@ -4,16 +4,19 @@
   $schema: 'https://docs.renovatebot.com/renovate-schema.json',
   extends: [
     'config:recommended',
-    // Monday, 00:00-03:59 UTC.
-    'schedule:weekly',
+    // Once a month: the 1st, 00:00-03:59 UTC. Security fixes are not held to it.
+    'schedule:monthly',
   ],
-  dependencyDashboard: true,
+  dependencyDashboard: {
+    enabled: true,
+  },
   // Match the repo's "Area: subject" commit style: "Deps: update …".
   commitMessagePrefix: 'Deps:',
   commitMessageAction: 'update',
-  // Refresh Cargo.lock and e2e/package-lock.json (default schedule: before 4am on Monday).
+  // Refresh Cargo.lock and e2e/package-lock.json, on the same monthly schedule.
   lockFileMaintenance: {
     enabled: true,
+    schedule: ['* 0-3 1 * *'],
   },
   packageRules: [
     // One PR per ecosystem for minor and patch updates. Major updates stay separate PRs.
@@ -60,24 +63,40 @@
       matchPackageNames: ['dtolnay/rust-toolchain'],
       enabled: false,
     },
-    // Automerge only patch and digest updates of test and CI tooling, after CI passes.
-    // Nothing here ships in the watermelon binary or the Docker image. Rust crates and
-    // base images always wait for a review. Only ci.yml: CI runs on a change to it, but a
-    // change to release.yml or pages.yml alone runs no CI, so those wait for a review too.
+
+    // Automerge: minor, patch and digest updates merge on their own once CI passes.
+    // Renovate merges only when every check on the PR is green; a failing PR stays open.
+    // Versions must be 3 days old first, so a broken release has time to be pulled.
     {
-      matchManagers: ['npm'],
-      matchFileNames: ['e2e/package.json'],
-      matchDepTypes: ['devDependencies'],
-      matchUpdateTypes: ['patch'],
+      matchUpdateTypes: ['minor', 'patch', 'digest'],
       minimumReleaseAge: '3 days',
       automerge: true,
     },
+    // Everything below waits for a manual review and merge.
+    // Major updates.
+    {
+      matchUpdateTypes: ['major'],
+      automerge: false,
+    },
+    // Cargo 0.x minor bumps are breaking, so they count as major.
+    {
+      matchManagers: ['cargo'],
+      matchUpdateTypes: ['minor'],
+      matchCurrentVersion: '/^0\\./',
+      automerge: false,
+    },
+    // Pre-release crates: any bump can break.
+    {
+      matchManagers: ['cargo'],
+      matchCurrentVersion: '/-/',
+      automerge: false,
+    },
+    // CI tests ci.yml changes, but not release.yml (no pull request trigger) or the deploy
+    // steps of pages.yml (main only), so action updates there would merge untested.
     {
       matchManagers: ['github-actions'],
-      matchFileNames: ['.github/workflows/ci.yml'],
-      matchUpdateTypes: ['patch', 'digest'],
-      minimumReleaseAge: '3 days',
-      automerge: true,
+      matchFileNames: ['.github/workflows/release.yml', '.github/workflows/pages.yml'],
+      automerge: false,
     },
   ],
 }
