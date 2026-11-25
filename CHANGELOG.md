@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Windows Server
+- A Chocolatey package: `choco install watermelon-pgp` installs the release's Windows zip,
+  checked against `SHA256SUMS`, into `C:\Program Files\WatermelonPGP` and puts it on the
+  system Path. It doesn't run `init` or `service install`. `choco upgrade` stops a service
+  running that program and starts it again; `choco uninstall` refuses while such a service is
+  installed and leaves the data directory alone. The release workflow builds and smoke-tests
+  it, and pushes it to the Chocolatey community repository.
+
 ## [0.3.0] - 2026-11-25
 
 Windows Server support: a Windows build, a native service, and access lists that protect the

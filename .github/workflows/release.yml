@@ -3,9 +3,10 @@
 #
 # Dry run: start it by hand (Actions > Release > Run workflow, or `gh workflow run release.yml`).
 # It builds and packages all five targets (the Windows zip is smoke-tested), checksums them,
-# writes the release notes and the Homebrew formula, and builds the image for both platforms,
-# all as v<version in Cargo.toml>.
-# It publishes nothing: no GitHub release, no image push, no tap update.
+# writes the release notes and the Homebrew formula, builds the image for both platforms, and
+# builds and smoke-tests the Chocolatey package (install, upgrade with the service running,
+# uninstall), all as v<version in Cargo.toml>.
+# It publishes nothing: no GitHub release, no image push, no tap update, no Chocolatey push.
 name: Release
 
 on:
@@ -160,6 +161,12 @@ jobs:
           merge-multiple: true
       - name: Checksums
         run: cd dist && sha256sum -- *.tar.gz *.zip > SHA256SUMS && cat SHA256SUMS
+      # For the chocolatey job, which builds the package from the same checksums.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: SHA256SUMS
+          path: dist/SHA256SUMS
+          if-no-files-found: error
       - name: Release notes from CHANGELOG.md
         run: |
           awk -v v="${TAG#v}" '
@@ -225,6 +232,146 @@ jobs:
             --label "org.opencontainers.image.version=${TAG#v}" \
             --label "org.opencontainers.image.licenses=MIT OR Apache-2.0" \
             -t "$image:${TAG#v}" -t "$image:latest" "${push[@]}" .
+
+  # The Chocolatey package (packaging/chocolatey), from the Windows zip already built and the
+  # release's SHA256SUMS: no second Rust build. `choco pack` checks the package; the smoke test
+  # installs it, upgrades it while the service runs and uninstalls it. On a tag it installs the
+  # published package from the GitHub release; the dry run, before any release exists, the same
+  # package with a file:// download URL. On a tag it then pushes the package to the community
+  # repository if the CHOCOLATEY_API_KEY secret is set (an API key of the package's maintainer
+  # account on community.chocolatey.org), and otherwise prints how to push it by hand.
+  chocolatey:
+    needs: [build, release]
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      TAG: ${{ needs.build.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: x86_64-pc-windows-msvc
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: SHA256SUMS
+          path: dist
+      - name: Package sources
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          packaging/chocolatey/package_test.sh
+          packaging/chocolatey/package.sh "${TAG#v}" dist/SHA256SUMS choco/package
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            WATERMELON_DOWNLOAD_BASE="file:///$(cygpath -m "$PWD/dist")" \
+              packaging/chocolatey/package.sh "${TAG#v}" dist/SHA256SUMS choco/smoke
+          else
+            cp -R choco/package choco/smoke
+          fi
+          cat choco/package/tools/chocolateyInstall.ps1
+      - name: choco pack
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          foreach ($pkg in 'package', 'smoke') {
+            choco pack "choco\$pkg\watermelon-pgp.nuspec" --out "choco\$pkg-out" --limit-output
+            if ($LASTEXITCODE -ne 0) { throw "choco pack ($pkg) failed" }
+          }
+          Get-ChildItem choco\package-out
+      - name: Smoke test install, upgrade and uninstall
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:TAG.TrimStart('v')
+          $dir = "$env:ProgramFiles\WatermelonPGP"
+          $source = "$PWD\choco\smoke-out"
+          $data = "$env:ProgramData\WatermelonPGP"
+          # Not named `choco`: function names ignore case, so it would call itself.
+          function Invoke-Choco {
+            & choco.exe @args -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "choco $args failed ($LASTEXITCODE)" }
+          }
+          # A new shell's Path: what the package wrote to the registry.
+          function Update-Path {
+            $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
+              [Environment]::GetEnvironmentVariable('Path', 'User')
+          }
+          function Wait-Healthy {
+            for ($i = 0; $i -lt 30; $i++) {
+              try {
+                if ((Invoke-WebRequest http://127.0.0.1:18080/healthz).Content -match '"ok"') { return }
+              } catch {}
+              Start-Sleep 1
+            }
+            throw "/healthz did not answer"
+          }
+
+          # Install: checksum-verified, on the Path, nothing else set up.
+          Invoke-Choco install watermelon-pgp --version $version --source $source
+          Update-Path
+          $wm = (Get-Command watermelon).Source
+          if ($wm -ne "$dir\watermelon.exe") { throw "watermelon on the Path is $wm" }
+          $v = & watermelon --version
+          if ($v -cne "watermelon-pgp $version") { throw "--version: $v" }
+          if (Test-Path $data) { throw "the package created $data" }
+          if (Get-Service watermelon -ErrorAction SilentlyContinue) { throw "the package installed a service" }
+
+          # Upgrade (a forced reinstall runs the same script) while the service runs: it is
+          # stopped cleanly and started again.
+          "release smoke test password" | watermelon --data-dir $data --passphrase-stdin init
+          if ($LASTEXITCODE -ne 0) { throw "init failed" }
+          watermelon --data-dir $data service install --bind 127.0.0.1:18080
+          if ($LASTEXITCODE -ne 0) { throw "service install failed" }
+          Start-Service watermelon
+          Wait-Healthy
+          Invoke-Choco install watermelon-pgp --version $version --source $source --force
+          if ((Get-Service watermelon).Status -ne 'Running') { throw "the service is not running after the upgrade" }
+          Wait-Healthy
+          $stops = [regex]::Matches((Get-Content "$data\watermelon.log" -Raw), 'INFO stopped').Count
+          if ($stops -ne 1) { throw "expected 1 clean stop in the log, found $stops" }
+
+          # Uninstall refuses while the service runs the program...
+          & choco uninstall watermelon-pgp -y --no-progress
+          if ($LASTEXITCODE -eq 0) { throw "choco uninstall succeeded with the service installed" }
+          if (-not (Test-Path "$dir\watermelon.exe")) { throw "the refused uninstall removed watermelon.exe" }
+          # ...and once the service is gone, removes the program and the Path entry, not the data.
+          watermelon service uninstall
+          if ($LASTEXITCODE -ne 0) { throw "service uninstall failed" }
+          Invoke-Choco uninstall watermelon-pgp
+          if (Test-Path $dir) { throw "$dir is still there" }
+          $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';'
+          if ($machinePath | Where-Object { $_.TrimEnd('\') -ieq $dir }) { throw "$dir is still on the Path" }
+          foreach ($file in 'watermelon.db', 'master.key') {
+            if (-not (Test-Path "$data\$file")) { throw "uninstall removed $data\$file" }
+          }
+      - name: Chocolatey and watermelon logs
+        if: failure()
+        shell: pwsh
+        run: |
+          Get-Content "$env:ProgramData\chocolatey\logs\chocolatey.log" -Tail 150 -ErrorAction SilentlyContinue
+          Get-Content "$env:ProgramData\WatermelonPGP\watermelon.log" -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v7
+        with:
+          name: chocolatey
+          path: choco/package-out/*.nupkg
+          if-no-files-found: error
+      - name: Push to the Chocolatey community repository
+        if: github.event_name != 'workflow_dispatch'
+        timeout-minutes: 3
+        shell: pwsh
+        env:
+          CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        run: |
+          $nupkg = "choco\package-out\watermelon-pgp.$($env:TAG.TrimStart('v')).nupkg"
+          if (-not $env:CHOCOLATEY_API_KEY) {
+            "::warning::CHOCOLATEY_API_KEY is not set; push the package by hand (docs/releasing.md):"
+            "  gh run download $env:GITHUB_RUN_ID --repo $env:GITHUB_REPOSITORY --name chocolatey"
+            "  choco push $(Split-Path $nupkg -Leaf) --source https://push.chocolatey.org/ --api-key <key>"
+            exit 0
+          }
+          choco push $nupkg --source https://push.chocolatey.org/ --api-key $env:CHOCOLATEY_API_KEY
+          if ($LASTEXITCODE -ne 0) { throw "choco push failed" }
 
   # Update the Homebrew tap (github.com/tarannum22/homebrew-tap). Needs a repository secret
   # HOMEBREW_TAP_TOKEN: a fine-grained token with contents read/write on the tap repository.

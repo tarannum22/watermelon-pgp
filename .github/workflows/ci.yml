@@ -34,6 +34,7 @@ jobs:
       rust: ${{ github.event_name != 'pull_request' || steps.filter.outputs.rust == 'true' }}
       e2e: ${{ github.event_name != 'pull_request' || steps.filter.outputs.e2e == 'true' }}
       docker: ${{ github.event_name != 'pull_request' || steps.filter.outputs.docker == 'true' }}
+      packaging: ${{ github.event_name != 'pull_request' || steps.filter.outputs.packaging == 'true' }}
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
@@ -52,6 +53,8 @@ jobs:
               - "Dockerfile"
               - ".dockerignore"
               - "contrib/**"
+            packaging:
+              - "packaging/**"
 
   lint:
     needs: changes
@@ -333,6 +336,17 @@ jobs:
           docker logs wm
           test "$(docker inspect wm --format '{{.State.ExitCode}}')" = 0
 
+  # The Chocolatey package generator (packaging/chocolatey/package.sh), without Windows. What
+  # the package does on Windows is smoke-tested by release.yml's chocolatey job, dry run included.
+  packaging:
+    needs: changes
+    if: needs.changes.outputs.packaging == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - run: packaging/chocolatey/package_test.sh
+
   # The one check to require in the ruleset: green when every job passed or was skipped
   # because the change can't affect it, red when any job failed, was cancelled or timed out.
   # It reads every job of this run attempt from the API rather than `needs.<job>.result`:
@@ -340,7 +354,7 @@ jobs:
   # there (#31). A re-run attempt lists the jobs it carried over too. `needs` only orders it
   # after the others, so it must list every job: one left out could still be running.
   ci-ok:
-    needs: [changes, lint, test, test-gnupg, e2e, msrv, audit, docker]
+    needs: [changes, lint, test, test-gnupg, e2e, msrv, audit, docker, packaging]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
