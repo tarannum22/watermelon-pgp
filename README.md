@@ -10,23 +10,27 @@ from and write to.
 
 **Website: [tarannum22.github.io/watermelon-pgp](https://tarannum22.github.io/watermelon-pgp/)**
 
-> **Status: 0.1, the first release.** Everything planned for v1 works and is tested, including
-> against GnuPG 2.2–2.5; expect rough edges. See [DESIGN.md](DESIGN.md) for the decisions behind
-> it and [CHANGELOG.md](CHANGELOG.md) for what's in each release.
+> **Status: 0.2.0.** Everything planned for v1 works and is tested, including against GnuPG
+> 2.2–2.5; expect rough edges. 0.2.0 adds anonymous keys and a new web UI with light and dark
+> themes; upgrading from 0.1.0 upgrades the database and keeps a copy of the old one. See
+> [DESIGN.md](DESIGN.md) for the decisions behind it and [CHANGELOG.md](CHANGELOG.md) for what's
+> in each release.
 
 ## Features
 
 - **Keys per customer.** Generate (Ed25519/Cv25519 or RSA-4096, readable by GnuPG 2.2+),
   import the keys customers send you (public or secret, armored or binary), export public keys,
   export secret keys under a new passphrase, revoke, delete. Expired, expiring and revoked keys
-  are flagged.
+  are flagged. A key can also belong to no customer, such as your own signing key shared by
+  several customers' jobs.
 - **Folder jobs.** Watch a folder and encrypt every file dropped into it for one or more
   recipients (optionally signed), or decrypt incoming files (optionally requiring a valid
   signature). Files are picked up only once fully uploaded, streamed with bounded memory,
   published atomically without overwriting anything, then archived to `processed/` or moved to
   `failed/` with the reason recorded.
 - **Web UI.** Dashboard, customers, keys, jobs and a filterable audit log, in one binary with no
-  external assets. Every page works without JavaScript.
+  external assets. Light and dark themes, following your system or your choice. Every page
+  works without JavaScript. Needs a browser from 2024 or later; older ones get the light theme.
 - **Audit log.** Every change, login, export and processed file (with its SHA-256), append-only.
   Filter by time, who did it, action, customer or job, search names, keys and details, and export
   the result as CSV.
@@ -151,7 +155,8 @@ described in [e2e/README.md](e2e/README.md).
 
 CI runs the tests on Linux and macOS against several GnuPG versions, runs the end-to-end tests,
 checks formatting, clippy, the minimum Rust version and known-vulnerable dependencies, and
-smoke-tests the Docker image.
+smoke-tests the Docker image. Releases follow the checklist in
+[docs/releasing.md](docs/releasing.md).
 
 ## License
 
