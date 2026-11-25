@@ -83,6 +83,10 @@ jobs:
         os: [ubuntu-24.04, ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    env:
+      # Windows: GnuPG's own Windows build from gnupg.org (see "Install GnuPG (Windows)").
+      GNUPG_INSTALLER: gnupg-w32-2.5.24_20260923.exe
+      GNUPG_SHA256: ea6f9dee2cccd83287432625b8b399173805add81d27067fcaf019c0c4da1ad8
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -98,20 +102,19 @@ jobs:
       # GnuPG's own Windows build from gnupg.org: the GnuPG that Gpg4win bundles, without
       # Kleopatra and the rest, 6 MB instead of 45. The installer is cached. To update:
       # download the new gnupg-w32-X.exe and .sig from gnupg.org/ftp/gcrypt/binary, check the
-      # signature against a key from gnupg.org/signature_key.html, and pin its SHA-256 here.
+      # signature against a key from gnupg.org/signature_key.html, and pin its name and
+      # SHA-256 in the job's env. 2.5.24 is signed by "Werner Koch (dist signing 2020)",
+      # 6DAA 6E64 A76D 2840 571B  4902 5288 97B8 2640 3ADA.
       - name: Cache the GnuPG installer
         if: runner.os == 'Windows'
         uses: actions/cache@v6
         with:
           path: ${{ runner.temp }}/gnupg-installer
-          key: gnupg-w32-2.5.24_20260923
+          key: ${{ env.GNUPG_INSTALLER }}
       - name: Install GnuPG (Windows)
         if: runner.os == 'Windows'
         timeout-minutes: 3
         shell: pwsh
-        env:
-          GNUPG_INSTALLER: gnupg-w32-2.5.24_20260923.exe
-          GNUPG_SHA256: ea6f9dee2cccd83287432625b8b399173805add81d27067fcaf019c0c4da1ad8
         run: |
           $dir = "$env:RUNNER_TEMP\gnupg-installer"
           $exe = "$dir\$env:GNUPG_INSTALLER"
@@ -135,6 +138,13 @@ jobs:
           # Put it ahead of the gpg bundled with Git for Windows.
           Add-Content $env:GITHUB_PATH "$target\bin"
       - run: gpg --version
+      # Fail rather than quietly test against the gpg bundled with Git for Windows.
+      - name: Check gpg is the pinned GnuPG (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $gpg = (Get-Command gpg).Source
+          if ($gpg -ne "$env:RUNNER_TEMP\gnupg\bin\gpg.exe") { throw "gpg on PATH is $gpg" }
       # The lint job runs on Linux only; this catches warnings in Windows-only code.
       - name: Clippy (Windows)
         if: runner.os == 'Windows'
