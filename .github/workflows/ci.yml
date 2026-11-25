@@ -3,7 +3,11 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -11,7 +15,40 @@ env:
   WATERMELON_REQUIRE_GPG: "1"
 
 jobs:
+  # Which parts of the repository a pull request touches. Pushes to main and tags skip the
+  # filter and report every part as changed, so every job runs. Website-only changes are
+  # checked by pages.yml.
+  changes:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ github.event_name != 'pull_request' || steps.filter.outputs.rust == 'true' }}
+      e2e: ${{ github.event_name != 'pull_request' || steps.filter.outputs.e2e == 'true' }}
+      docker: ${{ github.event_name != 'pull_request' || steps.filter.outputs.docker == 'true' }}
+    steps:
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v4
+        with:
+          filters: |
+            rust:
+              - "crates/**"
+              - "*.toml"
+              - "Cargo.lock"
+              - ".cargo/**"
+              - ".github/workflows/ci.yml"
+            e2e:
+              - "e2e/**"
+            docker:
+              - "Dockerfile"
+              - ".dockerignore"
+              - "contrib/**"
+
   lint:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -26,6 +63,8 @@ jobs:
   # Runner images: Ubuntu 24.04 (GnuPG 2.4.4), latest Ubuntu (GnuPG 2.4.8 + libgcrypt 1.12.0,
   # see README "Known issues"), macOS (current GnuPG from Homebrew).
   test:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -42,6 +81,8 @@ jobs:
 
   # Further GnuPG versions partners are likely to run: 2.2 (Debian 12) and the newest 2.4.
   test-gnupg:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -61,6 +102,8 @@ jobs:
   # The core user flows in a real browser (Playwright, Chromium) against a real binary.
   # Debug build, so the style guide is checked too.
   e2e:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -89,6 +132,8 @@ jobs:
 
   # The oldest Rust the workspace claims to support (rust-version in Cargo.toml).
   msrv:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -97,6 +142,8 @@ jobs:
 
   # Known vulnerabilities in dependencies (RustSec advisory database).
   audit:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -106,6 +153,8 @@ jobs:
       - run: cargo audit
 
   docker:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -121,3 +170,17 @@ jobs:
           docker stop wm
           docker logs wm
           test "$(docker inspect wm --format '{{.State.ExitCode}}')" = 0
+
+  # The one check to require in the ruleset: green when every job passed or was skipped
+  # because the change can't affect it, red when any job failed or was cancelled.
+  ci-ok:
+    needs: [changes, lint, test, test-gnupg, e2e, msrv, audit, docker]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail if a job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "Some jobs failed or were cancelled."
+          exit 1
+      - run: echo "All needed jobs passed or were skipped."
