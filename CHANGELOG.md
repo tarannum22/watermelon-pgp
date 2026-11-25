@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Packaging
+- Preview Windows build for testing: `watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc.zip` (x86_64,
+  the C runtime linked in, so no Visual C++ redistributable is needed), in `SHA256SUMS` with the
+  other archives. Windows support isn't finished yet (issue #1): no Windows service and no
+  Windows deployment docs. Don't use it in production.
+
 ## [0.2.0] - 2026-11-25
 
 ### Keys
