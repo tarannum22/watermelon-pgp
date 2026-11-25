@@ -72,8 +72,8 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
 
   # Runner images: Ubuntu 24.04 (GnuPG 2.4.4), latest Ubuntu (GnuPG 2.4.8 + libgcrypt 1.12.0,
-  # see README "Known issues"), macOS (current GnuPG from Homebrew), Windows (GnuPG from
-  # Gpg4win, what Windows partners run).
+  # see README "Known issues"), macOS (current GnuPG from Homebrew), Windows (GnuPG's own
+  # Windows build, the one Gpg4win bundles).
   test:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
@@ -95,40 +95,45 @@ jobs:
       - name: Install GnuPG (macOS)
         if: runner.os == 'macOS'
         run: brew install gnupg
-      # Gpg4win straight from gpg4win.org: Chocolatey's feed timed out or hung for 25+ minutes.
-      # The installer is cached, so most runs don't download it. To update: download the new
-      # gpg4win-X.exe and .sig from files.gpg4win.org, check the signature against a GnuPG
-      # release key from gnupg.org/signature_key.html, and pin its SHA-256 here.
-      - name: Cache the Gpg4win installer
+      # GnuPG's own Windows build from gnupg.org: the GnuPG that Gpg4win bundles, without
+      # Kleopatra and the rest. Gpg4win's installer hung (via Chocolatey and directly), and
+      # this one is 6 MB instead of 45. The installer is cached. To update: download the new
+      # gnupg-w32-X.exe and .sig from gnupg.org/ftp/gcrypt/binary, check the signature
+      # against a key from gnupg.org/signature_key.html, and pin its SHA-256 here.
+      - name: Cache the GnuPG installer
         if: runner.os == 'Windows'
         uses: actions/cache@v6
         with:
-          path: ${{ runner.temp }}/gpg4win
-          key: gpg4win-5.1.2
+          path: ${{ runner.temp }}/gnupg-installer
+          key: gnupg-w32-2.5.24_20260923
       - name: Install GnuPG (Windows)
         if: runner.os == 'Windows'
         timeout-minutes: 5
         shell: pwsh
         env:
-          GPG4WIN_VERSION: "5.1.2"
-          GPG4WIN_SHA256: 6bd36865f951c299e559ecb891f22e19b6fa0f4dfedc596f73d259f8365408eb
+          GNUPG_INSTALLER: gnupg-w32-2.5.24_20260923.exe
+          GNUPG_SHA256: ea6f9dee2cccd83287432625b8b399173805add81d27067fcaf019c0c4da1ad8
         run: |
-          $dir = "$env:RUNNER_TEMP\gpg4win"
-          $exe = "$dir\gpg4win-$env:GPG4WIN_VERSION.exe"
+          $dir = "$env:RUNNER_TEMP\gnupg-installer"
+          $exe = "$dir\$env:GNUPG_INSTALLER"
           if (-not (Test-Path $exe)) {
             New-Item -ItemType Directory -Force $dir | Out-Null
-            Invoke-WebRequest "https://files.gpg4win.org/gpg4win-$env:GPG4WIN_VERSION.exe" `
+            Invoke-WebRequest "https://gnupg.org/ftp/gcrypt/binary/$env:GNUPG_INSTALLER" `
               -OutFile $exe -MaximumRetryCount 3 -RetryIntervalSec 5
           }
           $hash = (Get-FileHash $exe -Algorithm SHA256).Hash
-          if ($hash -ne $env:GPG4WIN_SHA256) { throw "gpg4win installer SHA-256 mismatch: $hash" }
-          $p = Start-Process $exe -ArgumentList '/S' -Wait -PassThru
-          if ($p.ExitCode -ne 0) { throw "gpg4win installer exited with $($p.ExitCode)" }
+          if ($hash -ne $env:GNUPG_SHA256) { throw "GnuPG installer SHA-256 mismatch: $hash" }
+          $target = "$env:RUNNER_TEMP\gnupg"
+          $p = Start-Process $exe -ArgumentList '/S', "/D=$target" -PassThru
+          if (-not $p.WaitForExit(120000)) {
+            Get-Process | Sort-Object StartTime -Descending -ErrorAction SilentlyContinue |
+              Select-Object -First 15 Name, Id, StartTime | Format-Table | Out-String | Write-Host
+            throw "GnuPG installer still running after 2 minutes"
+          }
+          if ($p.ExitCode -ne 0) { throw "GnuPG installer exited with $($p.ExitCode)" }
+          if (-not (Test-Path "$target\bin\gpg.exe")) { throw "gpg.exe not found in $target\bin" }
           # Put it ahead of the gpg bundled with Git for Windows.
-          $bin = @("$env:ProgramFiles\GnuPG\bin", "${env:ProgramFiles(x86)}\GnuPG\bin") |
-            Where-Object { Test-Path "$_\gpg.exe" } | Select-Object -First 1
-          if (-not $bin) { throw "gpg.exe not found after installing Gpg4win" }
-          Add-Content $env:GITHUB_PATH $bin
+          Add-Content $env:GITHUB_PATH "$target\bin"
       - run: gpg --version
       # The lint job runs on Linux only; this catches warnings in Windows-only code.
       - name: Clippy (Windows)
