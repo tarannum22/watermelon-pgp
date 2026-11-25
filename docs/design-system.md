@@ -54,7 +54,7 @@ tokens changes it everywhere; a component's CSS changes every use of it.
 | Type | `--font-sans` (Geist), `--font-mono` (JetBrains Mono), `--text-xs` … `--text-2xl`, `--text-stat`, `--text-mono` and `--text-mono-lg` for monospace within text |
 | Spacing | `--space-1` (4px) … `--space-10` (40px), on a 4px grid |
 | Shape | `--radius-sm/md/lg/pill`, `--shadow-sm/md/lg` |
-| Layout | `--sidebar-width`, `--topbar-height`, `--content-max` |
+| Layout | `--sidebar-width`, `--topbar-height`, `--topbar-search-max`, `--content-max` |
 
 Brand colours come from the logo: watermelon green for actions and "good", watermelon red for
 failures and danger, amber for things that need attention.

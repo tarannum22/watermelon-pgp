@@ -96,16 +96,15 @@
   z-index: 20;
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  justify-content: center;
   height: var(--topbar-height);
   padding: 0 var(--space-6);
   background: var(--color-overlay);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--color-border);
 }
-.topbar form { flex: 1; max-width: 460px; }
+.topbar form { flex: 1; max-width: var(--topbar-search-max); }
 .topbar .search { width: 100%; }
-.topbar .spacer { flex: 1; }
 
 .content {
   width: 100%;
@@ -169,6 +168,5 @@
 @media (max-width: 560px) {
   .nav-item .label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .nav-item { padding: var(--space-2); }
-  .topbar .hide-sm, .topbar .spacer { display: none; }
   .topbar form { max-width: none; }
 }
