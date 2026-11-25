@@ -96,10 +96,9 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install gnupg
       # GnuPG's own Windows build from gnupg.org: the GnuPG that Gpg4win bundles, without
-      # Kleopatra and the rest. Gpg4win's installer hung (via Chocolatey and directly), and
-      # this one is 6 MB instead of 45. The installer is cached. To update: download the new
-      # gnupg-w32-X.exe and .sig from gnupg.org/ftp/gcrypt/binary, check the signature
-      # against a key from gnupg.org/signature_key.html, and pin its SHA-256 here.
+      # Kleopatra and the rest, 6 MB instead of 45. The installer is cached. To update:
+      # download the new gnupg-w32-X.exe and .sig from gnupg.org/ftp/gcrypt/binary, check the
+      # signature against a key from gnupg.org/signature_key.html, and pin its SHA-256 here.
       - name: Cache the GnuPG installer
         if: runner.os == 'Windows'
         uses: actions/cache@v6
@@ -108,7 +107,7 @@ jobs:
           key: gnupg-w32-2.5.24_20260923
       - name: Install GnuPG (Windows)
         if: runner.os == 'Windows'
-        timeout-minutes: 5
+        timeout-minutes: 3
         shell: pwsh
         env:
           GNUPG_INSTALLER: gnupg-w32-2.5.24_20260923.exe
@@ -123,15 +122,16 @@ jobs:
           }
           $hash = (Get-FileHash $exe -Algorithm SHA256).Hash
           if ($hash -ne $env:GNUPG_SHA256) { throw "GnuPG installer SHA-256 mismatch: $hash" }
+          # Unpack rather than run the installer: every installer we tried (Gpg4win via
+          # Chocolatey and directly, gnupg-w32) hung in silent mode on this runner. GnuPG finds
+          # its files relative to gpg.exe, so the unpacked tree works as is.
           $target = "$env:RUNNER_TEMP\gnupg"
-          $p = Start-Process $exe -ArgumentList '/S', "/D=$target" -PassThru
-          if (-not $p.WaitForExit(120000)) {
-            Get-Process | Sort-Object StartTime -Descending -ErrorAction SilentlyContinue |
-              Select-Object -First 15 Name, Id, StartTime | Format-Table | Out-String | Write-Host
-            throw "GnuPG installer still running after 2 minutes"
+          & "$env:ProgramFiles\7-Zip\7z.exe" x $exe "-o$target" -y -bso0 -bsp0
+          if ($LASTEXITCODE -ne 0) { throw "7-Zip failed to unpack the GnuPG installer" }
+          if (-not (Test-Path "$target\bin\gpg.exe")) {
+            Get-ChildItem $target -Recurse -Depth 1 | Select-Object -ExpandProperty FullName
+            throw "gpg.exe not found in $target\bin"
           }
-          if ($p.ExitCode -ne 0) { throw "GnuPG installer exited with $($p.ExitCode)" }
-          if (-not (Test-Path "$target\bin\gpg.exe")) { throw "gpg.exe not found in $target\bin" }
           # Put it ahead of the gpg bundled with Git for Windows.
           Add-Content $env:GITHUB_PATH "$target\bin"
       - run: gpg --version
