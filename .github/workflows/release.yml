@@ -257,6 +257,7 @@ jobs:
           name: SHA256SUMS
           path: dist
       - name: Package sources
+        timeout-minutes: 2
         shell: bash
         run: |
           packaging/chocolatey/package_test.sh
@@ -299,7 +300,8 @@ jobs:
             for ($i = 0; $i -lt 30; $i++) {
               try {
                 if ((Invoke-WebRequest http://127.0.0.1:18080/healthz).Content -match '"ok"') { return }
-              } catch { Start-Sleep 1 }
+              } catch {}
+              Start-Sleep 1
             }
             throw "/healthz did not answer"
           }

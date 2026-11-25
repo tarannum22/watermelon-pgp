@@ -6,12 +6,19 @@
 $installDir = Join-Path $env:ProgramFiles 'WatermelonPGP'
 $exe = Join-Path $installDir 'watermelon.exe'
 
+# What the release zip holds (its folder @ZIPDIR@), and so what the package installs and removes.
+$zipDir = '@ZIPDIR@'
+$payload = 'watermelon.exe', 'README.md', 'CHANGELOG.md', 'LICENSE-MIT', 'LICENSE-APACHE', 'docs', 'contrib'
+
 # The Windows services that run this watermelon.exe, whatever their name
-# (`service install --name`). Their command line starts with the quoted program path.
+# (`service install --name`). Their command line starts with the program path, quoted or not.
 function Get-WatermelonService {
   @(Get-CimInstance Win32_Service | Where-Object {
     $path = "$($_.PathName)".Trim()
-    if ($path.StartsWith('"')) { $path = $path.Substring(1).Split('"')[0] }
-    $path -ieq $exe
+    if ($path.StartsWith('"')) {
+      $path.Substring(1).Split('"')[0] -ieq $exe
+    } else {
+      ($path -ieq $exe) -or $path.StartsWith("$exe ", [StringComparison]::OrdinalIgnoreCase)
+    }
   })
 }

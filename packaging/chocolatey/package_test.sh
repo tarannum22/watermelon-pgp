@@ -31,6 +31,7 @@ grep -q 'https://github.com/acme/wm/releases/tag/v1.2.3' "$nuspec" || fail "nusp
 grep -qF "https://github.com/acme/wm/releases/download/v1.2.3/${zip}" "$install" || fail "download URL"
 grep -qF "'${sum}'" "$install" || fail "checksum"
 grep -qF "'sha256'" "$install" || fail "checksum type"
+grep -qF "'watermelon-pgp-v1.2.3-x86_64-pc-windows-msvc'" "$out/tools/common.ps1" || fail "zip folder"
 if grep -rnE '@[A-Z0-9_]+@' "$out"; then fail "placeholders left"; fi
 
 # A local download base, for the dry run's smoke test before the release exists.

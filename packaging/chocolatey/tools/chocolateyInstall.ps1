@@ -10,7 +10,6 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 $version = '@VERSION@'
-$name = "watermelon-pgp-v$version-x86_64-pc-windows-msvc"
 $unzipDir = Join-Path $env:TEMP "watermelon-pgp-$version"
 
 # Unpack outside the package folder, so Chocolatey doesn't shim a copy that changes path with
@@ -19,32 +18,43 @@ if (Test-Path $unzipDir) { Remove-Item $unzipDir -Recurse -Force }
 Install-ChocolateyZipPackage -PackageName $env:ChocolateyPackageName -UnzipLocation $unzipDir `
   -Url64bit '@URL64@' `
   -Checksum64 '@CHECKSUM64@' -ChecksumType64 'sha256'
-$source = Join-Path $unzipDir $name
-if (-not (Test-Path (Join-Path $source 'watermelon.exe'))) { throw "$name.zip has no $name\watermelon.exe" }
+$source = Join-Path $unzipDir $zipDir
+if (-not (Test-Path (Join-Path $source 'watermelon.exe'))) { throw "the zip has no $zipDir\watermelon.exe" }
 
 $running = @(Get-WatermelonService | Where-Object { $_.State -ne 'Stopped' })
 foreach ($service in $running) {
   Write-Host "Stopping the $($service.Name) service to replace watermelon.exe; running jobs finish their current file first."
   Stop-Service -Name $service.Name
 }
+$restartErrors = @()
 try {
-  New-Item -ItemType Directory -Force $installDir | Out-Null
-  # Replace the folders whole, so files a release dropped don't linger.
-  foreach ($dir in 'docs', 'contrib') {
-    $old = Join-Path $installDir $dir
-    if (Test-Path $old) { Remove-Item $old -Recurse -Force }
+  # Fail before changing anything if another program (a `watermelon` outside a service) still
+  # runs the old watermelon.exe: Windows doesn't let a running program be replaced. A service
+  # that just stopped may take a moment to exit.
+  for ($i = 1; Test-Path $exe; $i++) {
+    try { [IO.File]::Open($exe, 'Open', 'ReadWrite', 'None').Close(); break }
+    catch {
+      if ($i -ge 10) { throw "$exe is in use. Stop the watermelon process running it and try again." }
+      Start-Sleep 1
+    }
   }
-  try {
-    Copy-Item (Join-Path $source '*') $installDir -Recurse -Force
-  } catch {
-    throw "Could not copy watermelon-pgp to ${installDir}: $($_.Exception.Message) If a watermelon process outside a service runs from there, stop it and try again."
+  New-Item -ItemType Directory -Force $installDir | Out-Null
+  foreach ($item in $payload) {
+    # Replace folders whole, so files a release dropped don't linger.
+    $old = Join-Path $installDir $item
+    if ((Test-Path $old) -and (Test-Path (Join-Path $source $item) -PathType Container)) { Remove-Item $old -Recurse -Force }
+    Copy-Item (Join-Path $source $item) $installDir -Recurse -Force
   }
 } finally {
+  Remove-Item $unzipDir -Recurse -Force -ErrorAction SilentlyContinue
   foreach ($service in $running) {
     Write-Host "Starting the $($service.Name) service again."
-    Start-Service -Name $service.Name
+    try { Start-Service -Name $service.Name }
+    catch { $restartErrors += "the $($service.Name) service didn't start: $($_.Exception.Message)" }
   }
-  Remove-Item $unzipDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+if ($restartErrors) {
+  throw "watermelon-pgp $version is installed, but $($restartErrors -join '; '). See the log in its data directory (docs/deployment.md, `"The Windows service`")."
 }
 
 Install-ChocolateyPath -PathToInstall $installDir -PathType Machine

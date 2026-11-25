@@ -216,7 +216,7 @@ while the community repository reviews it; until then, install it from the zip.
   their current file first), replaces the files and starts it again, which runs any database
   migration ([Backups and upgrades](#backups-and-upgrades)). A `watermelon` running outside a
   service makes the upgrade fail; stop it and try again.
-- `choco uninstall watermelon-pgp` refuses while a service runs that program. Run
+- `choco uninstall watermelon-pgp` refuses while a service for that program is installed. Run
   `watermelon service uninstall` first, then uninstall again. It removes the program and its
   Path entry, and leaves the data directory and the master key; delete those yourself once
   you no longer need them.

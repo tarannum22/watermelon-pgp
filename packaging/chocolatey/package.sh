@@ -5,7 +5,7 @@
 #   choco pack out/watermelon-pgp.nuspec --out out/      # on Windows: watermelon-pgp.0.4.0.nupkg
 #
 # Used by the release workflow; a manual run gives the same package. The templates next to this
-# script hold @VERSION@, @REPO@, @URL64@ and @CHECKSUM64@. The install script downloads the
+# script hold @VERSION@, @REPO@, @URL64@, @ZIPDIR@ and @CHECKSUM64@. The install script downloads the
 # release's Windows zip from GitHub and checks it against the checksum from SHA256SUMS.
 # WATERMELON_DOWNLOAD_BASE replaces the download folder URL (the release workflow's smoke test
 # uses a file:// URL before the release exists).
@@ -25,7 +25,7 @@ base=${WATERMELON_DOWNLOAD_BASE:-https://github.com/${repo}/releases/download/v$
 mkdir -p "$out/tools"
 fill() {
   sed -e "s|@VERSION@|${version}|g" -e "s|@REPO@|${repo}|g" \
-      -e "s|@URL64@|${base}/${zip}|g" -e "s|@CHECKSUM64@|${checksum}|g" "$here/$1" > "$out/$1"
+      -e "s|@URL64@|${base}/${zip}|g" -e "s|@ZIPDIR@|${zip%.zip}|g" -e "s|@CHECKSUM64@|${checksum}|g" "$here/$1" > "$out/$1"
 }
 fill watermelon-pgp.nuspec
 for script in common.ps1 chocolateyInstall.ps1 chocolateyUninstall.ps1; do

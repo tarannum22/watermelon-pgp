@@ -34,8 +34,8 @@ website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands (after the rel
 - [ ] The release dry run passes on the release branch. It builds and packages every target,
       writes the release notes and the Homebrew formula, builds the image, and builds the
       Chocolatey package and smoke-tests it (job `chocolatey`: install, upgrade with the
-      service running, uninstall), but publishes nothing. The Windows build (`build (x86_64-pc-windows-msvc, windows-latest)`) also
-      smoke-tests the unpacked zip: `--version`, `init` and `/healthz`, and that `watermelon.exe`
+      service running, uninstall), but publishes nothing. The Windows build
+      (`build (x86_64-pc-windows-msvc, windows-latest)`) also smoke-tests the unpacked zip: `--version`, `init` and `/healthz`, and that `watermelon.exe`
       needs no C runtime DLL (`dumpbin /dependents`):
 
   ```sh
