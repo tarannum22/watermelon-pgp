@@ -6,6 +6,9 @@ on:
     tags: ["v*"]
   pull_request:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   # The GnuPG interop tests are a release gate: fail instead of skipping when gpg is missing.
@@ -13,16 +16,17 @@ env:
 
 jobs:
   # Which parts of the repository a pull request touches. Pushes to main and tags skip the
-  # filter and run every job. Website-only changes are checked by pages.yml.
+  # filter and report every part as changed, so every job runs. Website-only changes are
+  # checked by pages.yml.
   changes:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: read
     outputs:
-      rust: ${{ steps.filter.outputs.rust }}
-      e2e: ${{ steps.filter.outputs.e2e }}
-      docker: ${{ steps.filter.outputs.docker }}
+      rust: ${{ github.event_name != 'pull_request' || steps.filter.outputs.rust == 'true' }}
+      e2e: ${{ github.event_name != 'pull_request' || steps.filter.outputs.e2e == 'true' }}
+      docker: ${{ github.event_name != 'pull_request' || steps.filter.outputs.docker == 'true' }}
     steps:
       - id: filter
         if: github.event_name == 'pull_request'
@@ -31,7 +35,7 @@ jobs:
           filters: |
             rust:
               - "crates/**"
-              - "Cargo.toml"
+              - "*.toml"
               - "Cargo.lock"
               - ".cargo/**"
               - ".github/workflows/ci.yml"
@@ -44,7 +48,7 @@ jobs:
 
   lint:
     needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +64,7 @@ jobs:
   # see README "Known issues"), macOS (current GnuPG from Homebrew).
   test:
     needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -76,10 +80,9 @@ jobs:
       - run: cargo test --release
 
   # Further GnuPG versions partners are likely to run: 2.2 (Debian 12) and the newest 2.4.
-  # Never skipped when Rust code changes: these are the GnuPG release gate.
   test-gnupg:
     needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -100,10 +103,7 @@ jobs:
   # Debug build, so the style guide is checked too.
   e2e:
     needs: changes
-    if: >-
-      github.event_name != 'pull_request'
-      || needs.changes.outputs.rust == 'true'
-      || needs.changes.outputs.e2e == 'true'
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.e2e == 'true'
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -133,7 +133,7 @@ jobs:
   # The oldest Rust the workspace claims to support (rust-version in Cargo.toml).
   msrv:
     needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -143,7 +143,7 @@ jobs:
   # Known vulnerabilities in dependencies (RustSec advisory database).
   audit:
     needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -154,10 +154,7 @@ jobs:
 
   docker:
     needs: changes
-    if: >-
-      github.event_name != 'pull_request'
-      || needs.changes.outputs.rust == 'true'
-      || needs.changes.outputs.docker == 'true'
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
