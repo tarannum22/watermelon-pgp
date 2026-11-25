@@ -12,6 +12,7 @@
 use std::{
     ffi::c_void,
     fs, io,
+    mem::offset_of,
     os::windows::{ffi::OsStrExt, io::FromRawHandle},
     path::Path,
     ptr,
@@ -23,24 +24,42 @@ use windows_sys::Win32::{
     },
     Security::{
         ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_REVISION, AddAccessAllowedAceEx,
-        Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT, SetNamedSecurityInfoW},
+        Authorization::{
+            ConvertSidToStringSidW, GetNamedSecurityInfoW, SE_FILE_OBJECT, SetNamedSecurityInfoW,
+        },
         CONTAINER_INHERIT_ACE, CopySid, CreateWellKnownSid, DACL_SECURITY_INFORMATION, EqualSid,
-        GetAce, GetLengthSid, GetTokenInformation, INHERIT_ONLY_ACE, InitializeAcl,
-        InitializeSecurityDescriptor, OBJECT_INHERIT_ACE, PROTECTED_DACL_SECURITY_INFORMATION,
-        PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
-        SECURITY_MAX_SID_SIZE, SetSecurityDescriptorControl, SetSecurityDescriptorDacl,
-        TOKEN_QUERY, TOKEN_USER, TokenUser, WELL_KNOWN_SID_TYPE, WinBuiltinAdministratorsSid,
+        GetAce, GetLengthSid, GetTokenInformation, INHERIT_ONLY_ACE, INHERITED_ACE, InitializeAcl,
+        InitializeSecurityDescriptor, LookupAccountSidW, OBJECT_INHERIT_ACE,
+        PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED,
+        SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE,
+        SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER,
+        TokenUser, WELL_KNOWN_SID_TYPE, WinBuiltinAdministratorsSid, WinCreatorOwnerSid,
         WinLocalSystemSid,
     },
     Storage::FileSystem::{
         CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL,
         FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
     },
-    System::Threading::{GetCurrentProcess, OpenProcessToken},
+    System::{
+        SystemServices::{
+            ACCESS_ALLOWED_ACE_TYPE, ACCESS_ALLOWED_CALLBACK_ACE_TYPE,
+            ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE, ACCESS_ALLOWED_COMPOUND_ACE_TYPE,
+            ACCESS_ALLOWED_OBJECT_ACE_TYPE, SECURITY_DESCRIPTOR_REVISION,
+        },
+        Threading::{GetCurrentProcess, OpenProcessToken},
+    },
 };
 
-/// `ACCESS_ALLOWED_ACE_TYPE` and `ACCESS_ALLOWED_CALLBACK_ACE_TYPE`.
-const ALLOW_ACE_TYPES: [u8; 2] = [0, 9];
+/// Allow entries laid out like ACCESS_ALLOWED_ACE: header, mask, then the SID.
+const SIMPLE_ALLOW_TYPES: [u32; 2] = [ACCESS_ALLOWED_ACE_TYPE, ACCESS_ALLOWED_CALLBACK_ACE_TYPE];
+
+/// Allow entries with other layouts. Unusual on files; rather than parse them, they count as
+/// access by others, so the check fails closed.
+const OTHER_ALLOW_TYPES: [u32; 3] = [
+    ACCESS_ALLOWED_COMPOUND_ACE_TYPE,
+    ACCESS_ALLOWED_OBJECT_ACE_TYPE,
+    ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE,
+];
 
 /// Create a new private file for writing. Fails if `path` exists.
 pub fn create_private_file(path: &Path) -> io::Result<fs::File> {
@@ -88,11 +107,14 @@ pub fn create_private_dir(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Replace `path`'s access list with a private one. For a directory, Windows also replaces
+/// the *inherited* entries of everything inside it; entries set explicitly on a child, or a
+/// child that blocks inheritance, keep their access.
 pub fn make_private(path: &Path) -> io::Result<()> {
-    let acl = private_acl(&current_user()?, fs::metadata(path)?.is_dir())?;
+    let pass_on_to_contents = fs::metadata(path)?.is_dir();
+    let acl = private_acl(&current_user()?, pass_on_to_contents)?;
     let wide = wide(path);
-    // SAFETY: `wide` is NUL-terminated and `acl` is a valid ACL. A protected DACL stops
-    // inheritance; for a directory, Windows passes the new entries on to its contents.
+    // SAFETY: `wide` is NUL-terminated and `acl` is a valid ACL.
     let status = unsafe {
         SetNamedSecurityInfoW(
             wide.as_ptr(),
@@ -104,74 +126,132 @@ pub fn make_private(path: &Path) -> io::Result<()> {
             ptr::null(),
         )
     };
-    win32_result(status)
+    check_status(status)
 }
 
 pub fn is_readable_by_others(path: &Path) -> io::Result<bool> {
-    let trusted = [
-        current_user()?,
-        well_known(WinLocalSystemSid)?,
-        well_known(WinBuiltinAdministratorsSid)?,
-    ];
-    let dacl = Dacl::of(path)?;
-    if dacl.acl.is_null() {
-        // A missing access list grants everyone everything.
-        return Ok(true);
-    }
-    // SAFETY: `dacl.acl` points at a valid ACL owned by `dacl`; GetAce only returns entries
-    // inside it, and every entry starts with an ACE_HEADER.
-    unsafe {
-        for i in 0..u32::from((*dacl.acl).AceCount) {
-            let mut ace: *mut c_void = ptr::null_mut();
-            if GetAce(dacl.acl, i, &mut ace) == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            let header = &*ace.cast::<ACE_HEADER>();
-            if !ALLOW_ACE_TYPES.contains(&header.AceType)
-                || u32::from(header.AceFlags) & INHERIT_ONLY_ACE != 0
-            {
-                continue;
-            }
-            // Both allow types share ACCESS_ALLOWED_ACE's layout up to the SID. Like the Unix
-            // check (mode & 0o077), any access at all counts, not only reading.
-            let allowed = &*ace.cast::<ACCESS_ALLOWED_ACE>();
-            let sid: PSID = (&raw const allowed.SidStart).cast_mut().cast();
-            if allowed.Mask != 0 && !trusted.iter().any(|t| t.equals(sid)) {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
+    Ok(!Others::of(path)?.is_empty())
 }
 
-/// How to fix a file that [`is_readable_by_others`] rejected.
-pub fn restrict_hint(path: &Path) -> String {
-    format!(
-        "icacls \"{}\" /inheritance:r /grant:r \"%USERNAME%:F\"",
-        path.display()
-    )
+/// How to restrict `path` after [`is_readable_by_others`] said others can access it.
+pub fn how_to_restrict(path: &Path) -> String {
+    let account = current_user().map_or_else(
+        |_| "<the account that runs watermelon>".to_owned(),
+        |me| me.account_name(),
+    );
+    let shown = path.display();
+    let mut advice = format!(
+        "restrict it to {account} with `icacls \"{shown}\" /inheritance:r /grant:r \"{account}:F\"`"
+    );
+    let explicit = Others::of(path)
+        .map(|others| others.explicit)
+        .unwrap_or_default();
+    if !explicit.is_empty() {
+        let names: Vec<String> = explicit
+            .iter()
+            .map(|sid| format!("\"{}\"", sid.account_name()))
+            .collect();
+        advice += &format!(", then `icacls \"{shown}\" /remove {}`", names.join(" "));
+    }
+    advice
+}
+
+/// Who other than the trusted accounts can access a file or directory.
+#[derive(Default)]
+struct Others {
+    /// No access list (everyone has full access), or an allow entry we don't parse.
+    unknown: bool,
+    /// Accounts with entries set on the file itself; `icacls /inheritance:r` leaves these.
+    explicit: Vec<Sid>,
+    /// Whether any access comes from an entry inherited from a parent.
+    inherited: bool,
+}
+
+impl Others {
+    fn of(path: &Path) -> io::Result<Self> {
+        let trusted = [
+            current_user()?,
+            well_known(WinLocalSystemSid)?,
+            well_known(WinBuiltinAdministratorsSid)?,
+            // Only appears in entries for new files and folders, and stands for whoever
+            // creates them: that is us.
+            well_known(WinCreatorOwnerSid)?,
+        ];
+        // An entry that applies only to what is created inside a directory doesn't grant
+        // access to the directory itself, but it does to SQLite's -wal and -shm files.
+        let is_dir = fs::metadata(path)?.is_dir();
+        let dacl = Dacl::of(path)?;
+        let mut others = Self::default();
+        if dacl.acl.is_null() {
+            others.unknown = true;
+            return Ok(others);
+        }
+        // SAFETY: `dacl.acl` points at a valid ACL owned by `dacl`; GetAce only returns entries
+        // inside it; every entry starts with an ACE_HEADER, and the simple allow types have
+        // ACCESS_ALLOWED_ACE's layout with the SID (GetLengthSid bytes) at SidStart.
+        unsafe {
+            for i in 0..u32::from((*dacl.acl).AceCount) {
+                let mut ace: *mut c_void = ptr::null_mut();
+                if GetAce(dacl.acl, i, &mut ace) == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                let header = &*ace.cast::<ACE_HEADER>();
+                let ace_type = u32::from(header.AceType);
+                let flags = u32::from(header.AceFlags);
+                if !is_dir && flags & INHERIT_ONLY_ACE != 0 {
+                    continue;
+                }
+                if OTHER_ALLOW_TYPES.contains(&ace_type) {
+                    others.unknown = true;
+                    continue;
+                }
+                if !SIMPLE_ALLOW_TYPES.contains(&ace_type) {
+                    continue;
+                }
+                // Like the Unix check (mode & 0o077), any access at all counts.
+                let mask = (*ace.cast::<ACCESS_ALLOWED_ACE>()).Mask;
+                let sid: PSID = ace.byte_add(offset_of!(ACCESS_ALLOWED_ACE, SidStart));
+                if mask == 0 || trusted.iter().any(|t| t.equals(sid)) {
+                    continue;
+                }
+                if flags & INHERITED_ACE != 0 {
+                    others.inherited = true;
+                } else {
+                    others.explicit.push(Sid::copy(sid)?);
+                }
+            }
+        }
+        Ok(others)
+    }
+
+    fn is_empty(&self) -> bool {
+        !self.unknown && !self.inherited && self.explicit.is_empty()
+    }
 }
 
 /// A security descriptor for new files or directories: protected, current user only.
 struct PrivateSecurity {
-    // Boxed so the pointers in `attributes` stay valid when this struct moves.
+    // Boxed so the pointer in `attributes` stays valid when this struct moves.
     _acl: Box<[u64]>,
-    descriptor: Box<SECURITY_DESCRIPTOR>,
+    _descriptor: Box<SECURITY_DESCRIPTOR>,
     attributes: SECURITY_ATTRIBUTES,
 }
 
 impl PrivateSecurity {
-    /// `inherit`: pass the access entry on to files and folders created inside.
-    fn new(inherit: bool) -> io::Result<Self> {
-        let mut acl = private_acl(&current_user()?, inherit)?;
+    /// `pass_on_to_contents`: give files and folders created inside the same access.
+    fn new(pass_on_to_contents: bool) -> io::Result<Self> {
+        let mut acl = private_acl(&current_user()?, pass_on_to_contents)?;
         // SAFETY: SECURITY_DESCRIPTOR is plain data; Initialize… sets every field we rely on.
         let mut descriptor: Box<SECURITY_DESCRIPTOR> = Box::new(unsafe { std::mem::zeroed() });
         let sd: PSECURITY_DESCRIPTOR = (&raw mut *descriptor).cast();
         // SAFETY: `sd` points at the boxed descriptor; `acl` is a valid ACL kept alive in self.
         unsafe {
-            check(InitializeSecurityDescriptor(sd, 1))?; // SECURITY_DESCRIPTOR_REVISION
-            check(SetSecurityDescriptorDacl(sd, 1, acl.as_mut_ptr().cast(), 0))?;
-            check(SetSecurityDescriptorControl(
+            check_bool(InitializeSecurityDescriptor(
+                sd,
+                SECURITY_DESCRIPTOR_REVISION,
+            ))?;
+            check_bool(SetSecurityDescriptorDacl(sd, 1, acl.as_mut_ptr().cast(), 0))?;
+            check_bool(SetSecurityDescriptorControl(
                 sd,
                 SE_DACL_PROTECTED,
                 SE_DACL_PROTECTED,
@@ -179,35 +259,34 @@ impl PrivateSecurity {
         }
         Ok(Self {
             _acl: acl,
+            _descriptor: descriptor,
             attributes: SECURITY_ATTRIBUTES {
                 nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
                 lpSecurityDescriptor: sd,
                 bInheritHandle: 0,
             },
-            descriptor,
         })
     }
 
     fn attributes(&mut self) -> *mut SECURITY_ATTRIBUTES {
-        self.attributes.lpSecurityDescriptor = (&raw mut *self.descriptor).cast();
         &raw mut self.attributes
     }
 }
 
 /// An access list with one entry: full control for `user`.
-fn private_acl(user: &Sid, inherit: bool) -> io::Result<Box<[u64]>> {
+fn private_acl(user: &Sid, pass_on_to_contents: bool) -> io::Result<Box<[u64]>> {
     let len = size_of::<ACL>() + size_of::<ACCESS_ALLOWED_ACE>() + user.len();
     let mut buf = vec![0u64; len.div_ceil(8)].into_boxed_slice();
     let acl: *mut ACL = buf.as_mut_ptr().cast();
-    let flags = if inherit {
+    let flags = if pass_on_to_contents {
         OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE
     } else {
         0
     };
     // SAFETY: `buf` is 8-byte aligned and `len` bytes long; `user` is a valid SID.
     unsafe {
-        check(InitializeAcl(acl, len as u32, ACL_REVISION))?;
-        check(AddAccessAllowedAceEx(
+        check_bool(InitializeAcl(acl, len as u32, ACL_REVISION))?;
+        check_bool(AddAccessAllowedAceEx(
             acl,
             ACL_REVISION,
             flags,
@@ -229,7 +308,7 @@ impl Sid {
         unsafe {
             let len = GetLengthSid(sid);
             let mut buf = vec![0u32; (len as usize).div_ceil(4)].into_boxed_slice();
-            check(CopySid(len, buf.as_mut_ptr().cast(), sid))?;
+            check_bool(CopySid(len, buf.as_mut_ptr().cast(), sid))?;
             Ok(Self(buf))
         }
     }
@@ -247,6 +326,50 @@ impl Sid {
         // SAFETY: both are valid SIDs.
         unsafe { EqualSid(self.as_psid(), other) != 0 }
     }
+
+    /// `DOMAIN\name` as icacls accepts it, or `*S-1-…` when the account can't be looked up.
+    fn account_name(&self) -> String {
+        let mut name = [0u16; 256];
+        let mut domain = [0u16; 256];
+        let (mut name_len, mut domain_len) = (name.len() as u32, domain.len() as u32);
+        let mut kind = 0;
+        // SAFETY: the buffers and their lengths match; `self` is a valid SID.
+        let found = unsafe {
+            LookupAccountSidW(
+                ptr::null(),
+                self.as_psid(),
+                name.as_mut_ptr(),
+                &mut name_len,
+                domain.as_mut_ptr(),
+                &mut domain_len,
+                &mut kind,
+            )
+        } != 0;
+        if !found {
+            return format!("*{}", self.to_sid_string());
+        }
+        let name = String::from_utf16_lossy(&name[..name_len as usize]);
+        let domain = String::from_utf16_lossy(&domain[..domain_len as usize]);
+        if domain.is_empty() {
+            name
+        } else {
+            format!("{domain}\\{name}")
+        }
+    }
+
+    fn to_sid_string(&self) -> String {
+        let mut text: *mut u16 = ptr::null_mut();
+        // SAFETY: `self` is a valid SID; on success `text` is a NUL-terminated string we free.
+        unsafe {
+            if ConvertSidToStringSidW(self.as_psid(), &mut text) == 0 {
+                return "S-?".to_owned();
+            }
+            let len = (0..).take_while(|&i| *text.add(i) != 0).count();
+            let string = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
+            LocalFree(text.cast());
+            string
+        }
+    }
 }
 
 fn current_user() -> io::Result<Sid> {
@@ -254,7 +377,7 @@ fn current_user() -> io::Result<Sid> {
     // GetTokenInformation call and 8-byte aligned for TOKEN_USER.
     unsafe {
         let mut token: HANDLE = ptr::null_mut();
-        check(OpenProcessToken(
+        check_bool(OpenProcessToken(
             GetCurrentProcess(),
             TOKEN_QUERY,
             &mut token,
@@ -277,7 +400,7 @@ fn well_known(kind: WELL_KNOWN_SID_TYPE) -> io::Result<Sid> {
     let mut len = SECURITY_MAX_SID_SIZE;
     // SAFETY: `buf` holds SECURITY_MAX_SID_SIZE bytes.
     unsafe {
-        check(CreateWellKnownSid(
+        check_bool(CreateWellKnownSid(
             kind,
             ptr::null_mut(),
             buf.as_mut_ptr().cast(),
@@ -313,14 +436,14 @@ impl Dacl {
                 &mut dacl.descriptor,
             )
         };
-        win32_result(status)?;
+        check_status(status)?;
         Ok(dacl)
     }
 }
 
 impl Drop for Dacl {
     fn drop(&mut self) {
-        // SAFETY: allocated by GetNamedSecurityInfoW, freed once.
+        // SAFETY: allocated by GetNamedSecurityInfoW (or null), freed once.
         unsafe { LocalFree(self.descriptor.cast()) };
     }
 }
@@ -329,7 +452,8 @@ fn wide(path: &Path) -> Vec<u16> {
     path.as_os_str().encode_wide().chain([0]).collect()
 }
 
-fn check(ok: impl Into<i32>) -> io::Result<()> {
+/// For Win32 functions that return a BOOL and set the thread's last error.
+fn check_bool(ok: impl Into<i32>) -> io::Result<()> {
     if ok.into() == 0 {
         Err(io::Error::last_os_error())
     } else {
@@ -337,7 +461,8 @@ fn check(ok: impl Into<i32>) -> io::Result<()> {
     }
 }
 
-fn win32_result(status: u32) -> io::Result<()> {
+/// For Win32 functions that return an error code (0 is success).
+fn check_status(status: u32) -> io::Result<()> {
     if status == 0 {
         Ok(())
     } else {
@@ -347,7 +472,7 @@ fn win32_result(status: u32) -> io::Result<()> {
 
 #[cfg(test)]
 pub mod testing {
-    //! Give the local Users group read access, the way `C:\ProgramData` does.
+    //! Give the local Users group access, the way `C:\ProgramData` does.
 
     use super::*;
     use windows_sys::Win32::Security::{
@@ -359,19 +484,30 @@ pub mod testing {
     };
     use windows_sys::Win32::Storage::FileSystem::FILE_GENERIC_READ;
 
-    /// Add an entry letting the local Users group read `path` (and, for a directory, what is
-    /// created inside it), keeping the entries it already has.
+    /// Let the local Users group read `path` (and, for a directory, what is created inside
+    /// it), keeping the entries it already has.
     pub fn grant_users_read(path: &Path) {
+        let inheritance = if path.is_dir() {
+            SUB_CONTAINERS_AND_OBJECTS_INHERIT
+        } else {
+            NO_INHERITANCE
+        };
+        grant_users(path, inheritance);
+    }
+
+    /// Let the local Users group read what is created inside `dir` from now on, but not
+    /// `dir` itself.
+    pub fn grant_users_read_to_new_items(dir: &Path) {
+        grant_users(dir, SUB_CONTAINERS_AND_OBJECTS_INHERIT | INHERIT_ONLY_ACE);
+    }
+
+    fn grant_users(path: &Path, inheritance: u32) {
         let users = well_known(WinBuiltinUsersSid).unwrap();
         let old = Dacl::of(path).unwrap();
         let entry = EXPLICIT_ACCESS_W {
             grfAccessPermissions: FILE_GENERIC_READ,
             grfAccessMode: GRANT_ACCESS,
-            grfInheritance: if path.is_dir() {
-                SUB_CONTAINERS_AND_OBJECTS_INHERIT
-            } else {
-                NO_INHERITANCE
-            },
+            grfInheritance: inheritance,
             Trustee: TRUSTEE_W {
                 pMultipleTrustee: ptr::null_mut(),
                 MultipleTrusteeOperation: 0,
@@ -384,7 +520,7 @@ pub mod testing {
         let wide = wide(path);
         // SAFETY: `entry` names a valid SID; `new` is freed below.
         unsafe {
-            win32_result(SetEntriesInAclW(1, &entry, old.acl, &mut new)).unwrap();
+            check_status(SetEntriesInAclW(1, &entry, old.acl, &mut new)).unwrap();
             let status = SetNamedSecurityInfoW(
                 wide.as_ptr(),
                 SE_FILE_OBJECT,
@@ -395,7 +531,7 @@ pub mod testing {
                 ptr::null(),
             );
             LocalFree(new.cast());
-            win32_result(status).unwrap();
+            check_status(status).unwrap();
         }
     }
 }

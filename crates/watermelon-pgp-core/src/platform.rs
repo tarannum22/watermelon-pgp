@@ -54,7 +54,8 @@ pub fn create_private_dir(path: &Path) -> io::Result<()> {
 /// On Unix an existing directory is left as it is: SQLite gives its `-wal` and `-shm` files
 /// the database file's mode. On Windows those files take their access from the directory,
 /// and the defaults (`C:\ProgramData` lets every local user read) would expose them, so an
-/// existing directory that others can access is made private.
+/// existing directory that others can access is made private. That covers everything created
+/// in it from then on; files already inside keep any access set on them explicitly.
 pub fn secure_data_dir(path: &Path) -> io::Result<()> {
     create_private_dir(path)?;
     #[cfg(windows)]
@@ -75,11 +76,6 @@ pub fn make_private(path: &Path) -> io::Result<()> {
     {
         windows::make_private(path)
     }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = path;
-        Ok(())
-    }
 }
 
 /// Whether users other than the owner can access `path`. Root on Unix, and LocalSystem and
@@ -94,22 +90,17 @@ pub fn is_readable_by_others(path: &Path) -> io::Result<bool> {
     {
         windows::is_readable_by_others(path)
     }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = path;
-        Ok(false)
-    }
 }
 
-/// A command that restricts `path` to the current user, for error messages.
-pub fn restrict_hint(path: &Path) -> String {
+/// How to restrict `path` to the current user, for error messages: "restrict it with `…`".
+pub fn how_to_restrict(path: &Path) -> String {
     #[cfg(windows)]
     {
-        windows::restrict_hint(path)
+        windows::how_to_restrict(path)
     }
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     {
-        format!("chmod 600 {}", path.display())
+        format!("restrict it with `chmod 600 '{}'`", path.display())
     }
 }
 
@@ -127,6 +118,12 @@ pub(crate) mod testing {
         }
         #[cfg(windows)]
         super::windows::testing::grant_users_read(path);
+    }
+
+    /// Windows: give someone else access only to what is created inside `dir` from now on.
+    #[cfg(windows)]
+    pub fn grant_others_read_to_new_items(dir: &std::path::Path) {
+        super::windows::testing::grant_users_read_to_new_items(dir);
     }
 }
 
@@ -196,6 +193,33 @@ mod tests {
         let inside = dir.join("db-wal");
         fs::write(&inside, b"x").unwrap();
         assert!(!is_readable_by_others(&inside).unwrap(), "inherits privacy");
+    }
+
+    /// An entry that only covers new files still exposes SQLite's -wal and -shm files.
+    #[cfg(windows)]
+    #[test]
+    fn counts_access_to_new_items_in_a_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        create_private_dir(&data).unwrap();
+        assert!(!is_readable_by_others(&data).unwrap());
+        super::testing::grant_others_read_to_new_items(&data);
+        assert!(is_readable_by_others(&data).unwrap());
+        secure_data_dir(&data).unwrap();
+        assert!(!is_readable_by_others(&data).unwrap());
+    }
+
+    /// The advice names the accounts to remove when access was granted on the file itself.
+    #[cfg(windows)]
+    #[test]
+    fn how_to_restrict_lists_explicit_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("master.key");
+        write_private_file(&path, b"x").unwrap();
+        grant_others_read(&path);
+        let advice = how_to_restrict(&path);
+        assert!(advice.contains("/inheritance:r /grant:r"), "{advice}");
+        assert!(advice.contains("/remove \"BUILTIN\\Users\""), "{advice}");
     }
 
     #[cfg(windows)]

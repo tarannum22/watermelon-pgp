@@ -900,7 +900,7 @@ impl Prompt {
 
 fn write_new_file(path: &Path, contents: &[u8], private: bool) -> Result<()> {
     let written = if private {
-        watermelon_pgp_core::platform::write_private_file(path, contents)
+        watermelon_pgp_core::write_private_file(path, contents)
     } else {
         std::fs::OpenOptions::new()
             .write(true)

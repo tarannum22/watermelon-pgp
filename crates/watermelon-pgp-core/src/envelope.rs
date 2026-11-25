@@ -54,9 +54,9 @@ impl MasterKey {
         );
         if platform::is_readable_by_others(path)? {
             return Err(Error::MasterKey(format!(
-                "{} is readable by other users; restrict it with `{}`",
+                "{} is readable by other users; {}",
                 path.display(),
-                platform::restrict_hint(path)
+                platform::how_to_restrict(path)
             )));
         }
         Self::from_hex(&contents)
