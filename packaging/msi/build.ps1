@@ -13,18 +13,17 @@ $ErrorActionPreference = 'Stop'
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "MSI versions are X.Y.Z, not '$Version'" }
 if (-not (Test-Path (Join-Path $Payload 'watermelonpgp.exe'))) { throw "no watermelonpgp.exe in $Payload" }
 
-# service.ps1 once per custom action, as a full command line. -EncodedCommand (base64 of UTF-16)
-# needs no quoting, and the MSI's [brackets] can't occur in it.
+# service.ps1 once per custom action, for powershell.exe -EncodedCommand (base64 of UTF-16):
+# no quoting, and the MSI's [brackets] can't occur in it. The .wxs holds the rest of the command
+# line, since a define can't hold the quotes WixQuietExec needs around the program.
 $script = Get-Content -Raw (Join-Path $PSScriptRoot 'service.ps1')
-# [System64Folder] is C:\Windows\system32\: no spaces, so no quotes (which a define can't hold).
-$powershell = '[System64Folder]WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand'
 $generated = Join-Path ([IO.Path]::GetTempPath()) "watermelonpgp-msi-$PID"
 New-Item -ItemType Directory -Force $generated | Out-Null
 $defines = foreach ($pair in @(
     @('CmdCheckInstall', 'check-install'), @('CmdCheckUninstall', 'check-uninstall'),
     @('CmdStop', 'stop'), @('CmdStart', 'start'))) {
   $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes("`$action = '$($pair[1])'`n$script"))
-  "  <?define $($pair[0]) = `"$powershell $encoded`" ?>"
+  "  <?define $($pair[0]) = `"$encoded`" ?>"
 }
 Set-Content (Join-Path $generated 'actions.wxi') -Encoding utf8 -Value @(
   '<?xml version="1.0" encoding="utf-8"?>', '<Include>', $defines, '</Include>')

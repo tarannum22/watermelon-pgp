@@ -7,6 +7,9 @@
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <?include $(var.Generated)\actions.wxi ?>
+  <!-- WixQuietExec wants the program quoted; the quotes go in each Value (a define can't hold
+       them), followed by these arguments and the encoded script. -->
+  <?define PowerShellArgs = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand" ?>
 
   <!-- UpgradeCode: never change it, or a new version installs next to the old one. -->
   <Package Name="WatermelonPGP" Manufacturer="WatermelonPGP" Version="$(var.Version)"
@@ -47,28 +50,28 @@
       None of them run while a version is removed (REMOVE="ALL"), which is how an upgrade
       removes the old version too.
     -->
-    <SetProperty Action="SetCheckInstallCmd" Id="WixQuietExecCmdLine" Value="$(var.CmdCheckInstall)"
+    <SetProperty Action="SetCheckInstallCmd" Id="WixQuietExecCmdLine" Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; $(var.PowerShellArgs) $(var.CmdCheckInstall)"
                  Before="WmCheckInstall" Sequence="execute" Condition="NOT REMOVE~=&quot;ALL&quot;" />
     <CustomAction Id="WmCheckInstall" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
                   Execute="immediate" Return="check" />
 
-    <SetProperty Action="SetCheckUninstallCmd" Id="WixQuietExecCmdLine" Value="$(var.CmdCheckUninstall)"
+    <SetProperty Action="SetCheckUninstallCmd" Id="WixQuietExecCmdLine" Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; $(var.PowerShellArgs) $(var.CmdCheckUninstall)"
                  Before="WmCheckUninstall" Sequence="execute"
                  Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     <CustomAction Id="WmCheckUninstall" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
                   Execute="immediate" Return="check" />
 
-    <SetProperty Id="WmRollbackStart" Value="$(var.CmdStart)" Before="WmRollbackStart"
+    <SetProperty Id="WmRollbackStart" Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; $(var.PowerShellArgs) $(var.CmdStart)" Before="WmRollbackStart"
                  Sequence="execute" Condition="NOT REMOVE~=&quot;ALL&quot;" />
     <CustomAction Id="WmRollbackStart" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
                   Execute="rollback" Impersonate="no" Return="ignore" />
 
-    <SetProperty Id="WmStopServices" Value="$(var.CmdStop)" Before="WmStopServices"
+    <SetProperty Id="WmStopServices" Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; $(var.PowerShellArgs) $(var.CmdStop)" Before="WmStopServices"
                  Sequence="execute" Condition="NOT REMOVE~=&quot;ALL&quot;" />
     <CustomAction Id="WmStopServices" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
                   Execute="deferred" Impersonate="no" Return="check" />
 
-    <SetProperty Id="WmStartServices" Value="$(var.CmdStart)" Before="WmStartServices"
+    <SetProperty Id="WmStartServices" Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; $(var.PowerShellArgs) $(var.CmdStart)" Before="WmStartServices"
                  Sequence="execute" Condition="NOT REMOVE~=&quot;ALL&quot;" />
     <CustomAction Id="WmStartServices" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
                   Execute="deferred" Impersonate="no" Return="check" />
