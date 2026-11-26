@@ -40,7 +40,7 @@
       "screenshot": "https://tarannum22.github.io/watermelon-pgp/img/dashboard.png",
       "applicationCategory": "SecurityApplication",
       "operatingSystem": "Linux, macOS, Windows Server",
-      "softwareVersion": "0.3.0",
+      "softwareVersion": "0.4.0",
       "license": "https://github.com/tarannum22/watermelon-pgp#license",
       "downloadUrl": "https://github.com/tarannum22/watermelon-pgp/releases/latest",
       "sameAs": ["https://github.com/tarannum22/watermelon-pgp"],
@@ -231,7 +231,7 @@ footer a { color: var(--muted); }
     <img class="logo" src="img/logo.svg" alt="WatermelonPGP logo" width="128" height="128">
     <h1>Watermelon<span>PGP</span></h1>
     <p class="tagline">OpenPGP for your file transfers, <span>without the scripts</span></p>
-    <a class="badge" href="https://github.com/tarannum22/watermelon-pgp/releases">v0.3.0 · Windows Server · open source</a>
+    <a class="badge" href="https://github.com/tarannum22/watermelon-pgp/releases">v0.4.0 · Windows installer · open source</a>
     <p class="lead">Manage your customers' PGP keys and let folders encrypt and decrypt themselves: every CSV or PDF dropped for your SFTP transfers is processed automatically, safely and with a full audit trail. One self-hosted binary with a web UI.</p>
     <div class="actions">
       <a class="btn primary" href="#install">Get started</a>
@@ -343,7 +343,7 @@ footer a { color: var(--muted); }
           <li>Dashboard with running and paused jobs, failures and expiring keys</li>
           <li>Light and dark mode, following your system or your choice</li>
           <li>Works without JavaScript</li>
-          <li>Everything also available on the command line (<code>watermelon</code>)</li>
+          <li>Everything also available on the command line (<code>watermelonpgp</code>)</li>
         </ul>
       </div>
       <div class="feature">
@@ -351,7 +351,7 @@ footer a { color: var(--muted); }
         <h3>Easy to run</h3>
         <p>One binary, one SQLite file, no external services.</p>
         <ul>
-          <li>Homebrew, Docker image, or Linux, macOS and Windows Server binaries</li>
+          <li>Homebrew, Docker image, a Windows MSI installer, or Linux, macOS and Windows Server binaries</li>
           <li>Hardened systemd unit, or a native Windows service</li>
           <li>Built-in HTTPS, or behind your reverse proxy</li>
           <li>JSON logs, health endpoint, online backups</li>
@@ -414,14 +414,14 @@ footer a { color: var(--muted); }
   <div class="wrap">
     <p class="eyebrow">Install</p>
     <h2>Up and running in two minutes</h2>
-    <p class="section-lead">Pick whatever fits your servers. All of them give you the same single WatermelonPGP binary, run as <code>watermelon</code>.</p>
+    <p class="section-lead">Pick whatever fits your servers. All of them give you the same single WatermelonPGP binary, run as <code>watermelonpgp</code>.</p>
     <div class="install">
       <div class="card">
         <h3>Homebrew</h3>
         <p>macOS (Apple silicon and Intel) and Linux.</p>
 <div class="code"><pre>brew install tarannum22/tap/watermelon-pgp
 <span class="c"># once: database, master key, admin password</span>
-watermelon --data-dir "$(brew --prefix)/var/watermelon" init
+watermelonpgp --data-dir "$(brew --prefix)/var/watermelonpgp" init
 <span class="c"># run it in the background on http://127.0.0.1:8080</span>
 brew services start watermelon-pgp</pre></div>
       </div>
@@ -437,30 +437,32 @@ docker run -d -p 127.0.0.1:8080:8080 \
         <h3>Binaries</h3>
         <p>Linux (x86_64, arm64) and macOS (Apple silicon, Intel), with checksums.</p>
 <div class="code"><pre><span class="c"># from the releases page:</span>
-tar xzf watermelon-pgp-v0.3.0-*.tar.gz
-./watermelon-pgp-v0.3.0-*/watermelon --help</pre></div>
+tar xzf watermelon-pgp-v0.4.0-*.tar.gz
+./watermelon-pgp-v0.4.0-*/watermelonpgp --help</pre></div>
         <p style="margin:12px 0 0"><a href="https://github.com/tarannum22/watermelon-pgp/releases/latest">Download the latest release →</a></p>
       </div>
       <div class="card">
         <h3>Windows Server</h3>
-        <p>A zip with <code>watermelon.exe</code> (x86_64) that runs as a native Windows service. In an elevated PowerShell, after unpacking it into <code>C:\Program Files\WatermelonPGP</code>:</p>
-<div class="code"><pre>$env:Path += ";C:\Program Files\WatermelonPGP"
-$env:WATERMELON_DATA_DIR = "C:\ProgramData\WatermelonPGP"
+        <p>An MSI installer (or a zip) with <code>watermelonpgp.exe</code> (x86_64) that runs as a native Windows service. In an elevated PowerShell:</p>
+<div class="code"><pre><span class="c"># into C:\Program Files\WatermelonPGP, on the Path</span>
+msiexec /i watermelon-pgp-v0.4.0-x86_64-pc-windows-msvc.msi /qn
+<span class="c"># then, in a new elevated PowerShell:</span>
+$env:WATERMELONPGP_DATA_DIR = "C:\ProgramData\WatermelonPGP"
 <span class="c"># once: database, master key, admin password</span>
-watermelon init
-<span class="c"># runs as NT SERVICE\watermelon</span>
-watermelon service install --bind 127.0.0.1:8080
+watermelonpgp init
+<span class="c"># runs as NT SERVICE\watermelonpgp</span>
+watermelonpgp service install --bind 127.0.0.1:8080
 <span class="c"># let it use your job folders</span>
-icacls D:\sftp /grant "NT SERVICE\watermelon:(OI)(CI)M"
-Start-Service watermelon</pre></div>
+icacls D:\sftp /grant "NT SERVICE\watermelonpgp:(OI)(CI)M"
+Start-Service watermelonpgp</pre></div>
         <p style="margin:12px 0 0"><a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#windows-server">Windows Server guide: checksums, job folders, HTTPS →</a></p>
       </div>
     </div>
     <div class="card quickstart">
       <h3>Quick start</h3>
       <p>Create the database, master key and admin password once, then start the web UI and the job engine.</p>
-<div class="code"><pre>watermelon --data-dir ~/watermelon init    <span class="c"># prompts for the admin password</span>
-watermelon --data-dir ~/watermelon serve   <span class="c"># open http://127.0.0.1:8080</span></pre></div>
+<div class="code"><pre>watermelonpgp --data-dir ~/watermelonpgp init    <span class="c"># prompts for the admin password</span>
+watermelonpgp --data-dir ~/watermelonpgp serve   <span class="c"># open http://127.0.0.1:8080</span></pre></div>
     </div>
   </div>
 </section>
@@ -492,11 +494,11 @@ watermelon --data-dir ~/watermelon serve   <span class="c"># open http://127.0.0
       </details>
       <details>
         <summary>Does it run on Windows Server?</summary>
-        <p>Yes, since 0.3.0, as a native Windows service running under its own virtual account, <code>NT SERVICE\watermelon</code>: download the zip, then <code>watermelon init</code>, <code>watermelon service install</code> and <code>Start-Service watermelon</code> in an elevated PowerShell. Job folders can be local drives or UNC network shares that allow the server's computer account. The <a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#windows-server">Windows Server section of the deployment guide</a> has the details.</p>
+        <p>Yes, since 0.3.0, as a native Windows service running under its own virtual account, <code>NT SERVICE\watermelonpgp</code>: install the MSI (or unpack the zip), then <code>watermelonpgp init</code>, <code>watermelonpgp service install</code> and <code>Start-Service watermelonpgp</code> in an elevated PowerShell. The MSI also suits Group Policy, Intune and SCCM. Job folders can be local drives or UNC network shares that allow the server's computer account. The <a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#windows-server">Windows Server section of the deployment guide</a> has the details.</p>
       </details>
       <details>
         <summary>What does it cost, and where does it run?</summary>
-        <p>It's free and open source under MIT or Apache-2.0. It runs on Linux, macOS and Windows Server. On Linux and macOS, install with Homebrew, run the Docker image, or download the binary; on Windows Server, download the zip and run it as a native service.</p>
+        <p>It's free and open source under MIT or Apache-2.0. It runs on Linux, macOS and Windows Server. On Linux and macOS, install with Homebrew, run the Docker image, or download the binary; on Windows Server, install the MSI or unpack the zip, and run it as a native service.</p>
       </details>
     </div>
   </div>
