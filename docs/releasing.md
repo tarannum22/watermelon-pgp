@@ -4,13 +4,13 @@ The version lives in more places than `Cargo.toml`, and some steps happen only a
 exists. Copy this list into the release PR (or an issue) and tick it off. `X.Y.Z` is the new
 version; `A.B.C` the previous one.
 
-A release takes two PRs (three if the UI changed) and one tag:
+A release takes two PRs and one tag:
 
 ```
 release-X.Y.Z    "Release X.Y.Z"          version, CHANGELOG, README
 tag vX.Y.Z       on the merge commit      release.yml builds and publishes
-website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands (after the release exists)
-                 + screenshots PR if the UI changed
+website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands, screenshots
+                                          (after the release exists)
 ```
 
 ## 1. The release PR
@@ -142,12 +142,22 @@ Merge only once the release has its tarballs, or the install commands point at n
       `"softwareVersion"` in the structured data, and the tarball commands in Install
       (`watermelon-pgp-vX.Y.Z-*.tar.gz`).
 - [ ] `site/sitemap.xml`: `<lastmod>` is the release date.
-- [ ] If the UI changed: retake the screenshots in `site/img/` (`dashboard`, `jobs`, `job`,
-      `audit-search`, `keys`, each also as `-dark.png`) from a demo installation in the released
-      `ghcr.io/tarannum22/watermelon-pgp:X.Y.Z` image with made-up data, at 1280×809 CSS px ×
-      1.25 = 1600×1011.
-- [ ] If the dashboard changed: `site/img/social-card.png` (1200×630, the link preview) shows the
-      new one.
+- [ ] Screenshots, for every release, so the site shows the UI it advertises. From `e2e/`, with
+      the released image:
+
+      ```sh
+      docker pull ghcr.io/tarannum22/watermelon-pgp:X.Y.Z
+      npm ci && npx playwright install chromium
+      WEBSITE_IMAGE=ghcr.io/tarannum22/watermelon-pgp:X.Y.Z npm run website
+      ```
+
+      It starts the image in a throwaway container, fills it with made-up customers, keys,
+      jobs and files through the CLI, and retakes every screenshot in `site/img/`: `dashboard`,
+      `jobs`, `job`, `audit-search` and `keys` (each light and `-dark`, 1280×809 CSS px × 1.25 =
+      1600×1011), `login`, and `social-card.png` (1200×630, the link preview, with the dark
+      dashboard). It fails unless the sidebar shows `vX.Y.Z`, which is also how a reviewer
+      tells they're current. Look at each image before committing: when a UI change breaks the
+      demo (a renamed button, a new required field), fix `e2e/website/` (see `e2e/README.md`).
 - [ ] Features and FAQ on the site mention what's new.
 - [ ] The first release with the `watermelonpgp` command (#46): every command example in
       `site/index.html` uses `watermelonpgp`, `WATERMELONPGP_*` and `NT SERVICE\watermelonpgp`
