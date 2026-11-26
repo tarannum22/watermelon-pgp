@@ -103,6 +103,7 @@ header nav a:hover { color: var(--text); }
   border: 1px solid var(--border); border-radius: 10px; padding: 8px 8px 8px 16px; font-size: 15px; max-width: 100%; }
 .hero .install-line code { background: none; padding: 0; overflow-x: auto; white-space: nowrap; min-width: 0; }
 .hero .install-line code::before { content: "$ "; color: var(--muted); }
+.hero .install-line.powershell code::before { content: "PS> "; }
 .copy { font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; border-radius: 7px; padding: 5px 10px;
   border: 1px solid var(--border); background: var(--bg); color: var(--text); white-space: nowrap; }
 .copy:hover { border-color: var(--accent); color: var(--accent); }
@@ -454,14 +455,14 @@ watermelonpgp service install --bind 127.0.0.1:8080
 <span class="c"># let it use your job folders</span>
 icacls D:\sftp /grant "NT SERVICE\watermelonpgp:(OI)(CI)M"
 Start-Service watermelonpgp</pre></div>
-        <p style="margin:12px 0 0">No Chocolatey on the server? <a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#install">Download the zip</a> (x86_64) and put it on the Path instead.</p>
-        <p style="margin:8px 0 0"><a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#windows-server">Windows Server guide: checksums, job folders, HTTPS →</a></p>
+        <p style="margin:12px 0 0">No Chocolatey on the server, or a new version not on Chocolatey yet (its review can take a few days)? <a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#install">Download the zip</a> (x86_64) and put it on the Path instead.</p>
+        <p style="margin:12px 0 0"><a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#windows-server">Windows Server guide: checksums, job folders, HTTPS →</a></p>
       </div>
     </div>
     <div class="card quickstart">
       <h3>Quick start</h3>
       <p>Create the database, master key and admin password once, then start the web UI and the job engine.</p>
-<div class="code"><pre>watermelonpgp --data-dir ~/watermelonpgp init   <span class="c"># prompts for the admin password</span>
+<div class="code"><pre>watermelonpgp --data-dir ~/watermelonpgp init    <span class="c"># prompts for the admin password</span>
 watermelonpgp --data-dir ~/watermelonpgp serve   <span class="c"># open http://127.0.0.1:8080</span></pre></div>
     </div>
   </div>
@@ -528,9 +529,11 @@ watermelonpgp --data-dir ~/watermelonpgp serve   <span class="c"># open http://1
 <script>
 // The hero shows Homebrew; visitors on Windows get the Chocolatey command instead.
 (function () {
-  var platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.userAgent;
-  if (!/Windows/.test(platform)) return;
+  var platformOrAgent = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.userAgent;
+  if (!/Windows/.test(platformOrAgent)) return;
   var line = document.getElementById('hero-install');
+  line.classList.add('powershell');
+  line.title = 'In an elevated PowerShell';
   var command = 'choco install watermelon-pgp';
   line.querySelector('code').textContent = command;
   var button = line.querySelector('.copy');
