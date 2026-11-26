@@ -14,8 +14,11 @@
   <!-- UpgradeCode: never change it, or a new version installs next to the old one. -->
   <Package Name="WatermelonPGP" Manufacturer="WatermelonPGP" Version="$(var.Version)"
            UpgradeCode="B33BC9D9-6AA6-4E32-8089-DA114EE26D41" Scope="perMachine">
-    <!-- The old version is removed first, then the new one installed: no file-version rules. -->
-    <MajorUpgrade Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes"
+    <!-- The new version's files are installed first, then the old version removed: everything
+         from the service stop (right after InstallInitialize) to the removal happens in this
+         order. Files in both versions belong to the same components (WiX derives their GUIDs
+         from the path), so the removal leaves them. -->
+    <MajorUpgrade Schedule="afterInstallExecute" AllowSameVersionUpgrades="yes"
                   DowngradeErrorMessage="A newer version of WatermelonPGP is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
@@ -82,10 +85,9 @@
       <Custom Action="WmCheckInstall" After="InstallValidate" Condition="NOT REMOVE~=&quot;ALL&quot;" />
       <Custom Action="WmCheckUninstall" After="WmCheckInstall"
               Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
-      <!-- Right after InstallInitialize, before the old version's removal (MajorUpgrade puts
-           RemoveExistingProducts after these). Not Before="RemoveExistingProducts": that leaves
-           no sequence number between it and InstallInitialize (error 2613). The release
-           workflow's msi smoke test checks the order in the upgrade's log. -->
+      <!-- Right after InstallInitialize, so before any file is replaced and before the old
+           version's removal (RemoveExistingProducts, after InstallExecute). The release
+           workflow's msi smoke test checks that order in the upgrade's log. -->
       <Custom Action="WmRollbackStart" After="InstallInitialize" Condition="NOT REMOVE~=&quot;ALL&quot;" />
       <Custom Action="WmStopServices" After="WmRollbackStart" Condition="NOT REMOVE~=&quot;ALL&quot;" />
       <Custom Action="WmStartServices" Before="InstallFinalize" Condition="NOT REMOVE~=&quot;ALL&quot;" />
