@@ -4,13 +4,13 @@ The version lives in more places than `Cargo.toml`, and some steps happen only a
 exists. Copy this list into the release PR (or an issue) and tick it off. `X.Y.Z` is the new
 version; `A.B.C` the previous one.
 
-A release takes two PRs (three if the UI changed) and one tag:
+A release takes two PRs and one tag:
 
 ```
 release-X.Y.Z    "Release X.Y.Z"          version, CHANGELOG, README
 tag vX.Y.Z       on the merge commit      release.yml builds and publishes
-website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands (after the release exists)
-                 + screenshots PR if the UI changed
+website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands, screenshots
+                                          (after the release exists)
 ```
 
 ## 1. The release PR
@@ -32,15 +32,26 @@ website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands (after the rel
 - [ ] Nothing else still names the old version:
       `git grep -nF A.B.C -- ':!CHANGELOG.md' ':!Cargo.lock'` (the website is updated later).
 - [ ] The release dry run passes on the release branch. It builds and packages every target,
-      writes the release notes and the Homebrew formula, builds the image, and builds the
-      Chocolatey package and smoke-tests it (job `chocolatey`: install, upgrade with the
-      service running, uninstall), but publishes nothing. The Windows build
-      (`build (x86_64-pc-windows-msvc, windows-latest)`) also smoke-tests the unpacked zip: `--version`, `init` and `/healthz`, and that `watermelonpgp.exe`
-      needs no C runtime DLL (`dumpbin /dependents`):
+      writes the release notes and the Homebrew formula, builds the image, and builds the MSI
+      and the Chocolatey package and smoke-tests them (jobs `msi` and `chocolatey`: silent
+      install, upgrade with the service running, uninstall), but publishes nothing. The Windows
+      build (`build (x86_64-pc-windows-msvc, windows-latest)`) also smoke-tests the unpacked
+      zip: `--version`, `init` and `/healthz`, and that `watermelonpgp.exe` needs no C runtime
+      DLL (`dumpbin /dependents`):
 
   ```sh
   gh workflow run release.yml --ref release-X.Y.Z
   gh run watch "$(gh run list --workflow release.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId')"
+  ```
+
+- [ ] The `msi` job upgraded from the previous release's MSI, not the stand-in. Its "Build the
+      MSI" step says `Upgrading from the vA.B.C MSI`. `No MSI in the release before this one
+      …; upgrading from the same files built as 0.0.1` is expected only for the first release
+      with an MSI (the one after 0.3.0). From the release after it, that line means the
+      previous MSI couldn't be found, so a real upgrade went untested:
+
+  ```sh
+  gh run view <run id> --log | grep -E 'Upgrading from|No MSI in the release'
   ```
 
 ## 2. Tag
@@ -67,8 +78,8 @@ website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands (after the rel
       `gh run watch <id>`. (CI also runs on the tag.)
 - [ ] `gh release view vX.Y.Z`: four tarballs, `watermelon-pgp-vX.Y.Z-<target>.tar.gz` for
       `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin` and
-      `x86_64-apple-darwin`, the Windows `watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc.zip`,
-      and `SHA256SUMS` listing all five; the notes are the CHANGELOG section.
+      `x86_64-apple-darwin`, the Windows `watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc.zip` and
+      `.msi`, and `SHA256SUMS` listing all six; the notes are the CHANGELOG section.
 - [ ] A binary runs and matches its checksum:
 
   ```sh
@@ -142,14 +153,21 @@ Merge only once the release has its tarballs, or the install commands point at n
       `"softwareVersion"` in the structured data, and the tarball commands in Install
       (`watermelon-pgp-vX.Y.Z-*.tar.gz`).
 - [ ] `site/sitemap.xml`: `<lastmod>` is the release date.
-- [ ] If the UI changed: retake the screenshots in `site/img/` (`dashboard`, `jobs`, `job`,
-      `audit-search`, `keys`, each also as `-dark.png`) from a demo installation in the released
-      `ghcr.io/tarannum22/watermelon-pgp:X.Y.Z` image with made-up data, at 1280×809 CSS px ×
-      1.25 = 1600×1011.
-- [ ] If the dashboard changed: `site/img/social-card.png` (1200×630, the link preview) shows the
-      new one.
+- [ ] Screenshots, for every release, so the site shows the UI it advertises. From `e2e/`, with
+      the released image:
+
+      ```sh
+      docker pull ghcr.io/tarannum22/watermelon-pgp:X.Y.Z
+      npm ci && npx playwright install chromium
+      WEBSITE_IMAGE=ghcr.io/tarannum22/watermelon-pgp:X.Y.Z npm run website
+      ```
+
+      It starts the image in a throwaway container, fills it with made-up customers, keys,
+      jobs and files through the CLI, and retakes every screenshot in `site/img/`: `dashboard`,
+      `jobs`, `job`, `audit-search` and `keys` (each light and `-dark`, 1280×809 CSS px × 1.25 =
+      1600×1011), `login`, and `social-card.png` (1200×630, the link preview, with the dark
+      dashboard). It fails unless the sidebar shows `vX.Y.Z`, which is also how a reviewer
+      tells they're current. Look at each image before committing: when a UI change breaks the
+      demo (a renamed button, a new required field), fix `e2e/website/` (see `e2e/README.md`).
 - [ ] Features and FAQ on the site mention what's new.
-- [ ] The first release with the `watermelonpgp` command (#46): every command example in
-      `site/index.html` uses `watermelonpgp`, `WATERMELONPGP_*` and `NT SERVICE\watermelonpgp`
-      (`git grep -nwP 'watermelon(?!-pgp)|WATERMELON_' site` finds nothing). Then drop this item.
 - [ ] `python3 .github/scripts/check-branding.py site` passes.

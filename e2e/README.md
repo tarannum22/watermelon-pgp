@@ -12,6 +12,7 @@ npm ci
 npx playwright install chromium
 npm test                            # all flows
 npm run screenshots                 # every page, light and dark, into screenshots/
+WEBSITE_IMAGE=ghcr.io/tarannum22/watermelon-pgp:X.Y.Z npm run website   # site/img/, see below
 npm run report                      # the HTML report of the last run
 ```
 
@@ -35,3 +36,20 @@ npm run report                      # the HTML report of the last run
 | `audit.spec.ts` | Search from the top bar, live filters, removable filter chips, CSV export |
 | `theme.spec.ts` | The theme switch is remembered, also on the login page |
 | `design.spec.ts` | The style guide renders; no page triggers a Content-Security-Policy violation; the new-customer dialog opens, keeps focus inside, and closes |
+
+## The website's screenshots
+
+`npm run website` retakes the screenshots in `site/img/` for a release (docs/releasing.md,
+"Website"). It needs Docker and the release's image in `WEBSITE_IMAGE`; `WEBSITE_VERSION` sets
+the version they must show for an image whose tag isn't `X.Y.Z` (say, `docker build -t
+watermelon-pgp:dev .` from the repository root, to try a UI change), `WEBSITE_PORT` another port
+(default 18090).
+
+- `playwright.website.config.ts`: its own config, so `npm test` never runs it.
+- `website/demo.ts` starts the image as a container named `watermelonpgp-website-demo`, with the
+  job folders in a tmpfs at `/srv/sftp`. Through the CLI it adds three customers, our keys and
+  the partners' (made in a second data directory in the container, one of them revoked), four
+  jobs, and files: processed ones, and one that isn't OpenPGP, so the decrypt job shows a failed
+  file. Then it runs `serve`; the container and its volume are removed when Playwright stops it.
+- `website/screenshots.spec.ts` takes the screenshots and checks the version in the sidebar.
+- `website/social-card.html` is the link preview's layout, around `dashboard-dark.png`.

@@ -40,7 +40,7 @@
       "screenshot": "https://tarannum22.github.io/watermelon-pgp/img/dashboard.png",
       "applicationCategory": "SecurityApplication",
       "operatingSystem": "Linux, macOS, Windows Server",
-      "softwareVersion": "0.3.0",
+      "softwareVersion": "0.4.0",
       "license": "https://github.com/tarannum22/watermelon-pgp#license",
       "downloadUrl": "https://github.com/tarannum22/watermelon-pgp/releases/latest",
       "sameAs": ["https://github.com/tarannum22/watermelon-pgp"],
@@ -232,7 +232,7 @@ footer a { color: var(--muted); }
     <img class="logo" src="img/logo.svg" alt="WatermelonPGP logo" width="128" height="128">
     <h1>Watermelon<span>PGP</span></h1>
     <p class="tagline">OpenPGP for your file transfers, <span>without the scripts</span></p>
-    <a class="badge" href="https://github.com/tarannum22/watermelon-pgp/releases">v0.3.0 · Windows Server · open source</a>
+    <a class="badge" href="https://github.com/tarannum22/watermelon-pgp/releases">v0.4.0 · Windows installer · open source</a>
     <p class="lead">Manage your customers' PGP keys and let folders encrypt and decrypt themselves: every CSV or PDF dropped for your SFTP transfers is processed automatically, safely and with a full audit trail. One self-hosted binary with a web UI.</p>
     <div class="actions">
       <a class="btn primary" href="#install">Get started</a>
@@ -352,7 +352,7 @@ footer a { color: var(--muted); }
         <h3>Easy to run</h3>
         <p>One binary, one SQLite file, no external services.</p>
         <ul>
-          <li>Homebrew, Chocolatey, Docker image, or Linux, macOS and Windows Server binaries</li>
+          <li>Homebrew, Chocolatey, a Windows MSI installer, Docker image, or Linux, macOS and Windows Server binaries</li>
           <li>Hardened systemd unit, or a native Windows service</li>
           <li>Built-in HTTPS, or behind your reverse proxy</li>
           <li>JSON logs, health endpoint, online backups</li>
@@ -438,8 +438,8 @@ docker run -d -p 127.0.0.1:8080:8080 \
         <h3>Binaries</h3>
         <p>Linux (x86_64, arm64) and macOS (Apple silicon, Intel), with checksums.</p>
 <div class="code"><pre><span class="c"># from the releases page:</span>
-tar xzf watermelon-pgp-v0.3.0-*.tar.gz
-./watermelon-pgp-v0.3.0-*/watermelonpgp --help</pre></div>
+tar xzf watermelon-pgp-v0.4.0-*.tar.gz
+./watermelon-pgp-v0.4.0-*/watermelonpgp --help</pre></div>
         <p style="margin:12px 0 0"><a href="https://github.com/tarannum22/watermelon-pgp/releases/latest">Download the latest release →</a></p>
       </div>
       <div class="card">
@@ -455,7 +455,7 @@ watermelonpgp service install --bind 127.0.0.1:8080
 <span class="c"># let it use your job folders</span>
 icacls D:\sftp /grant "NT SERVICE\watermelonpgp:(OI)(CI)M"
 Start-Service watermelonpgp</pre></div>
-        <p style="margin:12px 0 0">No Chocolatey on the server, or a new version not on Chocolatey yet (its review can take a few days)? <a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#install">Download the zip</a> (x86_64) and put it on the Path instead.</p>
+        <p style="margin:12px 0 0">No Chocolatey on the server, or a new version not on Chocolatey yet (its review can take a few days)? Install the MSI instead (<code>msiexec /i watermelon-pgp-v0.4.0-x86_64-pc-windows-msvc.msi /qn</code>, which also suits Group Policy, Intune and SCCM) or <a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#install">unpack the zip</a> (x86_64).</p>
         <p style="margin:12px 0 0"><a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#windows-server">Windows Server guide: checksums, job folders, HTTPS →</a></p>
       </div>
     </div>
@@ -495,11 +495,11 @@ watermelonpgp --data-dir ~/watermelonpgp serve   <span class="c"># open http://1
       </details>
       <details>
         <summary>Does it run on Windows Server?</summary>
-        <p>Yes, since 0.3.0, as a native Windows service running under its own virtual account, <code>NT SERVICE\watermelonpgp</code>: <code>choco install watermelon-pgp</code> (or download the zip), then <code>watermelonpgp init</code>, <code>watermelonpgp service install</code> and <code>Start-Service watermelonpgp</code> in an elevated PowerShell. Job folders can be local drives or UNC network shares that allow the server's computer account. The <a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#windows-server">Windows Server section of the deployment guide</a> has the details.</p>
+        <p>Yes, since 0.3.0, as a native Windows service running under its own virtual account, <code>NT SERVICE\watermelonpgp</code>: <code>choco install watermelon-pgp</code> (or install the MSI, or unpack the zip), then <code>watermelonpgp init</code>, <code>watermelonpgp service install</code> and <code>Start-Service watermelonpgp</code> in an elevated PowerShell. Job folders can be local drives or UNC network shares that allow the server's computer account. The <a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#windows-server">Windows Server section of the deployment guide</a> has the details.</p>
       </details>
       <details>
         <summary>What does it cost, and where does it run?</summary>
-        <p>It's free and open source under MIT or Apache-2.0. It runs on Linux, macOS and Windows Server. On Linux and macOS, install with Homebrew, run the Docker image, or download the binary; on Windows Server, install it with Chocolatey or download the zip, and run it as a native service.</p>
+        <p>It's free and open source under MIT or Apache-2.0. It runs on Linux, macOS and Windows Server. On Linux and macOS, install with Homebrew, run the Docker image, or download the binary; on Windows Server, install it with Chocolatey or the MSI, or unpack the zip, and run it as a native service.</p>
       </details>
     </div>
   </div>
