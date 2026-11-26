@@ -103,6 +103,7 @@ header nav a:hover { color: var(--text); }
   border: 1px solid var(--border); border-radius: 10px; padding: 8px 8px 8px 16px; font-size: 15px; max-width: 100%; }
 .hero .install-line code { background: none; padding: 0; overflow-x: auto; white-space: nowrap; min-width: 0; }
 .hero .install-line code::before { content: "$ "; color: var(--muted); }
+.hero .install-line.powershell code::before { content: "PS> "; }
 .copy { font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; border-radius: 7px; padding: 5px 10px;
   border: 1px solid var(--border); background: var(--bg); color: var(--text); white-space: nowrap; }
 .copy:hover { border-color: var(--accent); color: var(--accent); }
@@ -237,7 +238,7 @@ footer a { color: var(--muted); }
       <a class="btn primary" href="#install">Get started</a>
       <a class="btn" href="https://github.com/tarannum22/watermelon-pgp">View on GitHub</a>
     </div>
-    <div class="install-line"><code>brew install tarannum22/tap/watermelon-pgp</code><button class="copy" type="button" data-copy="brew install tarannum22/tap/watermelon-pgp" aria-label="Copy the brew install command">Copy</button></div>
+    <div class="install-line" id="hero-install"><code>brew install tarannum22/tap/watermelon-pgp</code><button class="copy" type="button" data-copy="brew install tarannum22/tap/watermelon-pgp" aria-label="Copy the brew install command">Copy</button></div>
     <div class="shot">
       <div class="chrome"><i></i><i></i><i></i></div>
       <picture>
@@ -351,7 +352,7 @@ footer a { color: var(--muted); }
         <h3>Easy to run</h3>
         <p>One binary, one SQLite file, no external services.</p>
         <ul>
-          <li>Homebrew, Docker image, a Windows MSI installer, or Linux, macOS and Windows Server binaries</li>
+          <li>Homebrew, Chocolatey, a Windows MSI installer, Docker image, or Linux, macOS and Windows Server binaries</li>
           <li>Hardened systemd unit, or a native Windows service</li>
           <li>Built-in HTTPS, or behind your reverse proxy</li>
           <li>JSON logs, health endpoint, online backups</li>
@@ -443,10 +444,9 @@ tar xzf watermelon-pgp-v0.4.0-*.tar.gz
       </div>
       <div class="card">
         <h3>Windows Server</h3>
-        <p>An MSI installer (or a zip) with <code>watermelonpgp.exe</code> (x86_64) that runs as a native Windows service. In an elevated PowerShell:</p>
-<div class="code"><pre><span class="c"># into C:\Program Files\WatermelonPGP, on the Path</span>
-msiexec /i watermelon-pgp-v0.4.0-x86_64-pc-windows-msvc.msi /qn
-<span class="c"># then, in a new elevated PowerShell:</span>
+        <p>Installed with <a href="https://chocolatey.org/install">Chocolatey</a>, it runs as a native Windows service. In an elevated PowerShell:</p>
+<div class="code"><pre>choco install watermelon-pgp
+<span class="c"># then, in a new elevated PowerShell (for the updated Path):</span>
 $env:WATERMELONPGP_DATA_DIR = "C:\ProgramData\WatermelonPGP"
 <span class="c"># once: database, master key, admin password</span>
 watermelonpgp init
@@ -455,6 +455,7 @@ watermelonpgp service install --bind 127.0.0.1:8080
 <span class="c"># let it use your job folders</span>
 icacls D:\sftp /grant "NT SERVICE\watermelonpgp:(OI)(CI)M"
 Start-Service watermelonpgp</pre></div>
+        <p style="margin:12px 0 0">No Chocolatey on the server, or a new version not on Chocolatey yet (its review can take a few days)? Install the MSI instead (<code>msiexec /i watermelon-pgp-v0.4.0-x86_64-pc-windows-msvc.msi /qn</code>, which also suits Group Policy, Intune and SCCM) or <a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#install">unpack the zip</a> (x86_64).</p>
         <p style="margin:12px 0 0"><a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#windows-server">Windows Server guide: checksums, job folders, HTTPS →</a></p>
       </div>
     </div>
@@ -494,11 +495,11 @@ watermelonpgp --data-dir ~/watermelonpgp serve   <span class="c"># open http://1
       </details>
       <details>
         <summary>Does it run on Windows Server?</summary>
-        <p>Yes, since 0.3.0, as a native Windows service running under its own virtual account, <code>NT SERVICE\watermelonpgp</code>: install the MSI (or unpack the zip), then <code>watermelonpgp init</code>, <code>watermelonpgp service install</code> and <code>Start-Service watermelonpgp</code> in an elevated PowerShell. The MSI also suits Group Policy, Intune and SCCM. Job folders can be local drives or UNC network shares that allow the server's computer account. The <a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#windows-server">Windows Server section of the deployment guide</a> has the details.</p>
+        <p>Yes, since 0.3.0, as a native Windows service running under its own virtual account, <code>NT SERVICE\watermelonpgp</code>: <code>choco install watermelon-pgp</code> (or install the MSI, or unpack the zip), then <code>watermelonpgp init</code>, <code>watermelonpgp service install</code> and <code>Start-Service watermelonpgp</code> in an elevated PowerShell. Job folders can be local drives or UNC network shares that allow the server's computer account. The <a href="https://github.com/tarannum22/watermelon-pgp/blob/main/docs/deployment.md#windows-server">Windows Server section of the deployment guide</a> has the details.</p>
       </details>
       <details>
         <summary>What does it cost, and where does it run?</summary>
-        <p>It's free and open source under MIT or Apache-2.0. It runs on Linux, macOS and Windows Server. On Linux and macOS, install with Homebrew, run the Docker image, or download the binary; on Windows Server, install the MSI or unpack the zip, and run it as a native service.</p>
+        <p>It's free and open source under MIT or Apache-2.0. It runs on Linux, macOS and Windows Server. On Linux and macOS, install with Homebrew, run the Docker image, or download the binary; on Windows Server, install it with Chocolatey or the MSI, or unpack the zip, and run it as a native service.</p>
       </details>
     </div>
   </div>
@@ -526,6 +527,19 @@ watermelonpgp --data-dir ~/watermelonpgp serve   <span class="c"># open http://1
   </div>
 </footer>
 <script>
+// The hero shows Homebrew; visitors on Windows get the Chocolatey command instead.
+(function () {
+  var platformOrAgent = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.userAgent;
+  if (!/Windows/.test(platformOrAgent)) return;
+  var line = document.getElementById('hero-install');
+  line.classList.add('powershell');
+  line.title = 'In an elevated PowerShell';
+  var command = 'choco install watermelon-pgp';
+  line.querySelector('code').textContent = command;
+  var button = line.querySelector('.copy');
+  button.dataset.copy = command;
+  button.setAttribute('aria-label', 'Copy the choco install command');
+})();
 // Copy buttons: the hero command, and every command block (comments left out).
 document.querySelectorAll('.code').forEach(function (block) {
   var button = document.createElement('button');
