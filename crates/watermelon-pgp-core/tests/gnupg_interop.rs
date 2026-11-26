@@ -1,7 +1,7 @@
 //! Interoperability with GnuPG, in both directions.
 //!
 //! Requires `gpg` on PATH. Skipped (with a message) when it is missing, unless
-//! `WATERMELON_REQUIRE_GPG=1` is set, which CI does.
+//! `WATERMELONPGP_REQUIRE_GPG=1` is set, which CI does.
 
 use std::{
     io::Write,
@@ -22,7 +22,7 @@ impl Gpg {
     fn new() -> Option<Self> {
         if Command::new("gpg").arg("--version").output().is_err() {
             assert!(
-                std::env::var("WATERMELON_REQUIRE_GPG").is_err(),
+                std::env::var("WATERMELONPGP_REQUIRE_GPG").is_err(),
                 "gpg is required but not installed"
             );
             eprintln!("gpg not found, skipping GnuPG interop tests");

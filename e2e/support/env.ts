@@ -14,5 +14,5 @@ export const DATA_DIR = path.join(RUN_DIR, "data");
 export const BINARY = path.resolve(
   here,
   "..",
-  process.env.WATERMELON_BIN ?? path.join("..", "target", "debug", "watermelon"),
+  process.env.WATERMELONPGP_BIN ?? path.join("..", "target", "debug", "watermelonpgp"),
 );

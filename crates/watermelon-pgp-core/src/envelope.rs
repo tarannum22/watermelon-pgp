@@ -16,7 +16,7 @@ use zeroize::Zeroizing;
 use crate::{Error, Result, platform};
 
 /// Environment variable that, when set, takes precedence over the keyfile.
-pub const ENV_VAR: &str = "WATERMELON_MASTER_KEY";
+pub const ENV_VAR: &str = "WATERMELONPGP_MASTER_KEY";
 
 const KEY_LEN: usize = 32;
 const NONCE_LEN: usize = 24;

@@ -1,6 +1,6 @@
 # End-to-end tests
 
-The core user flows, in a real browser (Playwright, Chromium) against a real `watermelon`
+The core user flows, in a real browser (Playwright, Chromium) against a real `watermelonpgp`
 binary. They complement the Rust tests in `crates/watermelon-pgp-web/tests`, which send
 requests straight into the router: these also cover htmx, the JavaScript, the CSS that hides
 and shows parts of forms, file downloads, and the job engine processing real files.
@@ -15,12 +15,12 @@ npm run screenshots                 # every page, light and dark, into screensho
 npm run report                      # the HTML report of the last run
 ```
 
-`WATERMELON_BIN` picks another binary (relative to the repository root), `E2E_PORT` another port
+`WATERMELONPGP_BIN` picks another binary (relative to the repository root), `E2E_PORT` another port
 (default 18080).
 
 ## How it works
 
-- `support/server.ts` wipes `.run/`, runs `watermelon init` there and starts `watermelon serve`.
+- `support/server.ts` wipes `.run/`, runs `watermelonpgp init` there and starts `watermelonpgp serve`.
   Playwright starts it before the tests and stops it afterwards.
 - `tests/login.setup.ts` logs in once; the other tests reuse that session.
 - Tests share one server, so they run one at a time and make their own data with unique names

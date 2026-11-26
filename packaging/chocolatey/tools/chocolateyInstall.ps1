@@ -4,13 +4,28 @@
 # the machine Path. It doesn't run `init` or `service install` and doesn't touch any data
 # directory: those are explicit steps (docs/deployment.md, "Windows Server").
 #
-# Upgrading while a service runs this watermelon.exe: the service is stopped (running jobs
+# Upgrading while a service runs this watermelonpgp.exe: the service is stopped (running jobs
 # finish their current file first), the files are replaced, and it is started again.
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 
 $version = '@VERSION@'
 $unzipDir = Join-Path $env:TEMP "watermelon-pgp-$version"
+
+# A service installed by 0.3 runs watermelon.exe, which this version doesn't have: it has to be
+# installed again with watermelonpgp.exe, by hand (docs/deployment.md, "From 0.3").
+$legacy = @(Get-WatermelonService $legacyExe)
+if ($legacy) {
+  $names = ($legacy | ForEach-Object { $_.Name }) -join ', '
+  throw @"
+The Windows service $names runs $legacyExe. The program is now watermelonpgp.exe, so
+the service has to be installed again. Remove it with the old program first (its data
+directory and master key stay), then install this package and the service again with watermelonpgp:
+  watermelon service uninstall$(if ($names -ne 'watermelon') { ' --name <name>' })
+  choco install watermelon-pgp
+See https://github.com/@REPO@/blob/v$version/docs/deployment.md#from-03-watermelon-is-now-watermelonpgp
+"@
+}
 
 # Unpack outside the package folder, so Chocolatey doesn't shim a copy that changes path with
 # every version. Install-ChocolateyZipPackage checks the zip against the release's SHA256SUMS.
@@ -19,23 +34,26 @@ Install-ChocolateyZipPackage -PackageName $env:ChocolateyPackageName -UnzipLocat
   -Url64bit '@URL64@' `
   -Checksum64 '@CHECKSUM64@' -ChecksumType64 'sha256'
 $source = Join-Path $unzipDir $zipDir
-if (-not (Test-Path (Join-Path $source 'watermelon.exe'))) { throw "the zip has no $zipDir\watermelon.exe" }
+if (-not (Test-Path (Join-Path $source 'watermelonpgp.exe'))) { throw "the zip has no $zipDir\watermelonpgp.exe" }
 
 $running = @(Get-WatermelonService | Where-Object { $_.State -ne 'Stopped' })
 foreach ($service in $running) {
-  Write-Host "Stopping the $($service.Name) service to replace watermelon.exe; running jobs finish their current file first."
+  Write-Host "Stopping the $($service.Name) service to replace watermelonpgp.exe; running jobs finish their current file first."
   Stop-Service -Name $service.Name
 }
 $restartErrors = @()
 try {
-  # Fail before changing anything if another program (a `watermelon` outside a service) still
-  # runs the old watermelon.exe: Windows doesn't let a running program be replaced. A service
+  # Fail before changing anything if another program (a `watermelonpgp` outside a service) still
+  # runs the old watermelonpgp.exe: Windows doesn't let a running program be replaced. A service
   # that just stopped may take a moment to exit.
-  for ($i = 1; Test-Path $exe; $i++) {
-    try { [IO.File]::Open($exe, 'Open', 'ReadWrite', 'None').Close(); break }
-    catch {
-      if ($i -ge 10) { throw "$exe is in use. Stop the watermelon process running it and try again." }
-      Start-Sleep 1
+  # The same for 0.3's watermelon.exe, which is removed below.
+  foreach ($program in $exe, $legacyExe) {
+    for ($i = 1; Test-Path $program; $i++) {
+      try { [IO.File]::Open($program, 'Open', 'ReadWrite', 'None').Close(); break }
+      catch {
+        if ($i -ge 10) { throw "$program is in use. Stop the program running it and try again." }
+        Start-Sleep 1
+      }
     }
   }
   New-Item -ItemType Directory -Force $installDir | Out-Null
@@ -45,6 +63,8 @@ try {
     if ((Test-Path $old) -and (Test-Path (Join-Path $source $item) -PathType Container)) { Remove-Item $old -Recurse -Force }
     Copy-Item (Join-Path $source $item) $installDir -Recurse -Force
   }
+  # 0.3's program, which no service runs (checked above): don't leave a `watermelon` on the Path.
+  if (Test-Path $legacyExe) { Remove-Item $legacyExe -Force }
 } finally {
   Remove-Item $unzipDir -Recurse -Force -ErrorAction SilentlyContinue
   foreach ($service in $running) {
@@ -64,10 +84,10 @@ if (-not (Get-WatermelonService)) {
 
 watermelon-pgp $version is installed in $installDir and on the Path of new shells.
 Next steps, in a new elevated PowerShell (docs/deployment.md, "Windows Server"):
-  `$env:WATERMELON_DATA_DIR = "C:\ProgramData\WatermelonPGP"
-  watermelon init
-  watermelon service install --bind 127.0.0.1:8080
-  Start-Service watermelon
+  `$env:WATERMELONPGP_DATA_DIR = "C:\ProgramData\WatermelonPGP"
+  watermelonpgp init
+  watermelonpgp service install --bind 127.0.0.1:8080
+  Start-Service watermelonpgp
 Documentation: https://github.com/@REPO@/blob/v$version/docs/deployment.md#windows-server
 "@
 }

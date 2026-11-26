@@ -18,7 +18,11 @@ use crate::{
     store::{self, Customer, KeyOwner, KeyRecord, KeyRow, Store},
 };
 
-pub const DB_FILE: &str = "watermelon.db";
+const DB_FILE: &str = "watermelonpgp.db";
+/// The database's name up to 0.3, when the command was still `watermelon`.
+const LEGACY_DB_FILE: &str = "watermelon.db";
+/// The files SQLite keeps next to the database, which move with it.
+const DB_SIDECARS: [&str; 3] = ["", "-wal", "-shm"];
 pub const MASTER_KEY_FILE: &str = "master.key";
 pub const MIN_ADMIN_PASSWORD_LEN: usize = 12;
 
@@ -26,6 +30,39 @@ const SETTING_MASTER_KEY_CHECK: &str = "master_key_check";
 const SETTING_ADMIN_PASSWORD: &str = "admin_password";
 const MASTER_KEY_CHECK_CONTEXT: &str = "master-key-check";
 const MASTER_KEY_CHECK_VALUE: &[u8] = b"watermelon-pgp";
+
+/// The database in `data_dir`. A `watermelon.db` left there by 0.3 or earlier is renamed to
+/// [`DB_FILE`] first, along with its `-wal` and `-shm` files, so an upgrade keeps its data.
+/// Refuses if both names exist rather than pick one.
+pub fn db_path(data_dir: &Path) -> Result<PathBuf> {
+    let db = data_dir.join(DB_FILE);
+    let legacy = data_dir.join(LEGACY_DB_FILE);
+    if !legacy.exists() {
+        return Ok(db);
+    }
+    if db.exists() {
+        return Err(Error::Conflict(format!(
+            "both {} and {} exist: move the one you don't use out of {}",
+            db.display(),
+            legacy.display(),
+            data_dir.display()
+        )));
+    }
+    // The main file last: if a rename fails, the next start finds the legacy database again.
+    for suffix in DB_SIDECARS.iter().rev() {
+        let from = data_dir.join(format!("{LEGACY_DB_FILE}{suffix}"));
+        if from.exists() {
+            let to = data_dir.join(format!("{DB_FILE}{suffix}"));
+            std::fs::rename(&from, &to).map_err(|e| {
+                Error::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("renaming {} to {}: {e}", from.display(), to.display()),
+                ))
+            })?;
+        }
+    }
+    Ok(db)
+}
 
 pub struct Vault {
     store: Store,
@@ -47,7 +84,7 @@ impl Vault {
         admin_password: &str,
     ) -> Result<InitReport> {
         check_admin_password(admin_password)?;
-        let db_path = data_dir.join(DB_FILE);
+        let db_path = db_path(data_dir)?;
         if db_path.exists() {
             return Err(Error::Conflict(format!(
                 "{} already exists",
@@ -89,7 +126,7 @@ impl Vault {
     pub fn open(db_path: &Path, master: MasterKey) -> Result<Self> {
         if !db_path.exists() {
             return Err(Error::NotFound(format!(
-                "{} (run `watermelon init` first)",
+                "{} (run `watermelonpgp init` first)",
                 db_path.display()
             )));
         }
@@ -600,6 +637,59 @@ mod tests {
         let report = Vault::init(dir.path(), &key_path, PASSWORD).unwrap();
         let vault = Vault::open(&report.db_path, MasterKey::load(&key_path).unwrap()).unwrap();
         (dir, vault)
+    }
+
+    #[test]
+    fn db_path_adopts_a_database_left_by_watermelon_0_3() {
+        let (dir, vault) = vault();
+        drop(vault);
+        for suffix in ["", "-wal", "-shm"] {
+            let new = dir.path().join(format!("watermelonpgp.db{suffix}"));
+            if new.exists() {
+                std::fs::rename(new, dir.path().join(format!("watermelon.db{suffix}"))).unwrap();
+            }
+        }
+        std::fs::write(dir.path().join("watermelon.db-shm"), b"shm").unwrap();
+
+        let db = db_path(dir.path()).unwrap();
+
+        assert_eq!(db, dir.path().join("watermelonpgp.db"));
+        assert!(!dir.path().join("watermelon.db").exists());
+        assert!(!dir.path().join("watermelon.db-shm").exists());
+        assert_eq!(
+            std::fs::read(dir.path().join("watermelonpgp.db-shm")).unwrap(),
+            b"shm"
+        );
+        let vault = Vault::open(
+            &db,
+            MasterKey::load(&dir.path().join(MASTER_KEY_FILE)).unwrap(),
+        );
+        assert!(vault.unwrap().verify_admin_password(PASSWORD).unwrap());
+    }
+
+    #[test]
+    fn db_path_leaves_the_old_database_alone_when_both_exist() {
+        let (dir, _vault) = vault();
+        std::fs::write(dir.path().join("watermelon.db"), b"old").unwrap();
+
+        assert!(
+            db_path(dir.path()).is_err(),
+            "two databases: refuse to guess"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("watermelon.db")).unwrap(),
+            b"old"
+        );
+    }
+
+    #[test]
+    fn db_path_of_a_new_data_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            db_path(dir.path()).unwrap(),
+            dir.path().join("watermelonpgp.db")
+        );
+        assert!(!dir.path().join("watermelonpgp.db").exists());
     }
 
     #[test]

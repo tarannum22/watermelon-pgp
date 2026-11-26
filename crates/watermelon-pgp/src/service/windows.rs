@@ -75,7 +75,7 @@ pub fn install(
     .context("connecting to the service manager (run this from an elevated prompt)")?;
     let info = ServiceInfo {
         name: name.into(),
-        display_name: if name == "watermelon" {
+        display_name: if name == super::DEFAULT_NAME {
             "WatermelonPGP".into()
         } else {
             format!("WatermelonPGP ({name})").into()
@@ -83,7 +83,7 @@ pub fn install(
         service_type: ServiceType::OWN_PROCESS,
         start_type: ServiceStartType::AutoStart,
         error_control: ServiceErrorControl::Normal,
-        executable_path: std::env::current_exe().context("finding watermelon.exe")?,
+        executable_path: std::env::current_exe().context("finding watermelonpgp.exe")?,
         launch_arguments: arguments,
         dependencies: vec![],
         account_name: Some(account(name).into()),
@@ -224,7 +224,7 @@ pub fn run(name: String, progress: fn() -> u64, work: Work) -> Result<()> {
     });
     service_dispatcher::start(&name, ffi_service_main).context(
         "connecting to the service manager: `service run` is for Windows to start; to run in a \
-         console, use `watermelon serve`",
+         console, use `watermelonpgp serve`",
     )
 }
 

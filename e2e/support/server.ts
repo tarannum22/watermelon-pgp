@@ -1,4 +1,4 @@
-// Started by Playwright before the tests: a fresh data directory and `watermelon serve`.
+// Started by Playwright before the tests: a fresh data directory and `watermelonpgp serve`.
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import { BINARY, DATA_DIR, PASSWORD, PORT, RUN_DIR } from "./env.ts";
@@ -10,7 +10,7 @@ if (!fs.existsSync(BINARY)) {
 fs.rmSync(RUN_DIR, { recursive: true, force: true });
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const env = { ...process.env, WATERMELON_DATA_DIR: DATA_DIR, WATERMELON_LOG: "warn" };
+const env = { ...process.env, WATERMELONPGP_DATA_DIR: DATA_DIR, WATERMELONPGP_LOG: "warn" };
 execFileSync(BINARY, ["init", "--passphrase-stdin"], { env, input: `${PASSWORD}\n`, stdio: ["pipe", "ignore", "inherit"] });
 
 const server = spawn(BINARY, ["serve", "--bind", `127.0.0.1:${PORT}`], { env, stdio: "inherit" });

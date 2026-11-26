@@ -35,8 +35,8 @@ grep -qF "'watermelon-pgp-v1.2.3-x86_64-pc-windows-msvc'" "$out/tools/common.ps1
 if grep -rnE '@[A-Z0-9_]+@' "$out"; then fail "placeholders left"; fi
 
 # A local download base, for the dry run's smoke test before the release exists.
-WATERMELON_DOWNLOAD_BASE=file:///D:/dist "$here/package.sh" 1.2.3 "$tmp/SHA256SUMS" "$tmp/local" > /dev/null
-grep -qF "file:///D:/dist/${zip}" "$tmp/local/tools/chocolateyInstall.ps1" || fail "WATERMELON_DOWNLOAD_BASE"
+WATERMELONPGP_DOWNLOAD_BASE=file:///D:/dist "$here/package.sh" 1.2.3 "$tmp/SHA256SUMS" "$tmp/local" > /dev/null
+grep -qF "file:///D:/dist/${zip}" "$tmp/local/tools/chocolateyInstall.ps1" || fail "WATERMELONPGP_DOWNLOAD_BASE"
 
 # No zip in SHA256SUMS: an error, and no package.
 if "$here/package.sh" 9.9.9 "$tmp/SHA256SUMS" "$tmp/missing" 2> "$tmp/err"; then

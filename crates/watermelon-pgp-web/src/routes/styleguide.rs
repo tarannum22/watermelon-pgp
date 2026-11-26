@@ -185,7 +185,7 @@ pub async fn show(State(state): State<AppState>, auth: Authed) -> Markup {
                         .title("Danger zone").icon(Icon::Trash).tone(Tone::Bad))
                     (ui::panel(html! { p { "Panels with a warning tone hold things that need attention." } })
                         .title("Needs attention").icon(Icon::Warning).tone(Tone::Warn))
-                    (ui::panel(ui::terminal(html! { span.comment { "# commands and armored keys" } "\nwatermelon --data-dir /var/lib/watermelon serve" }))
+                    (ui::panel(ui::terminal(html! { span.comment { "# commands and armored keys" } "\nwatermelonpgp --data-dir /var/lib/watermelonpgp serve" }))
                         .title("Terminal").icon(Icon::Info))
                     (ui::panel(html! {
                         div.specimen {

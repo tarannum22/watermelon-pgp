@@ -4,21 +4,23 @@
 # The documented layout (docs/deployment.md, "Windows Server"): the same folder as a manual
 # install, so a service installed from it keeps working across upgrades.
 $installDir = Join-Path $env:ProgramFiles 'WatermelonPGP'
-$exe = Join-Path $installDir 'watermelon.exe'
+$exe = Join-Path $installDir 'watermelonpgp.exe'
+# The program's name up to 0.3, when the command was `watermelon`.
+$legacyExe = Join-Path $installDir 'watermelon.exe'
 
 # What the release zip holds (its folder @ZIPDIR@), and so what the package installs and removes.
 $zipDir = '@ZIPDIR@'
-$payload = 'watermelon.exe', 'README.md', 'CHANGELOG.md', 'LICENSE-MIT', 'LICENSE-APACHE', 'docs', 'contrib'
+$payload = 'watermelonpgp.exe', 'README.md', 'CHANGELOG.md', 'LICENSE-MIT', 'LICENSE-APACHE', 'docs', 'contrib'
 
-# The Windows services that run this watermelon.exe, whatever their name
+# The Windows services that run this watermelonpgp.exe (or `-Program`), whatever their name
 # (`service install --name`). Their command line starts with the program path, quoted or not.
-function Get-WatermelonService {
+function Get-WatermelonService([string]$Program = $exe) {
   @(Get-CimInstance Win32_Service | Where-Object {
     $path = "$($_.PathName)".Trim()
     if ($path.StartsWith('"')) {
-      $path.Substring(1).Split('"')[0] -ieq $exe
+      $path.Substring(1).Split('"')[0] -ieq $Program
     } else {
-      ($path -ieq $exe) -or $path.StartsWith("$exe ", [StringComparison]::OrdinalIgnoreCase)
+      ($path -ieq $Program) -or $path.StartsWith("$Program ", [StringComparison]::OrdinalIgnoreCase)
     }
   })
 }

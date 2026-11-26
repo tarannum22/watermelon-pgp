@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Breaking: the command is now `watermelonpgp`
+- The `watermelon` command is renamed `watermelonpgp` (`watermelonpgp.exe` on Windows) to match
+  the product name, with no alias. Everything named after it follows: the `WATERMELON_*`
+  environment variables are now `WATERMELONPGP_*`, the database `watermelonpgp.db`, the Windows
+  service's default name, account and log `watermelonpgp`, `NT SERVICE\watermelonpgp` and
+  `watermelonpgp.log`, and the systemd unit, user and directories, the Docker user and the
+  Homebrew data directory `watermelonpgp`.
+- An existing `watermelon.db` (with its `-wal` and `-shm` files) is renamed to `watermelonpgp.db`
+  the first time a command opens the data directory. The command refuses to start while any
+  `WATERMELON_*` variable is still set and names its replacement, so no setting (TLS, say) is
+  dropped without notice.
+- Upgrading needs a few manual steps per platform (moving directories, installing the Windows
+  service again): see "From 0.3" in docs/deployment.md.
+
 ### Windows Server
 - A Chocolatey package: `choco install watermelon-pgp` installs the release's Windows zip,
   checked against `SHA256SUMS`, into `C:\Program Files\WatermelonPGP` and puts it on the

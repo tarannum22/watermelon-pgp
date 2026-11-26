@@ -18,7 +18,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   # The GnuPG interop tests are a release gate: fail instead of skipping when gpg is missing.
-  WATERMELON_REQUIRE_GPG: "1"
+  WATERMELONPGP_REQUIRE_GPG: "1"
 
 jobs:
   # Which parts of the repository a pull request touches. Pushes to main and tags skip the
@@ -164,18 +164,18 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          cargo build --release --bin watermelon
+          cargo build --release --bin watermelonpgp
           $dir = "$env:ProgramFiles\WatermelonPGP"
           New-Item -ItemType Directory -Force $dir | Out-Null
-          Copy-Item target\release\watermelon.exe $dir
-          $wm = "$dir\watermelon.exe"
+          Copy-Item target\release\watermelonpgp.exe $dir
+          $wm = "$dir\watermelonpgp.exe"
           $data = "$env:ProgramData\WatermelonPGP"
-          $account = 'NT SERVICE\watermelon'
+          $account = 'NT SERVICE\watermelonpgp'
 
           "ci smoke test password" | & $wm --data-dir $data --passphrase-stdin init
           # A non-default port: proves the settings reach the service.
           & $wm --data-dir $data service install --bind 127.0.0.1:18080
-          $service = Get-CimInstance Win32_Service -Filter "Name='watermelon'"
+          $service = Get-CimInstance Win32_Service -Filter "Name='watermelonpgp'"
           if ($service.StartName -ne $account) { throw "runs as $($service.StartName)" }
 
           function Wait-Healthy {
@@ -186,15 +186,15 @@ jobs:
             }
             throw "/healthz did not answer"
           }
-          Start-Service watermelon
+          Start-Service watermelonpgp
           Wait-Healthy
 
-          Stop-Service watermelon
-          $service = Get-CimInstance Win32_Service -Filter "Name='watermelon'"
+          Stop-Service watermelonpgp
+          $service = Get-CimInstance Win32_Service -Filter "Name='watermelonpgp'"
           if ($service.State -ne 'Stopped' -or $service.ExitCode -ne 0) {
             throw "state $($service.State), exit code $($service.ExitCode)/$($service.ServiceSpecificExitCode)"
           }
-          $log = Get-Content "$data\watermelon.log" -Raw
+          $log = Get-Content "$data\watermelonpgp.log" -Raw
           Write-Output $log
           foreach ($line in 'serving', 'running jobs finish their current file first', 'stopped') {
             if ($log -notmatch [regex]::Escape($line)) { throw "the log lacks '$line'" }
@@ -216,17 +216,17 @@ jobs:
           & $wm --data-dir $data audit --limit 3
 
           # Uninstalling a running service stops it first, cleanly.
-          Start-Service watermelon
+          Start-Service watermelonpgp
           Wait-Healthy
           & $wm service uninstall
-          if (Get-Service watermelon -ErrorAction SilentlyContinue) { throw "still installed" }
-          $stops = [regex]::Matches((Get-Content "$data\watermelon.log" -Raw), 'INFO stopped').Count
+          if (Get-Service watermelonpgp -ErrorAction SilentlyContinue) { throw "still installed" }
+          $stops = [regex]::Matches((Get-Content "$data\watermelonpgp.log" -Raw), 'INFO stopped').Count
           if ($stops -ne 2) { throw "expected 2 clean stops in the log, found $stops" }
       - name: Windows service log and events
         if: failure() && runner.os == 'Windows'
         shell: pwsh
         run: |
-          Get-Content "$env:ProgramData\WatermelonPGP\watermelon.log" -ErrorAction SilentlyContinue
+          Get-Content "$env:ProgramData\WatermelonPGP\watermelonpgp.log" -ErrorAction SilentlyContinue
           Get-WinEvent -LogName System -MaxEvents 20 -FilterXPath "*[System[Provider[@Name='Service Control Manager']]]" -ErrorAction SilentlyContinue | Format-List TimeCreated, Message
 
   # Further GnuPG versions partners are likely to run: 2.2 (Debian 12) and the newest 2.4.

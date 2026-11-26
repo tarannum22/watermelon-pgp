@@ -1,14 +1,14 @@
 # watermelon-pgp as a systemd service. See docs/deployment.md for the full walkthrough.
 #
-#   sudo useradd --system --home-dir /var/lib/watermelon --shell /usr/sbin/nologin watermelon
-#   sudo install -m 0755 watermelon /usr/local/bin/watermelon
-#   sudo install -d -o watermelon -g watermelon -m 0700 /var/lib/watermelon /etc/watermelon/key
-#   sudo install -m 0640 watermelon.env /etc/watermelon/
-#   sudo -u watermelon env WATERMELON_DATA_DIR=/var/lib/watermelon \
-#       WATERMELON_MASTER_KEY_FILE=/etc/watermelon/key/master.key watermelon init
-#   sudo install -m 0644 watermelon.service /etc/systemd/system/
-#   sudo systemctl edit watermelon    # add ReadWritePaths= for your job folders
-#   sudo systemctl enable --now watermelon
+#   sudo useradd --system --home-dir /var/lib/watermelonpgp --shell /usr/sbin/nologin watermelonpgp
+#   sudo install -m 0755 watermelonpgp /usr/local/bin/watermelonpgp
+#   sudo install -d -o watermelonpgp -g watermelonpgp -m 0700 /var/lib/watermelonpgp /etc/watermelonpgp/key
+#   sudo install -m 0640 watermelonpgp.env /etc/watermelonpgp/
+#   sudo -u watermelonpgp env WATERMELONPGP_DATA_DIR=/var/lib/watermelonpgp \
+#       WATERMELONPGP_MASTER_KEY_FILE=/etc/watermelonpgp/key/master.key watermelonpgp init
+#   sudo install -m 0644 watermelonpgp.service /etc/systemd/system/
+#   sudo systemctl edit watermelonpgp    # add ReadWritePaths= for your job folders
+#   sudo systemctl enable --now watermelonpgp
 
 [Unit]
 Description=watermelon-pgp: OpenPGP keys and folder encryption jobs
@@ -18,11 +18,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=watermelon
-Group=watermelon
-Environment=WATERMELON_DATA_DIR=/var/lib/watermelon
-EnvironmentFile=-/etc/watermelon/watermelon.env
-ExecStart=/usr/local/bin/watermelon serve
+User=watermelonpgp
+Group=watermelonpgp
+Environment=WATERMELONPGP_DATA_DIR=/var/lib/watermelonpgp
+EnvironmentFile=-/etc/watermelonpgp/watermelonpgp.env
+ExecStart=/usr/local/bin/watermelonpgp serve
 # Reloads the TLS certificate (e.g. after renewal); everything else needs a restart.
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
@@ -30,13 +30,13 @@ RestartSec=5s
 # Running jobs finish their current file before the process exits.
 TimeoutStopSec=5min
 
-StateDirectory=watermelon
+StateDirectory=watermelonpgp
 StateDirectoryMode=0700
 # Output files readable by the group (e.g. the SFTP users' group), not by everyone.
 UMask=0027
 
 # Sandboxing. The service may only write to its state directory and the job folders you add
-# with ReadWritePaths= (systemctl edit watermelon), e.g.:
+# with ReadWritePaths= (systemctl edit watermelonpgp), e.g.:
 #   [Service]
 #   ReadWritePaths=/srv/sftp
 NoNewPrivileges=yes

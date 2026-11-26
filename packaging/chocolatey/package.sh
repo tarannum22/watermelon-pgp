@@ -7,7 +7,7 @@
 # Used by the release workflow; a manual run gives the same package. The templates next to this
 # script hold @VERSION@, @REPO@, @URL64@, @ZIPDIR@ and @CHECKSUM64@. The install script downloads the
 # release's Windows zip from GitHub and checks it against the checksum from SHA256SUMS.
-# WATERMELON_DOWNLOAD_BASE replaces the download folder URL (the release workflow's smoke test
+# WATERMELONPGP_DOWNLOAD_BASE replaces the download folder URL (the release workflow's smoke test
 # uses a file:// URL before the release exists).
 set -euo pipefail
 
@@ -20,7 +20,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 zip="watermelon-pgp-v${version}-x86_64-pc-windows-msvc.zip"
 checksum=$(awk -v f="$zip" '$2 == f || $2 == "*"f { print $1 }' "$sums" | grep -E '^[0-9a-f]{64}$') \
   || { echo "no checksum for $zip in $sums" >&2; exit 1; }
-base=${WATERMELON_DOWNLOAD_BASE:-https://github.com/${repo}/releases/download/v${version}}
+base=${WATERMELONPGP_DOWNLOAD_BASE:-https://github.com/${repo}/releases/download/v${version}}
 
 mkdir -p "$out/tools"
 fill() {

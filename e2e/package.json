@@ -1,7 +1,7 @@
 {
   "name": "watermelon-pgp-e2e",
   "private": true,
-  "description": "End-to-end tests: a real browser against a real watermelon binary.",
+  "description": "End-to-end tests: a real browser against a real watermelonpgp binary.",
   "type": "module",
   "scripts": {
     "test": "playwright test",
