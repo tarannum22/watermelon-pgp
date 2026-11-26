@@ -44,6 +44,16 @@ website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands, screenshots
   gh run watch "$(gh run list --workflow release.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId')"
   ```
 
+- [ ] The `msi` job upgraded from the previous release's MSI, not the stand-in. Its "Build the
+      MSI" step says `Upgrading from the vA.B.C MSI`. `No MSI in the release before this one
+      …; upgrading from the same files built as 0.0.1` is expected only for 0.4.0, the first
+      release with an MSI. From the release after it, that line means the previous MSI
+      couldn't be found, so a real upgrade went untested:
+
+  ```sh
+  gh run view <run id> --log | grep -E 'Upgrading from|No MSI in the release'
+  ```
+
 ## 2. Tag
 
 - [ ] The merge commit's CI run is green (its `ci-ok` job passed):
