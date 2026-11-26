@@ -4,8 +4,8 @@
 # Dry run: start it by hand (Actions > Release > Run workflow, or `gh workflow run release.yml`).
 # It builds and packages all five targets (the Windows zip is smoke-tested), checksums them,
 # writes the release notes and the Homebrew formula, builds the image for both platforms, and
-# builds and smoke-tests the Chocolatey package (install, upgrade with the service running,
-# uninstall), all as v<version in Cargo.toml>.
+# builds and smoke-tests the MSI installer and the Chocolatey package (install, upgrade with the
+# service running, uninstall), all as v<version in Cargo.toml>.
 # It publishes nothing: no GitHub release, no image push, no tap update, no Chocolatey push.
 name: Release
 
@@ -145,8 +145,162 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
-  release:
+  # The Windows installer (packaging/msi), from the Windows zip already built: no second Rust
+  # build. WiX is a pinned .NET tool from nuget.org (dotnet checks the package signature),
+  # cached by version. The smoke test installs it silently, upgrades it with the service
+  # running, and uninstalls it, in the dry run too. The previous version to upgrade from is the
+  # previous release's MSI, or, before a release has one, the same files built as 0.0.1.
+  msi:
     needs: build
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      TAG: ${{ needs.build.outputs.tag }}
+      WIX_VERSION: 5.0.2
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: x86_64-pc-windows-msvc
+          path: dist
+      - id: wix-cache
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~\.dotnet\tools
+            ~\.wix
+          key: wix-${{ env.WIX_VERSION }}
+      - name: Install WiX
+        if: steps.wix-cache.outputs.cache-hit != 'true'
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version $env:WIX_VERSION
+          if ($LASTEXITCODE -ne 0) { throw "installing WiX failed" }
+          & "$HOME\.dotnet\tools\wix.exe" extension add --global "WixToolset.Util.wixext/$env:WIX_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "adding the WiX Util extension failed" }
+      - name: Build the MSI
+        timeout-minutes: 5
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $env:Path = "$HOME\.dotnet\tools;$env:Path"
+          wix --version
+          $name = "watermelon-pgp-$env:TAG-x86_64-pc-windows-msvc"
+          Expand-Archive "dist\$name.zip" "$env:RUNNER_TEMP\unpacked"
+          $payload = "$env:RUNNER_TEMP\unpacked\$name"
+          packaging\msi\build.ps1 -Version $env:TAG.TrimStart('v') -Payload $payload -Out "dist\$name.msi"
+
+          # The version to upgrade from: the newest other release's MSI, if it has one.
+          $previous = "$env:RUNNER_TEMP\previous"
+          New-Item -ItemType Directory -Force $previous | Out-Null
+          $tag = gh release list --exclude-drafts --exclude-pre-releases --limit 20 --json tagName --jq '.[].tagName' |
+            Where-Object { $_ -ne $env:TAG } | Select-Object -First 1
+          if ($tag) { gh release download $tag --pattern '*.msi' --dir $previous 2>$null }
+          if (Get-ChildItem "$previous\*.msi" -ErrorAction SilentlyContinue) {
+            "Upgrading from the $tag MSI"
+          } else {
+            "No earlier release has an MSI; upgrading from the same files built as 0.0.1"
+            packaging\msi\build.ps1 -Version 0.0.1 -Payload $payload -Out "$previous\previous.msi"
+          }
+      - name: Smoke test install, upgrade and uninstall
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:TAG.TrimStart('v')
+          $msi = (Resolve-Path "dist\watermelon-pgp-$env:TAG-x86_64-pc-windows-msvc.msi").Path
+          $previous = (Get-ChildItem "$env:RUNNER_TEMP\previous\*.msi" | Select-Object -First 1).FullName
+          $dir = "$env:ProgramFiles\WatermelonPGP"
+          $data = "$env:ProgramData\WatermelonPGP"
+          function Invoke-Msi([string]$Verb, [string]$Package, [string]$Log) {
+            $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList $Verb, "`"$Package`"", '/qn', '/l*v', "`"$env:RUNNER_TEMP\msi-$Log.log`""
+            $p.ExitCode
+          }
+          # A new shell's Path: what the installer wrote to the registry.
+          function Update-Path {
+            $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
+              [Environment]::GetEnvironmentVariable('Path', 'User')
+          }
+          function Get-Entry {
+            @(Get-ChildItem HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall |
+              Get-ItemProperty | Where-Object { $_.DisplayName -eq 'WatermelonPGP' })
+          }
+          function Wait-Healthy {
+            for ($i = 0; $i -lt 30; $i++) {
+              try {
+                if ((Invoke-WebRequest http://127.0.0.1:18080/healthz).Content -match '"ok"') { return }
+              } catch {}
+              Start-Sleep 1
+            }
+            throw "/healthz did not answer"
+          }
+
+          # The previous version, silently: on the Path, nothing else set up.
+          $code = Invoke-Msi /i $previous previous
+          if ($code -ne 0) { throw "installing the previous MSI failed ($code)" }
+          Update-Path
+          $wm = (Get-Command watermelonpgp).Source
+          if ($wm -ne "$dir\watermelonpgp.exe") { throw "watermelonpgp on the Path is $wm" }
+          if (Test-Path $data) { throw "the MSI created $data" }
+          if (Get-Service watermelonpgp -ErrorAction SilentlyContinue) { throw "the MSI installed a service" }
+
+          # Upgrade while the service runs: it is stopped cleanly and started again.
+          "release smoke test password" | watermelonpgp --data-dir $data --passphrase-stdin init
+          if ($LASTEXITCODE -ne 0) { throw "init failed" }
+          watermelonpgp --data-dir $data service install --bind 127.0.0.1:18080
+          if ($LASTEXITCODE -ne 0) { throw "service install failed" }
+          Start-Service watermelonpgp
+          Wait-Healthy
+          $code = Invoke-Msi /i $msi upgrade
+          if ($code -ne 0) { throw "the upgrade failed ($code)" }
+          $v = & watermelonpgp --version
+          $v
+          if ($v -cne "watermelonpgp $version") { throw "--version: $v" }
+          $entries = Get-Entry
+          if ($entries.Count -ne 1 -or $entries[0].DisplayVersion -ne $version) {
+            throw "Add/Remove Programs lists: $($entries | ForEach-Object { $_.DisplayVersion })"
+          }
+          if ((Get-Service watermelonpgp).Status -ne 'Running') { throw "the service is not running after the upgrade" }
+          Wait-Healthy
+          $stops = [regex]::Matches((Get-Content "$data\watermelonpgp.log" -Raw), 'INFO stopped').Count
+          if ($stops -ne 1) { throw "expected 1 clean stop in the log, found $stops" }
+
+          # Uninstall refuses while the service runs the program...
+          $code = Invoke-Msi /x $msi refused
+          if ($code -eq 0) { throw "uninstalling succeeded with the service installed" }
+          if (-not (Test-Path "$dir\watermelonpgp.exe")) { throw "the refused uninstall removed watermelonpgp.exe" }
+          Select-String -Path "$env:RUNNER_TEMP\msi-refused.log" -Pattern 'WatermelonPGP: the Windows service' -SimpleMatch | Select-Object -First 1
+          # ...and once the service is gone, removes everything it installed, and not the data.
+          watermelonpgp service uninstall
+          if ($LASTEXITCODE -ne 0) { throw "service uninstall failed" }
+          $code = Invoke-Msi /x $msi uninstall
+          if ($code -ne 0) { throw "uninstalling failed ($code)" }
+          if (Test-Path $dir) { throw "$dir is still there: $(Get-ChildItem $dir -Recurse -Force)" }
+          if (Get-Entry) { throw "still in Add/Remove Programs" }
+          $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';'
+          if ($machinePath | Where-Object { $_.TrimEnd('\') -ieq $dir }) { throw "$dir is still on the Path" }
+          foreach ($file in 'watermelonpgp.db', 'master.key') {
+            if (-not (Test-Path "$data\$file")) { throw "uninstalling removed $data\$file" }
+          }
+      - name: MSI and watermelonpgp logs
+        if: failure()
+        shell: pwsh
+        run: |
+          foreach ($log in Get-ChildItem "$env:RUNNER_TEMP\msi-*.log" -ErrorAction SilentlyContinue) {
+            "== $($log.Name)"
+            Get-Content $log | Select-String -Pattern 'WatermelonPGP:|Return value 3|Error|CustomAction' | Select-Object -Last 60
+          }
+          Get-Content "$env:ProgramData\WatermelonPGP\watermelonpgp.log" -ErrorAction SilentlyContinue
+      - uses: actions/upload-artifact@v7
+        with:
+          name: msi
+          path: dist/*.msi
+          if-no-files-found: error
+
+  release:
+    needs: [build, msi]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -160,7 +314,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Checksums
-        run: cd dist && sha256sum -- *.tar.gz *.zip > SHA256SUMS && cat SHA256SUMS
+        run: cd dist && sha256sum -- *.tar.gz *.zip *.msi > SHA256SUMS && cat SHA256SUMS
       # For the chocolatey job, which builds the package from the same checksums.
       - uses: actions/upload-artifact@v7
         with:
@@ -180,7 +334,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$TAG" dist/*.tar.gz dist/*.zip dist/SHA256SUMS \
+          gh release create "$TAG" dist/*.tar.gz dist/*.zip dist/*.msi dist/SHA256SUMS \
             --title "$TAG" --notes-file notes.md --verify-tag
       # The homebrew job below needs the published release; the dry run checks the formula here.
       - name: Dry run, no release created

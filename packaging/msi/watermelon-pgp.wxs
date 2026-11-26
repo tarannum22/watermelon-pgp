@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The Windows installer (WiX v5), built by packaging/msi/build.ps1 from the release zip's files.
+  Same layout as the Chocolatey package: C:\Program Files\WatermelonPGP, on the machine Path.
+  It doesn't run `init` or `service install` and doesn't touch any data directory.
+  Defines: Version (X.Y.Z), Payload (the unpacked zip folder), Generated (actions.wxi's folder).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <?include $(var.Generated)\actions.wxi ?>
+
+  <!-- UpgradeCode: never change it, or a new version installs next to the old one. -->
+  <Package Name="WatermelonPGP" Manufacturer="WatermelonPGP" Version="$(var.Version)"
+           UpgradeCode="B33BC9D9-6AA6-4E32-8089-DA114EE26D41" Scope="perMachine">
+    <!-- The old version is removed first, then the new one installed: no file-version rules. -->
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="A newer version of WatermelonPGP is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="ARPURLINFOABOUT" Value="https://tarannum22.github.io/watermelon-pgp/" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/tarannum22/watermelon-pgp/blob/v$(var.Version)/docs/deployment.md#windows-server" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="WatermelonPGP" />
+    </StandardDirectory>
+
+    <Feature Id="Main">
+      <ComponentGroupRef Id="Payload" />
+      <ComponentRef Id="SystemPath" />
+    </Feature>
+
+    <ComponentGroup Id="Payload" Directory="INSTALLFOLDER">
+      <Files Include="$(var.Payload)\**" />
+    </ComponentGroup>
+
+    <Component Id="SystemPath" Directory="INSTALLFOLDER">
+      <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Part="last" Action="set"
+                   System="yes" Permanent="no" />
+      <RegistryValue Root="HKLM" Key="Software\WatermelonPGP" Name="InstallDir" Type="string"
+                     Value="[INSTALLFOLDER]" KeyPath="yes" />
+    </Component>
+
+    <!--
+      service.ps1, one custom action per step. The checks run before anything changes and fail
+      the installation with the reason in the MSI log. Stop runs before the old version is
+      removed, start at the end; on a failed installation, the rollback starts them again.
+      None of them run while a version is removed (REMOVE="ALL"), which is how an upgrade
+      removes the old version too.
+    -->
+    <SetProperty Action="SetCheckInstallCmd" Id="WixQuietExecCmdLine" Value="$(var.CmdCheckInstall)"
+                 Before="WmCheckInstall" Sequence="execute" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+    <CustomAction Id="WmCheckInstall" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
+                  Execute="immediate" Return="check" />
+
+    <SetProperty Action="SetCheckUninstallCmd" Id="WixQuietExecCmdLine" Value="$(var.CmdCheckUninstall)"
+                 Before="WmCheckUninstall" Sequence="execute"
+                 Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    <CustomAction Id="WmCheckUninstall" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
+                  Execute="immediate" Return="check" />
+
+    <SetProperty Id="WmRollbackStart" Value="$(var.CmdStart)" Before="WmRollbackStart"
+                 Sequence="execute" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+    <CustomAction Id="WmRollbackStart" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
+                  Execute="rollback" Impersonate="no" Return="ignore" />
+
+    <SetProperty Id="WmStopServices" Value="$(var.CmdStop)" Before="WmStopServices"
+                 Sequence="execute" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+    <CustomAction Id="WmStopServices" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
+                  Execute="deferred" Impersonate="no" Return="check" />
+
+    <SetProperty Id="WmStartServices" Value="$(var.CmdStart)" Before="WmStartServices"
+                 Sequence="execute" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+    <CustomAction Id="WmStartServices" BinaryRef="Wix4UtilCA_X64" DllEntry="WixQuietExec"
+                  Execute="deferred" Impersonate="no" Return="check" />
+
+    <InstallExecuteSequence>
+      <Custom Action="WmCheckInstall" After="InstallValidate" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="WmCheckUninstall" After="WmCheckInstall"
+              Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="WmRollbackStart" After="InstallInitialize" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="WmStopServices" After="WmRollbackStart" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="WmStartServices" Before="InstallFinalize" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+  </Package>
+</Wix>

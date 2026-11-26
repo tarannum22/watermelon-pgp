@@ -32,11 +32,12 @@ website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands (after the rel
 - [ ] Nothing else still names the old version:
       `git grep -nF A.B.C -- ':!CHANGELOG.md' ':!Cargo.lock'` (the website is updated later).
 - [ ] The release dry run passes on the release branch. It builds and packages every target,
-      writes the release notes and the Homebrew formula, builds the image, and builds the
-      Chocolatey package and smoke-tests it (job `chocolatey`: install, upgrade with the
-      service running, uninstall), but publishes nothing. The Windows build
-      (`build (x86_64-pc-windows-msvc, windows-latest)`) also smoke-tests the unpacked zip: `--version`, `init` and `/healthz`, and that `watermelonpgp.exe`
-      needs no C runtime DLL (`dumpbin /dependents`):
+      writes the release notes and the Homebrew formula, builds the image, and builds the MSI
+      and the Chocolatey package and smoke-tests them (jobs `msi` and `chocolatey`: silent
+      install, upgrade with the service running, uninstall), but publishes nothing. The Windows
+      build (`build (x86_64-pc-windows-msvc, windows-latest)`) also smoke-tests the unpacked
+      zip: `--version`, `init` and `/healthz`, and that `watermelonpgp.exe` needs no C runtime
+      DLL (`dumpbin /dependents`):
 
   ```sh
   gh workflow run release.yml --ref release-X.Y.Z
@@ -67,8 +68,8 @@ website-X.Y.Z    "Website: version X.Y.Z" badge, tarball commands (after the rel
       `gh run watch <id>`. (CI also runs on the tag.)
 - [ ] `gh release view vX.Y.Z`: four tarballs, `watermelon-pgp-vX.Y.Z-<target>.tar.gz` for
       `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin` and
-      `x86_64-apple-darwin`, the Windows `watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc.zip`,
-      and `SHA256SUMS` listing all five; the notes are the CHANGELOG section.
+      `x86_64-apple-darwin`, the Windows `watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc.zip` and
+      `.msi`, and `SHA256SUMS` listing all six; the notes are the CHANGELOG section.
 - [ ] A binary runs and matches its checksum:
 
   ```sh
