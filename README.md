@@ -10,9 +10,11 @@ from and write to.
 
 **Website: [tarannum22.github.io/watermelon-pgp](https://tarannum22.github.io/watermelon-pgp/)**
 
-> **Status: 0.3.0.** Everything planned for v1 works and is tested, including against GnuPG
-> 2.2–2.5; expect rough edges. 0.3.0 adds Windows Server support: a Windows build that runs as
-> a native service, with its secrets protected by access lists. See
+> **Status: 0.4.0.** Everything planned for v1 works and is tested, including against GnuPG
+> 2.2–2.5; expect rough edges. 0.4.0 renames the command to `watermelonpgp` (a breaking change;
+> see "From 0.3" in [docs/deployment.md](docs/deployment.md)) and adds Chocolatey and an MSI
+> installer for Windows Server, which 0.3.0 brought: a Windows build that runs as a native
+> service, with its secrets protected by access lists. See
 > [DESIGN.md](DESIGN.md) for the decisions behind it and [CHANGELOG.md](CHANGELOG.md) for what's
 > in each release.
 
