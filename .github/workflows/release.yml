@@ -296,6 +296,14 @@ jobs:
           Wait-Healthy
           $code = Invoke-Msi /i $msi upgrade
           if ($code -ne 0) { throw "the upgrade failed ($code)" }
+          # The service is stopped before the old version's files are removed.
+          $log = Get-Content "$env:RUNNER_TEMP\msi-upgrade.log"
+          $stopAt = ($log | Select-String 'Action start [\d:]+: WmStopServices\.' | Select-Object -First 1).LineNumber
+          $removeAt = ($log | Select-String 'Action start [\d:]+: RemoveExistingProducts\.' | Select-Object -First 1).LineNumber
+          if (-not $stopAt -or -not $removeAt -or $stopAt -gt $removeAt) {
+            throw "expected WmStopServices before RemoveExistingProducts in the upgrade log (lines $stopAt, $removeAt)"
+          }
+          "  WmStopServices (log line $stopAt) runs before RemoveExistingProducts (line $removeAt)"
           $v = & watermelonpgp --version
           if ($v -cne "watermelonpgp $version") { throw "--version: $v" }
           "  --version: $v"

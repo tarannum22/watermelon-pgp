@@ -82,9 +82,12 @@
       <Custom Action="WmCheckInstall" After="InstallValidate" Condition="NOT REMOVE~=&quot;ALL&quot;" />
       <Custom Action="WmCheckUninstall" After="WmCheckInstall"
               Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
-      <!-- Between InstallInitialize and the old version's removal (MajorUpgrade). -->
-      <Custom Action="WmStopServices" Before="RemoveExistingProducts" Condition="NOT REMOVE~=&quot;ALL&quot;" />
-      <Custom Action="WmRollbackStart" Before="WmStopServices" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <!-- Right after InstallInitialize, before the old version's removal (MajorUpgrade puts
+           RemoveExistingProducts after these). Not Before="RemoveExistingProducts": that leaves
+           no sequence number between it and InstallInitialize (error 2613). The release
+           workflow's msi smoke test checks the order in the upgrade's log. -->
+      <Custom Action="WmRollbackStart" After="InstallInitialize" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="WmStopServices" After="WmRollbackStart" Condition="NOT REMOVE~=&quot;ALL&quot;" />
       <Custom Action="WmStartServices" Before="InstallFinalize" Condition="NOT REMOVE~=&quot;ALL&quot;" />
     </InstallExecuteSequence>
   </Package>
