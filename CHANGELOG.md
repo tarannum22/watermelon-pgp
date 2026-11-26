@@ -17,6 +17,8 @@ All notable changes to this project are documented here. The format follows
   the first time a command opens the data directory. The command refuses to start while any
   `WATERMELON_*` variable is still set and names its replacement, so no setting (TLS, say) is
   dropped without notice.
+- `watermelonpgp --version` prints `watermelonpgp X.Y.Z` (it was `watermelon-pgp X.Y.Z`), for
+  scripts that parse it.
 - Upgrading needs a few manual steps per platform (moving directories, installing the Windows
   service again): see "From 0.3" in docs/deployment.md.
 
