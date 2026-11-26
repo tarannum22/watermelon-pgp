@@ -170,7 +170,4 @@ Merge only once the release has its tarballs, or the install commands point at n
       tells they're current. Look at each image before committing: when a UI change breaks the
       demo (a renamed button, a new required field), fix `e2e/website/` (see `e2e/README.md`).
 - [ ] Features and FAQ on the site mention what's new.
-- [ ] The first release with the `watermelonpgp` command (#46): every command example in
-      `site/index.html` uses `watermelonpgp`, `WATERMELONPGP_*` and `NT SERVICE\watermelonpgp`
-      (`git grep -nwP 'watermelon(?!-pgp)|WATERMELON_' site` finds nothing). Then drop this item.
 - [ ] `python3 .github/scripts/check-branding.py site` passes.
