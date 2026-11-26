@@ -4,7 +4,11 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.0] - 2026-11-26
+
+The command is now `watermelonpgp`, matching the product name: a breaking change, with upgrade
+steps for every platform in docs/deployment.md ("From 0.3"). On Windows Server, watermelonpgp
+now installs with Chocolatey or an MSI installer as well as from the zip.
 
 ### Breaking: the command is now `watermelonpgp`
 - The `watermelon` command is renamed `watermelonpgp` (`watermelonpgp.exe` on Windows) to match
@@ -34,6 +38,18 @@ All notable changes to this project are documented here. The format follows
   Add/Remove Programs, for `msiexec /qn`, Group Policy, Intune or SCCM. A newer MSI upgrades in
   place, stopping a service that runs the program and starting it again; uninstalling refuses
   while such a service is installed and leaves the data directory alone. Not code-signed yet.
+
+### Web UI
+- One "New job" button, in the dashboard's page header; the top bar no longer repeats it on
+  every page (Keys, Audit log and Settings are about other things; the sidebar's Jobs link is
+  one click away). The top bar's search is centred and wider (up to 720px).
+
+### Known issues
+- `watermelonpgp.exe` and the MSI aren't code-signed yet, so SmartScreen warns (#56).
+- A new Chocolatey version is listed only after the community repository's review, which can
+  take days; until then, install from the zip or the MSI.
+- Unchanged from 0.3.0: the two rPGP dependency advisories without a fix (RUSTSEC-2023-0071,
+  RUSTSEC-2026-0387) and the Ubuntu 26.04 libgcrypt 1.12.0 import problem. See the README.
 
 ## [0.3.0] - 2026-11-25
 

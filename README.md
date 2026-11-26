@@ -10,9 +10,11 @@ from and write to.
 
 **Website: [tarannum22.github.io/watermelon-pgp](https://tarannum22.github.io/watermelon-pgp/)**
 
-> **Status: 0.3.0.** Everything planned for v1 works and is tested, including against GnuPG
-> 2.2–2.5; expect rough edges. 0.3.0 adds Windows Server support: a Windows build that runs as
-> a native service, with its secrets protected by access lists. See
+> **Status: 0.4.0.** Everything planned for v1 works and is tested, including against GnuPG
+> 2.2–2.5; expect rough edges. 0.4.0 renames the command to `watermelonpgp` (a breaking change;
+> see "From 0.3" in [docs/deployment.md](docs/deployment.md)). Windows Server support arrived in
+> 0.3.0 (a native service, secrets protected by access lists); 0.4.0 adds Chocolatey and an MSI
+> installer. See
 > [DESIGN.md](DESIGN.md) for the decisions behind it and [CHANGELOG.md](CHANGELOG.md) for what's
 > in each release.
 
@@ -125,9 +127,12 @@ For scripted setups, `--passphrase-stdin` reads passwords from stdin instead of 
 
 ## Known issues
 
-- **Windows:** x86_64 only, an unsigned exe, the service runs as its virtual account only, and
-  only Windows Server 2025 is tested. See
-  [Known limits](docs/deployment.md#known-limits) in the Windows deployment guide.
+- **Windows:** x86_64 only; `watermelonpgp.exe` and the MSI aren't code-signed yet, so
+  SmartScreen warns ([#56](https://github.com/tarannum22/watermelon-pgp/issues/56)); the service
+  runs as its virtual account only; only Windows Server 2025 is tested. A new version reaches
+  Chocolatey only after the community repository's review, which can take days; install from the
+  zip or the MSI meanwhile. See [Known limits](docs/deployment.md#known-limits) in the Windows
+  deployment guide.
 - **Two dependency advisories without a fix yet**, both timing side channels inside rPGP's
   dependencies: [RUSTSEC-2023-0071](https://rustsec.org/advisories/RUSTSEC-2023-0071) (`rsa`,
   "Marvin attack", RSA keys) and [RUSTSEC-2026-0387](https://rustsec.org/advisories/RUSTSEC-2026-0387)
