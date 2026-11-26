@@ -142,8 +142,6 @@ pub fn layout(page: Page<'_>, content: Markup) -> Markup {
                             form method="get" action="/audit" role="search" {
                                 (ui::search_input("q", "", "Search activity: customer, job, key, file…", "Search activity"))
                             }
-                            span.spacer {}
-                            span.hide-sm { (ui::button("New job").icon(Icon::Plus).href("/jobs/new")) }
                         }
                         main.content #main {
                             (content)

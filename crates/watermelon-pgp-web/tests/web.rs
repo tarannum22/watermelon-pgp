@@ -984,6 +984,21 @@ async fn the_theme_choice_is_a_cookie_and_returns_to_the_page() {
 }
 
 #[tokio::test]
+async fn the_top_bar_is_search_only_and_the_dashboard_has_one_new_job() {
+    let app = App::new();
+    let session = app.login().await;
+    // Only the dashboard's header has New job; the top bar adds none on any page.
+    for (path, new_jobs) in [("/", 1), ("/keys", 0), ("/audit", 0), ("/settings", 0)] {
+        let page = app.get(path, Some(&session)).await;
+        assert!(
+            page.body.contains("role=\"search\""),
+            "{path} keeps the search"
+        );
+        assert_eq!(page.body.matches("New job").count(), new_jobs, "{path}");
+    }
+}
+
+#[tokio::test]
 async fn the_style_guide_is_only_in_debug_builds() {
     let app = App::new();
     let session = app.login().await;
