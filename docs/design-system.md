@@ -120,6 +120,9 @@ a test checks this.
 cd e2e && npm test && npm run screenshots   # every page, light and dark, in e2e/screenshots/
 ```
 
+The website's screenshots in `site/img/` come from `npm run website` instead, with each release
+(see `e2e/README.md`).
+
 ## Third-party assets
 
 - [Geist](https://vercel.com/font) (SIL Open Font License 1.1), `assets/fonts/Geist-OFL.txt`
