@@ -118,7 +118,7 @@ jobs:
           $version = & $exe --version
           $version
           if ($LASTEXITCODE -ne 0) { throw "--version failed" }
-          if ($version -cne "watermelon-pgp $($env:TAG.TrimStart('v'))") { throw "--version does not match $env:TAG" }
+          if ($version -cne "watermelonpgp $($env:TAG.TrimStart('v'))") { throw "--version does not match $env:TAG" }
 
           $data = "$env:RUNNER_TEMP\wm-data"
           "release smoke test password" | & $exe --data-dir $data --passphrase-stdin init
@@ -313,7 +313,7 @@ jobs:
           $wm = (Get-Command watermelonpgp).Source
           if ($wm -ne "$dir\watermelonpgp.exe") { throw "watermelonpgp on the Path is $wm" }
           $v = & watermelonpgp --version
-          if ($v -cne "watermelon-pgp $version") { throw "--version: $v" }
+          if ($v -cne "watermelonpgp $version") { throw "--version: $v" }
           if (Test-Path $data) { throw "the package created $data" }
           if (Get-Service watermelonpgp -ErrorAction SilentlyContinue) { throw "the package installed a service" }
 
