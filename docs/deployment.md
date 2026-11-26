@@ -330,6 +330,9 @@ Chocolatey and the MSI don't know about each other's files.
   that program is installed; the MSI log (`/l*v`) says so. Run `watermelonpgp service uninstall`
   first. It removes the program files and the Path entry, and leaves the data directory and the
   master key.
+- Installed over a 0.3 install from the zip, it refuses while a service still runs the old
+  `watermelon.exe` ([From 0.3](#from-03-watermelon-is-now-watermelonpgp)), and otherwise removes
+  that file.
 - The MSI isn't code-signed yet, so SmartScreen and some deployment tools warn about it.
 
 **From the zip.** Windows releases start with 0.3.0. Download
@@ -575,10 +578,9 @@ hand-over to everything in the data directory.
 
 To upgrade from 0.3, follow [From 0.3](#from-03-watermelon-is-now-watermelonpgp) first. To upgrade: with Chocolatey, `choco upgrade watermelon-pgp`, or with the MSI, install the newer
 MSI; both stop the service, replace the program and start it again ([Install](#install)). From
-the zip: unpack the new
-zip into its own folder as in [Install](#install), then `Stop-Service watermelonpgp`, copy the new
-`watermelonpgp.exe` over the old one in `C:\Program Files\WatermelonPGP`, and
-`Start-Service watermelonpgp`. As described in
+the zip: unpack the new zip into its own folder as in [Install](#install), then
+`Stop-Service watermelonpgp`, copy the new `watermelonpgp.exe` over the old one in
+`C:\Program Files\WatermelonPGP`, and `Start-Service watermelonpgp`. As described in
 [Upgrading](#upgrading), a database upgrade first keeps a copy of the old database in the data
 directory (`watermelonpgp.db.schema-v<N>.bak`); for a backup the old release can read, run
 `backup` with the old program (`watermelon.exe` for 0.3) before replacing it (or before `choco upgrade` or the new MSI).

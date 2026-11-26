@@ -146,10 +146,13 @@ jobs:
           if-no-files-found: error
 
   # The Windows installer (packaging/msi), from the Windows zip already built: no second Rust
-  # build. WiX is a pinned .NET tool from nuget.org (dotnet checks the package signature),
-  # cached by version. The smoke test installs it silently, upgrades it with the service
-  # running, and uninstalls it, in the dry run too. The previous version to upgrade from is the
-  # previous release's MSI, or, before a release has one, the same files built as 0.0.1.
+  # build. WiX and its Util extension are pinned packages from nuget.org, checked against the
+  # SHA-256s below on every run; WiX is installed from that checked copy only. The smoke test
+  # installs the MSI silently, upgrades it with the service running and uninstalls it, in the
+  # dry run too. It upgrades from the newest earlier release's MSI, or, while no earlier release
+  # has one, from the same files built as 0.0.1.
+  # To update WiX: change WIX_VERSION and both hashes (shasum -a 256 of
+  # https://api.nuget.org/v3-flatcontainer/<id>/<version>/<id>.<version>.nupkg).
   msi:
     needs: build
     runs-on: windows-latest
@@ -157,52 +160,77 @@ jobs:
     env:
       TAG: ${{ needs.build.outputs.tag }}
       WIX_VERSION: 5.0.2
+      WIX_SHA256: f30ef0c74e2a986126539c5780be93ac24e8136eaf723b1937b26272703ae173
+      WIX_UTIL_SHA256: dda1cc1b4d3b2305b1246f167c6af6fcded5000be84b3bbff3dda4f442bf4740
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           name: x86_64-pc-windows-msvc
           path: dist
-      - id: wix-cache
-        uses: actions/cache@v6
+      # Saved by dry runs only, like the Rust cache: nothing reuses a tag's.
+      - uses: actions/cache/restore@v6
         with:
-          path: |
-            ~\.dotnet\tools
-            ~\.wix
+          path: ${{ runner.temp }}\wix-packages
           key: wix-${{ env.WIX_VERSION }}
       - name: Install WiX
-        if: steps.wix-cache.outputs.cache-hit != 'true'
         timeout-minutes: 5
         shell: pwsh
         run: |
-          dotnet tool install --global wix --version $env:WIX_VERSION
+          $packages = "$env:RUNNER_TEMP\wix-packages"
+          New-Item -ItemType Directory -Force $packages | Out-Null
+          foreach ($pkg in @(@('wix', $env:WIX_SHA256), @('wixtoolset.util.wixext', $env:WIX_UTIL_SHA256))) {
+            $file = "$packages\$($pkg[0]).$env:WIX_VERSION.nupkg"
+            if (-not (Test-Path $file)) {
+              Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/$($pkg[0])/$env:WIX_VERSION/$($pkg[0]).$env:WIX_VERSION.nupkg" `
+                -OutFile $file -MaximumRetryCount 3 -RetryIntervalSec 5
+            }
+            $hash = (Get-FileHash $file -Algorithm SHA256).Hash
+            if ($hash -ne $pkg[1]) { throw "$file SHA-256 mismatch: $hash" }
+          }
+          # Only the checked packages as a source.
+          Set-Content "$packages\nuget.config" '<configuration><packageSources><clear /><add key="local" value="." /></packageSources></configuration>'
+          dotnet tool install wix --version $env:WIX_VERSION --tool-path "$env:RUNNER_TEMP\wix" --configfile "$packages\nuget.config"
           if ($LASTEXITCODE -ne 0) { throw "installing WiX failed" }
-          & "$HOME\.dotnet\tools\wix.exe" extension add --global "WixToolset.Util.wixext/$env:WIX_VERSION"
-          if ($LASTEXITCODE -ne 0) { throw "adding the WiX Util extension failed" }
+          Add-Content $env:GITHUB_PATH "$env:RUNNER_TEMP\wix"
+          # A .nupkg is a zip; Expand-Archive only takes the .zip extension.
+          [IO.Compression.ZipFile]::ExtractToDirectory("$packages\wixtoolset.util.wixext.$env:WIX_VERSION.nupkg", "$env:RUNNER_TEMP\wix-util")
+      - uses: actions/cache/save@v6
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          path: ${{ runner.temp }}\wix-packages
+          key: wix-${{ env.WIX_VERSION }}
+        continue-on-error: true
       - name: Build the MSI
         timeout-minutes: 5
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $env:Path = "$HOME\.dotnet\tools;$env:Path"
           wix --version
+          $ext = "$env:RUNNER_TEMP\wix-util\wixext5\WixToolset.Util.wixext.dll"
           $name = "watermelon-pgp-$env:TAG-x86_64-pc-windows-msvc"
           Expand-Archive "dist\$name.zip" "$env:RUNNER_TEMP\unpacked"
           $payload = "$env:RUNNER_TEMP\unpacked\$name"
-          packaging\msi\build.ps1 -Version $env:TAG.TrimStart('v') -Payload $payload -Out "dist\$name.msi"
+          $version = $env:TAG.TrimStart('v')
+          packaging\msi\build.ps1 -Version $version -Payload $payload -UtilExtension $ext -Out "dist\$name.msi"
 
-          # The version to upgrade from: the newest other release's MSI, if it has one.
+          # The version to upgrade from: the newest release before this one, if it has an MSI.
           $previous = "$env:RUNNER_TEMP\previous"
           New-Item -ItemType Directory -Force $previous | Out-Null
-          $tag = gh release list --exclude-drafts --exclude-pre-releases --limit 20 --json tagName --jq '.[].tagName' |
-            Where-Object { $_ -ne $env:TAG } | Select-Object -First 1
-          if ($tag) { gh release download $tag --pattern '*.msi' --dir $previous 2>$null }
-          if (Get-ChildItem "$previous\*.msi" -ErrorAction SilentlyContinue) {
+          $tags = gh release list --exclude-drafts --exclude-pre-releases --limit 50 --json tagName --jq '.[].tagName'
+          if ($LASTEXITCODE -ne 0) { throw "gh release list failed" }
+          $tag = $tags | Where-Object { $_ -match '^v\d+\.\d+\.\d+$' -and [version]$_.TrimStart('v') -lt [version]$version } |
+            Sort-Object { [version]$_.TrimStart('v') } -Descending | Select-Object -First 1
+          $assets = if ($tag) { gh release view $tag --json assets --jq '.assets[].name' } else { @() }
+          if ($LASTEXITCODE -ne 0) { throw "gh release view $tag failed" }
+          if ($assets -like '*.msi') {
+            gh release download $tag --pattern '*.msi' --dir $previous
+            if ($LASTEXITCODE -ne 0) { throw "downloading the $tag MSI failed" }
             "Upgrading from the $tag MSI"
           } else {
-            "No earlier release has an MSI; upgrading from the same files built as 0.0.1"
-            packaging\msi\build.ps1 -Version 0.0.1 -Payload $payload -Out "$previous\previous.msi"
+            "No MSI in the release before this one ($tag); upgrading from the same files built as 0.0.1"
+            packaging\msi\build.ps1 -Version 0.0.1 -Payload $payload -UtilExtension $ext -Out "$previous\previous.msi"
           }
       - name: Smoke test install, upgrade and uninstall
         timeout-minutes: 8
@@ -217,6 +245,11 @@ jobs:
           function Invoke-Msi([string]$Verb, [string]$Package, [string]$Log) {
             $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList $Verb, "`"$Package`"", '/qn', '/l*v', "`"$env:RUNNER_TEMP\msi-$Log.log`""
             $p.ExitCode
+          }
+          function Assert-Refused([string]$Log, [string]$Pattern) {
+            $line = Select-String -Path "$env:RUNNER_TEMP\msi-$Log.log" -Pattern $Pattern -SimpleMatch | Select-Object -First 1
+            if (-not $line) { throw "the MSI log doesn't say why it refused ($Pattern)" }
+            "  log: $($line.Line.Trim())"
           }
           # A new shell's Path: what the installer wrote to the registry.
           function Update-Path {
@@ -237,7 +270,14 @@ jobs:
             throw "/healthz did not answer"
           }
 
-          # The previous version, silently: on the Path, nothing else set up.
+          "== Refused while a service runs a 0.3 watermelon.exe"
+          New-Service -Name wm-legacy -BinaryPathName "`"$dir\watermelon.exe`" serve" | Out-Null
+          $code = Invoke-Msi /i $msi legacy
+          sc.exe delete wm-legacy | Out-Null
+          if ($code -eq 0) { throw "installed with a 0.3 service in place" }
+          Assert-Refused legacy 'WatermelonPGP: the Windows service wm-legacy runs'
+
+          "== Silent install of the previous version ($(Split-Path $previous -Leaf))"
           $code = Invoke-Msi /i $previous previous
           if ($code -ne 0) { throw "installing the previous MSI failed ($code)" }
           Update-Path
@@ -245,8 +285,9 @@ jobs:
           if ($wm -ne "$dir\watermelonpgp.exe") { throw "watermelonpgp on the Path is $wm" }
           if (Test-Path $data) { throw "the MSI created $data" }
           if (Get-Service watermelonpgp -ErrorAction SilentlyContinue) { throw "the MSI installed a service" }
+          "  installed, on the Path, no data directory, no service"
 
-          # Upgrade while the service runs: it is stopped cleanly and started again.
+          "== Upgrade to $version while the service runs"
           "release smoke test password" | watermelonpgp --data-dir $data --passphrase-stdin init
           if ($LASTEXITCODE -ne 0) { throw "init failed" }
           watermelonpgp --data-dir $data service install --bind 127.0.0.1:18080
@@ -256,34 +297,39 @@ jobs:
           $code = Invoke-Msi /i $msi upgrade
           if ($code -ne 0) { throw "the upgrade failed ($code)" }
           $v = & watermelonpgp --version
-          $v
           if ($v -cne "watermelonpgp $version") { throw "--version: $v" }
+          "  --version: $v"
           $entries = Get-Entry
           if ($entries.Count -ne 1 -or $entries[0].DisplayVersion -ne $version) {
             throw "Add/Remove Programs lists: $($entries | ForEach-Object { $_.DisplayVersion })"
           }
+          "  Add/Remove Programs: one WatermelonPGP entry, $($entries[0].DisplayVersion)"
           if ((Get-Service watermelonpgp).Status -ne 'Running') { throw "the service is not running after the upgrade" }
           Wait-Healthy
           $stops = [regex]::Matches((Get-Content "$data\watermelonpgp.log" -Raw), 'INFO stopped').Count
           if ($stops -ne 1) { throw "expected 1 clean stop in the log, found $stops" }
+          "  service stopped cleanly once and running again, /healthz ok"
 
-          # Uninstall refuses while the service runs the program...
+          "== Uninstall refused while the service is installed"
           $code = Invoke-Msi /x $msi refused
           if ($code -eq 0) { throw "uninstalling succeeded with the service installed" }
           if (-not (Test-Path "$dir\watermelonpgp.exe")) { throw "the refused uninstall removed watermelonpgp.exe" }
-          Select-String -Path "$env:RUNNER_TEMP\msi-refused.log" -Pattern 'WatermelonPGP: the Windows service' -SimpleMatch | Select-Object -First 1
-          # ...and once the service is gone, removes everything it installed, and not the data.
+          Assert-Refused refused 'WatermelonPGP: the Windows service watermelonpgp runs'
+
+          "== Uninstall after watermelonpgp service uninstall"
           watermelonpgp service uninstall
           if ($LASTEXITCODE -ne 0) { throw "service uninstall failed" }
           $code = Invoke-Msi /x $msi uninstall
           if ($code -ne 0) { throw "uninstalling failed ($code)" }
           if (Test-Path $dir) { throw "$dir is still there: $(Get-ChildItem $dir -Recurse -Force)" }
           if (Get-Entry) { throw "still in Add/Remove Programs" }
+          if (Test-Path HKLM:\SOFTWARE\WatermelonPGP) { throw "HKLM:\SOFTWARE\WatermelonPGP is still there" }
           $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';'
           if ($machinePath | Where-Object { $_.TrimEnd('\') -ieq $dir }) { throw "$dir is still on the Path" }
           foreach ($file in 'watermelonpgp.db', 'master.key') {
             if (-not (Test-Path "$data\$file")) { throw "uninstalling removed $data\$file" }
           }
+          "  no files, registry key, Path entry or Add/Remove Programs entry left; data kept"
       - name: MSI and watermelonpgp logs
         if: failure()
         shell: pwsh
