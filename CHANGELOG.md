@@ -29,6 +29,11 @@ All notable changes to this project are documented here. The format follows
   running that program and starts it again; `choco uninstall` refuses while such a service is
   installed and leaves the data directory alone. The release workflow builds and smoke-tests
   it, and pushes it to the Chocolatey community repository.
+- An MSI installer, `watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc.msi`, in `SHA256SUMS` with the
+  other files: the same files and folder as the Chocolatey package, on the system Path, listed in
+  Add/Remove Programs, for `msiexec /qn`, Group Policy, Intune or SCCM. A newer MSI upgrades in
+  place, stopping a service that runs the program and starting it again; uninstalling refuses
+  while such a service is installed and leaves the data directory alone. Not code-signed yet.
 
 ## [0.3.0] - 2026-11-25
 

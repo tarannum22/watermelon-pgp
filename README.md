@@ -48,6 +48,9 @@ from and write to.
   install message explains).
 - **Chocolatey** (Windows Server): `choco install watermelon-pgp`, then `init` and
   `service install` as in [docs/deployment.md](docs/deployment.md#windows-server).
+- **MSI installer** (Windows Server, for Group Policy, Intune, SCCM or `msiexec /qn`):
+  `watermelon-pgp-vX.Y.Z-x86_64-pc-windows-msvc.msi` from the
+  [GitHub releases](https://github.com/tarannum22/watermelon-pgp/releases).
 - **Release binaries** for Linux (x86_64, arm64), macOS (Apple silicon, Intel) and Windows
   Server (x86_64, a zip):
   [GitHub releases](https://github.com/tarannum22/watermelon-pgp/releases), with `SHA256SUMS`.
